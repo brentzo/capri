@@ -466,6 +466,10 @@ These live in harness code, and each has a test:
 - 2026-11-08: Laya chosen over Jev for the in-loop decision layer, on air-gap and data-control grounds (open-weights, self-hosted, locally fine-tunable).
 - 2026-11-08: Tavily adopted as optional enrichment, strictly outside the sandbox, output treated as untrusted.
 - 2026-11-08: Log the Verifier-labeled corpus from day one; evidence store retains raw probe I/O; fine-tune later and only on a measured gap.
+- 2026-11-08 (HC-SUB-01): Scope guard is a no-route topology, not only firewall rules; the sandbox has no path to the internet or operator LAN to misconfigure around.
+- 2026-11-08 (HC-SUB-01): Tool adapters run on an attacker VM inside the isolated range, driven over a separate narrow authenticated control plane, so a target pivot stays contained.
+- 2026-11-08 (HC-SUB-01): In-scope hostnames are pinned to IPs at provisioning via a sandbox-only resolver, closing the DNS-rebinding TOCTOU; the guard enforces on pinned IPs.
+- 2026-11-08 (HC-SUB-01): The agent itself is in the threat model; the substrate contains our own autonomous agent as if it were hostile, not only the simulated attacker.
 
 ---
 

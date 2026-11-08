@@ -1,0 +1,212 @@
+---
+tag: HC-AGENT-01
+title: Agent loop and role orchestration
+status: draft
+parent: SPEC.md#4, SPEC.md#6
+depends_on: [HC-SUB-01, HC-MODEL-01, HC-KB-01, HC-FIND-01]
+depended_on_by: [HC-EVAL-01]
+updated: 2026-11-08
+---
+
+# HC-AGENT-01 - Agent loop and role orchestration
+
+## 1. Purpose
+
+This spec defines the engine: the deterministic control loop that drives a run through the phases, the four isolated agent roles, the propose-and-dispose contract by which the model requests actions and the harness decides what executes, and how all of it is wired through Bifrost.
+
+The governing rule, restated for this layer: the orchestrator is code and owns the loop; the roles are prompted LLM sessions that only ever propose.
+No role holds a shell, a network socket, or a provider credential.
+A role emits a structured request; the harness validates it against the HC-SUB-01 guards and either executes it through a tool adapter or returns a structured denial.
+
+## 2. Loop principles
+
+- The harness owns control flow; the model never decides what runs, only what to try.
+- Roles are isolated sessions with separate contexts and separate Bifrost virtual keys, so one role cannot see another's reasoning.
+- Finder is not verifier, enforced at the model level: the Verifier runs on a different provider or model than the Operator and sees only repro steps and evidence.
+- Every executed action becomes an append-only `probe_event` (HC-DATA-01), so a run is fully reconstructable and resumable from state, never from chat memory.
+- Untrusted input (target responses, enrichment data) enters a context as delimited data, never as instructions, and cannot widen what the harness will execute.
+
+## 3. The four roles
+
+| Role | Inputs | Outputs | Tool access | Model tier | Bifrost vkey |
+|------|--------|---------|-------------|-----------|--------------|
+| Planner | Target model, KB candidate set, coverage ledger summary | Prioritized list of (asset, technique) pairs with rationale | None (read-only) | Mid reasoning | `vk-planner` |
+| Operator | One assigned (asset, technique) pair, its card, running observations | Proposed tool calls; a `lead` with repro and evidence, or a negative result | Active, via `dispatch()` only | Strong reasoning | `vk-operator` |
+| Verifier | A lead's repro steps and evidence pointers, nothing else | A reproduce/again attempt; confirm or cannot-reproduce | Active, via `dispatch()` only | Strong, different provider than Operator | `vk-verifier` |
+| Reporter | The findings store (confirmed findings and hardening notes) | A target-neutral report that passes the HC-FIND-01 schema | None | Cheap | `vk-reporter` |
+
+Role isolation is a hard requirement, not a convenience:
+
+- The Planner gets a ledger summary, not the full action history, to keep it cheap and unbiased.
+- The Operator's context is scoped to its one assigned pair, which bounds both token cost and blast radius.
+- The Verifier gets only `{repro_steps, evidence_pointers}` and has no access to how the Operator reached the lead, which is what makes its reproduction independent.
+- The orchestrator asserts `verifier_session_id != operator_session_id` and records both on the finding (HC-FIND-01 rejects them equal).
+
+## 4. The control loop
+
+```
+run(engagement):
+    if not substrate.proofs_pass():            # HC-SUB-01 §8
+        mode = passive_only                    # leads stay needs_validation
+    target_model = phase_recon(engagement)
+    candidates   = phase_threat_model(target_model)     # assets -> applicable KB cards
+    plan         = planner.plan(target_model, candidates, ledger.summary())
+
+    for pair in plan.ordered_pairs:            # (asset, technique)
+        if ledger.done(pair): continue
+        hunt(pair)
+
+    for lead in findings.leads():
+        verify(lead)
+
+    report = reporter.render(findings.confirmed(), findings.hardening_notes())
+    schema.validate(report)                    # HC-FIND-01; report does not ship otherwise
+```
+
+### 4.1 Operator inner loop
+
+```
+hunt(pair):
+    card = kb.get(pair.technique)                        # HC-KB-01
+    if not preconditions_met(card, pair.asset):
+        ledger.mark(pair, not_applicable); return
+    if card.blast_tier > engagement.max_blast_tier:
+        ledger.mark(pair, blocked_by_policy); return
+    snap = sandbox.snapshot() if card.blast_tier >= 2 else None
+
+    ctx = operator.session(vkey=vk-operator, scope=pair)  # isolated
+    observations = []
+    for _ in bounded(card.probe_steps, budget, max_denied=N):
+        req = operator.propose_next(ctx, card, observations)   # structured request
+        obs = dispatch(req, pair, card.blast_tier)
+        observations.append(obs)
+        if signal_hit(card, observations):                     # deterministic, or Laya (HC-MODEL-02)
+            findings.emit_lead(pair, repro=observations, evidence=obs.evidence)
+            break
+    ledger.mark(pair, outcome_of(observations))
+    if snap: sandbox.restore(snap)
+```
+
+### 4.2 Verification
+
+```
+verify(lead):
+    sandbox.restore(golden_snapshot); fresh = sandbox.snapshot()
+    vctx = verifier.session(vkey=vk-verifier)              # different provider/model
+    input = { steps: lead.repro, evidence: lead.evidence }  # ONLY this crosses over
+    result = verifier.reproduce(vctx, input)                # proposes via same dispatch()
+    if result.signal_reproduced and vctx.id != lead.found_by:
+        findings.confirm(lead, verified_by=vctx.id)
+    else:
+        findings.hold_or_reject(lead, reason=result.reason)
+```
+
+## 5. The propose-and-dispose contract
+
+This is the single chokepoint through which every action reaches the sandbox.
+
+### 5.1 Request (what a role emits)
+
+```json
+{
+  "tool": "httpx",
+  "intent": "inject_error_payloads",
+  "target": "api.sandbox.local",
+  "port": 443,
+  "args": { "path": "/orders", "param": "id", "payloads": ["'", "1 OR 1=1"] }
+}
+```
+
+The role emits only this structured object.
+It never emits a shell command, and free-text "do X" is not actionable; the orchestrator parses a request or rejects the turn.
+
+### 5.2 Dispose (what the harness does with it)
+
+```
+dispatch(req, pair, tier):
+    if req.tool not in ADAPTERS:                 return denial("unknown_tool")
+    if scope.validate(req.target, req.port) != allow:  return denial("out_of_scope")   # HC-SUB-01 §5.3
+    if blast.gate(tier, have_snapshot(pair)) != allow: return denial("blast_denied")    # HC-SUB-01 §7
+    if not rate.allow(req.target):               return denial("rate_limited")          # may trip watchdog -> kill
+    result = ADAPTERS[req.tool].run(req)         # executes on the attacker VM
+    evt = evidence.record_probe_event(pair, req, result)   # HC-DATA-01, raw I/O retained
+    return normalize(result, evt)                # { status, parsed, evidence_uri, probe_event_id }
+```
+
+- The four guard checks run in this order and short-circuit; the first failure returns a structured denial the role must handle.
+- A denial is data, not an error: the role sees `denial(reason)` and must adapt, and a role that keeps proposing denied calls is capped by `max_denied` and the pair is abandoned.
+- Validation here is defense in depth; the HC-SUB-01 gateway remains the real enforcement, so even a dispatch bug cannot send out-of-scope traffic.
+
+### 5.3 Tool adapters
+
+- Adapters are an allowlist (`nmap`, `httpx`, `ffuf`, `sqlmap`, `nuclei`, a Playwright browser driver, plus custom probe scripts); an unknown tool is denied.
+- Each adapter wraps a real tool behind the normalized `{tool, intent, target, port, args} -> {status, parsed, evidence_uri, raw_uri}` shape.
+- Every adapter run produces exactly one `probe_event` with raw request and response retained (HC-DATA-01), which is both the evidence trail and the training corpus.
+- A new capability is a new reviewed adapter, never a general exec primitive handed to the model.
+
+## 6. Bifrost wiring (model plane)
+
+All generative traffic goes through Bifrost (HC-MODEL-01); no role holds a provider key.
+
+| Concern | How it is wired |
+|---------|-----------------|
+| Per-role isolation | One virtual key per role; the Operator and Verifier keys resolve to different providers/models so finder and verifier do not share a failure mode |
+| Budget | Hierarchical budgets per vkey; a breach fails closed (the role stops) and can trip the HC-SUB-01 watchdog, never falls through to a direct provider call |
+| Rate | Per-vkey rate limits, independent of the per-target network rate limit in `dispatch()` |
+| Fallback | Bifrost handles provider fallback transparently, except the Verifier, which must not silently fall back onto the Operator's provider (pin it) |
+| Caching | Semantic cache is allowed for Planner and Reporter prose, and disabled for Operator and Verifier turns so a cached decision never drives a live action |
+| Observability | Bifrost request logs and traces feed the audit log: which vkey asked which model what, and when |
+
+The decision models (Laya) are not on this plane; they are called directly by the harness as a local sidecar (HC-MODEL-02), because their classify-not-chat I/O does not fit the chat-completions abstraction.
+
+## 7. Context management and prompt-injection posture
+
+- Target responses and Tavily enrichment enter a role's context wrapped as clearly delimited untrusted data, never merged into the instruction channel.
+- Whatever that data says, the role's output is still only a structured request that `dispatch()` re-validates, so injected instructions cannot widen scope, raise tier, or reach a new target; the scope guard would drop the traffic regardless.
+- Where practical, a non-generative classifier (Laya) sits on the raw-target-output boundary for success-signal triage, shrinking the prompt-injection surface because a classifier emits a label, not an action.
+- Handoff between roles and phases is through the coverage ledger and findings store, not shared conversation memory, which keeps role isolation intact and keeps context windows small.
+
+## 8. Resumability and concurrency
+
+- The loop is driven by the coverage ledger: each (asset, technique) pair carries a status, and a killed run resumes by re-provisioning from golden and continuing from the first pending pair.
+- Actions are idempotent at the pair level: re-running a `done` pair is a no-op unless explicitly forced, and because every pair starts from a known snapshot, replays are deterministic.
+- Concurrency for v1: one Operator at a time per target to preserve reproducibility, with parallelism only across independent targets on separate clones; the per-target network rate limit is shared across all workers hitting that target.
+
+## 9. Failure modes
+
+| Condition | Response |
+|-----------|----------|
+| Role emits an unparseable or schema-invalid request | Reject the turn, re-prompt with the schema, bounded retries, then mark the pair `inconclusive` and move on |
+| Role repeatedly proposes denied calls | Cap at `max_denied`, abandon the pair, log the denials |
+| Tool adapter times out or errors | Record the probe_event with an error status, surface it as an observation, let the role adapt |
+| Budget or rate breach on a vkey | Role stops; watchdog may trigger the HC-SUB-01 kill switch |
+| Verifier would fall back onto the Operator's provider | Refuse; hold the lead as `needs_validation` rather than verify on a shared model |
+| Engagement window ends mid-run | Abort in-flight work, restore from snapshot, run the Reporter on whatever is confirmed |
+
+## 10. Interfaces
+
+Consumes:
+
+- HC-SUB-01: `sandbox.*`, `scope.validate`, `blast.gate`, the watchdog/kill switch.
+- HC-MODEL-01: Bifrost endpoint and per-role virtual keys.
+- HC-KB-01: technique cards, preconditions, probe steps, success signals.
+
+Produces:
+
+- HC-DATA-01: one `probe_event` per adapter run, with raw I/O.
+- HC-FIND-01: `lead`, `confirm`, `hold_or_reject`, and the final report.
+
+## 11. Acceptance criteria
+
+- A role cannot cause any action except through a structured request that passes all four `dispatch()` guards; a crafted request to an out-of-scope target is denied and logged.
+- The Operator and Verifier demonstrably run on different providers, and a finding with `found_by == verified_by` cannot be produced.
+- A run killed mid-hunt resumes from the ledger and reaches the same confirmed set as an uninterrupted run over the same targets.
+- An injected instruction in a target response does not change which targets, tiers, or tools the harness will execute.
+- With the sandbox down, the loop runs end to end in passive-only and emits a report in which every lead is `needs_validation`.
+
+## 12. Open questions
+
+- Planner cadence: re-plan once up front, or re-plan after each phase as the coverage ledger fills; leaning toward a cheap re-plan after recon and after the first hunting pass.
+- Whether the Verifier may use a second, independent technique to confirm (not just replay the Operator's repro), which is stronger but costlier; candidate for a later revision.
+- Multi-Operator parallelism within a single target once reproducibility tooling is mature.
+- How aggressively to summarize the ledger for the Planner before it biases prioritization.
