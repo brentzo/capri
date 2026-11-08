@@ -485,6 +485,10 @@ These live in harness code, and each has a test:
 - 2026-11-08 (HC-DATA-01): finder-is-not-verifier is enforced at the database layer (a check constraint), not only in application code.
 - 2026-11-08 (HC-DATA-01): Laya's own predictions are never written as training labels; only Verifier verdicts (silver) and audits (gold) become corpus labels, which prevents a self-training feedback loop.
 - 2026-11-08 (HC-DATA-01): The evidence store is self-hosted inside the trust boundary (Postgres + MinIO, no external managed service), with content-addressed blobs and per-event content hashes forming an append-only integrity chain.
+- 2026-11-08 (HC-EVAL-01): False positives are measured against complete ground truth; on an eval target every real vuln is known, so any confirmed finding absent from the manifest is a false positive.
+- 2026-11-08 (HC-EVAL-01): Metrics are distributions, reported as mean and spread over K eval runs, because LLM nondeterminism makes a single-number score misleading; recall is reported at both one pass and N passes.
+- 2026-11-08 (HC-EVAL-01): Scope violations are a build-failing CI gate pinned at zero, not a metric to optimize; a single out-of-scope or egress event in the audit log fails the suite.
+- 2026-11-08 (HC-EVAL-01): A card promotes to active only by passing its positive fixture and staying silent on its negative fixture in the standing eval suite.
 
 ---
 
