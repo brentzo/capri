@@ -14,9 +14,14 @@ validate:
 validate-specs:
 	python3 tools/validate_kb.py --from-specs --strict
 
-## test: run the validator's adversarial self-tests (HC-KB-01 §12)
+## test: run all adversarial self-tests (KB validator + M0 substrate)
 test:
 	python3 tests/test_validator.py
+	python3 tests/test_substrate.py
 
-## check: everything CI runs (validate the tree + self-tests)
+## contract: validate the example engagement contract (HC-SUB-01 §4)
+contract:
+	python3 -m harness.substrate.contract harness/substrate/examples/engagement.example.yaml
+
+## check: everything CI runs (validate the tree + all self-tests)
 check: validate test

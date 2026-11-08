@@ -1,0 +1,20 @@
+# Example engagement contract (HC-SUB-01 §4.1).
+# Validated by harness/substrate/contract.py; parse() is fail-closed, so a
+# missing, malformed, or contradictory field aborts before any provisioning.
+engagement:
+  id: eng-2026-11-08-001            # unique, immutable; keys all state
+  authorized_by: brent / TICKET-1234
+  window: { start: 2026-11-08T20:00, end: 2026-11-08T23:59 }
+  max_blast_tier: 2                 # 0..3 (HC-SUB-01 §7)
+
+scope:
+  in_scope_hosts: [app.sandbox.local, api.sandbox.local]
+  in_scope_cidrs: [10.13.0.0/24]
+  out_of_scope: [10.13.0.1]         # always wins over in-scope
+  allowed_ports: { default: [80, 443], "10.13.0.0/24": [22, 80, 443, 5432] }
+
+policy:
+  allowed_tactics: [recon, initial-access, discovery, credential-access]
+  forbidden: [exfil-to-internet, persistence-survive-reset]
+  rate: { max_rps_per_target: 20, max_actions_per_run: 5000 }
+  tier3_techniques: []              # per-technique tier-3 authorization (§7)

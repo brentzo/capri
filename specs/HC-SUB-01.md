@@ -217,6 +217,9 @@ blast.gate(technique_tier, has_snap) -> allow | deny(reason)
 
 Tool adapters (HC-AGENT-01) must call `scope.validate` and `blast.gate` before executing on the attacker VM; the adapter layer is where these are wired, but the gateway in section 5 remains the real enforcement.
 
+The engagement-contract parser, `scope.validate`, and `blast.gate` are implemented as pure-standard-library, fail-closed code in `harness/substrate/` (contract.py, scope.py, blast.py), with adversarial tests in `tests/test_substrate.py` run in CI; `python3 -m harness.substrate.contract <file>` validates a contract from the command line.
+Provisioning, the no-route gateway, snapshot/restore, the guard-proof probes, and the kill switch remain infrastructure outside this repo.
+
 ## 11. Failure modes
 
 | Condition | Response |

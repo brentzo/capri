@@ -28,3 +28,7 @@ jobs:
           fi
       - name: Validator self-tests (HC-KB-01 §12)
         run: python3 tests/test_validator.py
+      - name: Substrate self-tests (HC-SUB-01 §4-§7, §12)
+        run: python3 tests/test_substrate.py
+      - name: Example engagement contract parses
+        run: python3 -m harness.substrate.contract harness/substrate/examples/engagement.example.yaml
