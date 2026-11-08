@@ -497,6 +497,10 @@ These live in harness code, and each has a test:
 - 2026-11-08 (HC-MODEL-02): Calibration, not accuracy, is the promotion criterion for a fine-tuned decision head; a calibration regression blocks promotion even when accuracy improves.
 - 2026-11-08 (HC-MODEL-02): Graceful degradation when Laya is unavailable: deterministic evaluators run, and a laya-only signal keeps its lead at needs_validation rather than ever silently confirming.
 - 2026-11-08 (HC-MODEL-02): If the bake-off shows poor calibration, the emission/confirm gate stays deterministic and Laya is demoted to an advisory ranker only.
+- 2026-11-08 (HC-ENRICH-01): Enrichment runs only on the control plane (trusted host) and is never reachable from the range; Tavily is never called from inside the sandbox.
+- 2026-11-08 (HC-ENRICH-01): Enrichment output is advisory and low-trust: provenance-tagged, delivered only to the recon/enrichment role, never as instructions, and never ground truth or corpus labels.
+- 2026-11-08 (HC-ENRICH-01): Enrichment queries carry only public technology identifiers (product and version), never target data, secrets, or the user's identity, and use a generic client name.
+- 2026-11-08 (HC-ENRICH-01): New cards from KB-freshness research are human-reviewed before activation; web intel never autonomously adds an active card or drives a live engagement.
 
 ---
 
