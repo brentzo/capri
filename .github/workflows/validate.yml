@@ -32,3 +32,11 @@ jobs:
         run: python3 tests/test_substrate.py
       - name: Example engagement contract parses
         run: python3 -m harness.substrate.contract harness/substrate/examples/engagement.example.yaml
+      - name: Business-requirement features are valid and in sync
+        run: |
+          python3 tools/gen_features.py
+          if [ -n "$(git status --porcelain -- requirements/features)" ]; then
+            echo "::error::requirements/features is out of sync; run 'make features' and commit."
+            git status --porcelain -- requirements/features
+            exit 1
+          fi

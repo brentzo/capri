@@ -23,5 +23,9 @@ test:
 contract:
 	python3 -m harness.substrate.contract harness/substrate/examples/engagement.example.yaml
 
+## features: regenerate the Gherkin .feature files from the BR specs
+features:
+	python3 tools/gen_features.py
+
 ## check: everything CI runs (validate the tree + all self-tests)
 check: validate test
