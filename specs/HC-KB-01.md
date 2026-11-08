@@ -149,7 +149,7 @@ kb/
   data-isolation/        # DATA    tenant isolation, backups, deletion
   memory-binary/         # BIN     native code, kernels
   mobile-local-ipc/      # MOBILE  native apps, deep links, local IPC
-  _index/                # generated per-class and global indexes
+  index.md               # generated card index (kb/index.md)
 ```
 
 ## 8. Versioning and governance
@@ -173,7 +173,7 @@ It checks:
 - `references` is non-empty, and `test_fixture.fires_on` and `does_not_fire` are present for active cards.
 
 The reference implementation lives in `tools/validate_kb.py` (pure standard library), with the bundled identifier reference in `tools/taxonomy.py` and adversarial tests in `tests/test_validator.py`, and it runs in CI on every change (`tools/README.md`).
-The cards are materialized from these specs into `kb/<class>/*.yaml` (with `kb/_index/` and the `eval/manifests/` ground-truth files) by `tools/materialize_kb.py`; the validator checks that full-card tree by default, or the condensed spec blocks with `--from-specs`, and CI fails if the tree drifts from the specs.
+The cards are materialized from these specs into `kb/<class>/*.yaml` (with `kb/index.md` and the `eval/manifests/` ground-truth files) by `tools/materialize_kb.py`; the validator checks that full-card tree by default, or the condensed spec blocks with `--from-specs`, and CI fails if the tree drifts from the specs.
 Taxonomy ids that are well-formed but not yet confirmed against their upstream catalog are reported as UNRESOLVED, which is how a `# verify` marker is discharged: confirm the id and add it to the reference, or correct the card.
 
 ## 10. How the loop consumes a card

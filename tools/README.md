@@ -8,7 +8,7 @@ Pure Python standard library, no third-party dependency, runnable in CI.
 
 - `materialize_kb.py` - generator. Reads the condensed card blocks in
   `specs/HC-KB-*.md` and writes the full cards to `kb/<class>/*.yaml`, plus
-  `kb/_index/index.md` and the `eval/manifests/*.yaml` ground-truth manifests.
+  `kb/index.md` and the `eval/manifests/*.yaml` ground-truth manifests.
 - `validate_kb.py` - the validator. By default checks the materialized
   `kb/<class>/*.yaml` tree (full cards); `--from-specs` checks the condensed
   spec blocks instead.
