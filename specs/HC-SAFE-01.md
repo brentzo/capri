@@ -117,6 +117,10 @@ watchdog.check()                 # periodic; may invoke sandbox.kill()
 safety.fail_closed(context)      # the single helper every guard calls on uncertainty
 ```
 
+The tamper-evident audit log (`audit.record`, `audit.verify_chain`) is implemented in `harness/store/audit.py` over the append-only `audit_log` table (HC-DATA-01): each row carries `prev_hash` and a `row_hash` over its content plus `prev_hash`, so an altered or removed row is detected even though the triggers already forbid UPDATE/DELETE.
+Adversarial tests in `tests/test_store.py` cover both the clean-chain and tampered cases.
+The watchdog, the kill switch, and the guard inventory remain to be built.
+
 ## 10. Acceptance criteria
 
 - Every guardrail in the inventory has a passing test, and the safety suite runs in CI.

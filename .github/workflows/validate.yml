@@ -30,6 +30,8 @@ jobs:
         run: python3 tests/test_validator.py
       - name: Substrate self-tests (HC-SUB-01 §4-§7, §12)
         run: python3 tests/test_substrate.py
+      - name: Store self-tests (HC-DATA-01, HC-SAFE-01 invariants)
+        run: python3 tests/test_store.py
       - name: Example engagement contract parses
         run: python3 -m harness.substrate.contract harness/substrate/examples/engagement.example.yaml
       - name: Business-requirement features are valid and in sync

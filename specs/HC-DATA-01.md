@@ -221,6 +221,10 @@ ledger.summary(engagement_id)                   -> coverage_summary  # HC-FIND-0
 
 HC-AGENT-01 pseudocode abbreviates `(asset, technique_id)` as `pair`, with `engagement_id` the ambient run; the canonical keys are the full triple above.
 
+The store is implemented as pure-standard-library code in `harness/store/` (`schema.sql`, `db.py`, `findings.py`, `ledger.py`, `audit.py`), a SQLite realization of the Postgres+MinIO production target (§3) that enforces the §11 invariants in the database: the `finder_not_verifier` CHECK, append-only triggers on `probe_event`, `finding_status`, and `label`, and the hash-chained audit log verified by `audit.verify_chain`.
+Adversarial tests in `tests/test_store.py` run in CI.
+Blob storage, deduplication, and the train/test corpus export remain to be built on this backbone.
+
 ## 11. Acceptance criteria
 
 - UPDATE or DELETE on `probe_event` or `label` is rejected by the append-only trigger.

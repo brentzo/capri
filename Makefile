@@ -14,10 +14,11 @@ validate:
 validate-specs:
 	python3 tools/validate_kb.py --from-specs --strict
 
-## test: run all adversarial self-tests (KB validator + M0 substrate)
+## test: run all adversarial self-tests (KB validator + M0 substrate + M1 store)
 test:
 	python3 tests/test_validator.py
 	python3 tests/test_substrate.py
+	python3 tests/test_store.py
 
 ## contract: validate the example engagement contract (HC-SUB-01 §4)
 contract:

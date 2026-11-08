@@ -23,11 +23,31 @@ harness runs on top of it:
   the blast-tier gate (§7): tier cap, snapshot-required for tier >= 2, and
   per-technique authorization for tier 3.
 
+## What's here (M1 store, the data backbone)
+
+The evidence/findings/ledger/audit store of HC-DATA-01 and HC-SAFE-01, as a
+SQLite realization of the Postgres+MinIO production target. The three guarantees
+the specs insist on are enforced in the database itself, not only the app:
+
+- `store/schema.sql` - the schema. `finder_not_verifier` is a `finding` CHECK
+  constraint; `probe_event`, `finding_status`, and `label` carry append-only
+  BEFORE UPDATE/DELETE triggers; `audit_log` rows chain on `prev_hash`.
+- `store/db.py` - `connect(path=':memory:')` applies the schema and returns a
+  connection; `now()` is the ISO-8601 UTC stored timestamp.
+- `store/findings.py` - `insert_lead` then `confirm`/`reject`/`mark_inconclusive`;
+  each verdict change appends a `finding_status` row and updates `finding.verdict`
+  atomically, and confirming with `verified_by == found_by` is rejected by the DB.
+- `store/ledger.py` - the coverage ledger: `mark`, `done`, `summary`, so a
+  resumed run skips `(asset, technique_id)` pairs it already processed.
+- `store/audit.py` - the tamper-evident audit log: `record` appends a hash-chained
+  row; `verify_chain` recomputes the chain and returns the first broken row.
+
 ## Run
 
 ```sh
 make test                                                   # harness + KB tests
-python3 tests/test_substrate.py                             # just these
+python3 tests/test_substrate.py                             # M0 substrate
+python3 tests/test_store.py                                 # M1 store invariants
 python3 -m harness.substrate.contract harness/substrate/examples/engagement.example.yaml
 ```
 
