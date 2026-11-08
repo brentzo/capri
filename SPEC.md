@@ -470,6 +470,10 @@ These live in harness code, and each has a test:
 - 2026-11-08 (HC-SUB-01): Tool adapters run on an attacker VM inside the isolated range, driven over a separate narrow authenticated control plane, so a target pivot stays contained.
 - 2026-11-08 (HC-SUB-01): In-scope hostnames are pinned to IPs at provisioning via a sandbox-only resolver, closing the DNS-rebinding TOCTOU; the guard enforces on pinned IPs.
 - 2026-11-08 (HC-SUB-01): The agent itself is in the threat model; the substrate contains our own autonomous agent as if it were hostile, not only the simulated attacker.
+- 2026-11-08 (HC-AGENT-01): A denied tool call returns a structured reason the role must adapt to (capped by max_denied), not an exception, so the agent reasons rather than crashes.
+- 2026-11-08 (HC-AGENT-01): The Verifier is pinned and never falls back onto the Operator's provider, because a shared model would silently break finder-is-not-verifier.
+- 2026-11-08 (HC-AGENT-01): Semantic cache is disabled for Operator and Verifier turns and allowed only for Planner/Reporter prose, so a cached response can never drive a live action.
+- 2026-11-08 (HC-AGENT-01): v1 concurrency is one Operator per target, parallel only across independent target clones, to keep snapshot reproducibility.
 
 ---
 
