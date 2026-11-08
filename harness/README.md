@@ -42,6 +42,27 @@ the specs insist on are enforced in the database itself, not only the app:
   resumed run skips `(asset, technique_id)` pairs it already processed.
 - `store/audit.py` - the tamper-evident audit log: `record` appends a hash-chained
   row; `verify_chain` recomputes the chain and returns the first broken row.
+- `store/blobstore.py` - the content-addressed blob store (the HC-DATA-01 §3
+  default backend): `put` dedups by sha256 and is write-once, `get`/`verify`
+  read back and check integrity. `blob://<sha256>` URIs embed the hash.
+- `store/evidence.py` - `record_probe_event` writes raw request/response to the
+  blob store and inserts one immutable `probe_event`; `verify_integrity` catches
+  a swapped URI or a corrupted blob.
+
+## What's here (dispatch, the propose-and-dispose chokepoint)
+
+The single gate every proposed action passes through (HC-AGENT-01 §5.2), wiring
+the M0 guards to the M1 store. The real tool adapters and the sandbox are
+infrastructure (injected), so this is the decision logic, not the tools.
+
+- `dispatch.py` - `Dispatcher.dispatch(req, ctx)` runs the four guards in order
+  (unknown_tool, out_of_scope, blast_denied, rate/budget), short-circuits with a
+  structured denial, and on pass runs the adapter, records exactly one
+  `probe_event`, writes an audit row, and returns the normalized result. A denial
+  is data, not an error; an adapter error is recorded as an observation and never
+  surfaced as internal detail.
+- `ratelimit.py` - the fourth guard: a per-target token bucket plus a run-action
+  budget, both from the contract's `policy.rate`, with an injectable clock.
 
 ## Run
 
@@ -49,6 +70,7 @@ the specs insist on are enforced in the database itself, not only the app:
 make test                                                   # harness + KB tests
 python3 tests/test_substrate.py                             # M0 substrate
 python3 tests/test_store.py                                 # M1 store invariants
+python3 tests/test_dispatch.py                              # propose-and-dispose chokepoint
 python3 -m harness.substrate.contract harness/substrate/examples/engagement.example.yaml
 ```
 

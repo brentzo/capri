@@ -198,6 +198,11 @@ Produces:
 - HC-DATA-01: one `probe_event` per adapter run, with raw I/O.
 - HC-FIND-01: `lead`, `confirm`, `reject` / `mark_inconclusive`, and the final report.
 
+The `dispatch()` chokepoint (§5.2) is implemented as pure-standard-library code in `harness/dispatch.py` (`Dispatcher`, `ProbeContext`): it runs the four guards in order, records one `probe_event` with raw I/O through `harness/store/evidence.py` into the content-addressed `harness/store/blobstore.py`, and writes an audit row through `harness/store/audit.py`.
+The fourth guard (per-target rate and run-action budget) is `harness/ratelimit.py`.
+Tool adapters and the sandbox are injected (the real tools are infrastructure, like the gateway), so tests drive the chokepoint with stub adapters; adversarial tests in `tests/test_dispatch.py` run in CI.
+The planner, the role sessions, Bifrost wiring, and the outer control loop remain to be built.
+
 ## 11. Acceptance criteria
 
 - A role cannot cause any action except through a structured request that passes all four `dispatch()` guards; a crafted request to an out-of-scope target is denied and logged.
