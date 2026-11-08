@@ -1,0 +1,245 @@
+---
+tag: HC-SUB-01
+title: Sandbox, scope guard, and engagement contract
+status: draft
+parent: SPEC.md#3
+depends_on: []
+depended_on_by: [HC-AGENT-01, HC-SAFE-01, HC-DATA-01, HC-EVAL-01]
+updated: 2026-11-08
+---
+
+# HC-SUB-01 - Substrate: sandbox, scope guard, engagement contract
+
+## 1. Purpose
+
+This spec defines the substrate: the layer that makes autonomous exploitation safe by construction.
+It is milestone M0, and the project rule is that nothing else starts until it is solid.
+Everything above it (the agent, the knowledge base, the findings pipeline) assumes the five guarantees in section 3 hold without exception.
+
+This document is the authority for how scope, isolation, reproducibility, containment, and killability are enforced.
+Where it says "enforced," it means in code or configuration at a layer the agent and the target cannot reconfigure, never in a model prompt.
+
+## 2. Substrate threat model
+
+The substrate defends against four failures, in priority order:
+
+1. Out-of-scope reach: the agent or an exploited target touches a host outside the declared scope.
+2. Egress and exfiltration: anything inside the sandbox reaches the public internet or the operator's own network.
+3. Non-reproducibility: a run cannot be reset to a known state, so findings cannot be independently reproduced and destructive actions cannot be undone.
+4. Escape: an exploited target pivots out of the sandbox onto the host or corporate network.
+
+Note that the adversary here is not only the external attacker being simulated.
+It is also our own agent, which is an autonomous process issuing exploit traffic and must be contained as if it were hostile.
+
+## 3. The five guarantees
+
+Each guarantee has a mechanism (section 5-7) and a test (section 8).
+A guarantee without a passing test is treated as absent, and the harness refuses to leave `passive-only` mode.
+
+| # | Guarantee | Mechanism | Proven by |
+|---|-----------|-----------|-----------|
+| G1 | Scope: only declared in-scope targets are reachable | Default-deny scope-guard gateway on pinned IPs | Guard-proof self-test |
+| G2 | No egress: nothing in the sandbox reaches the internet or operator LAN | Gateway drops all non-range traffic; no upstream DNS | Guard-proof self-test |
+| G3 | Reproducibility: any state is resettable to a known snapshot | Clone-per-run, snapshot before destructive, restore after | Snapshot round-trip test |
+| G4 | Containment: an exploited target cannot escape the sandbox | microVM isolation, no host networking/shares, isolated L2 segment | Escape-attempt test |
+| G5 | Killability: one action freezes everything | Kill switch disables segment ports and snapshot-freezes | Kill-switch drill |
+
+## 4. The engagement contract
+
+A signed, declarative document parsed and validated before any provisioning.
+It is the single source of truth for what this run is allowed to do.
+
+### 4.1 Schema
+
+```yaml
+engagement:
+  id:            eng-2026-11-08-001        # unique, immutable; keys all state
+  authorized_by: brent / TICKET-1234        # human or ticket of record
+  window:        { start: 2026-11-08T20:00, end: 2026-11-08T23:59 }
+  max_blast_tier: 2                          # 0..3, see section 7
+
+scope:
+  in_scope_hosts:  [app.sandbox.local, api.sandbox.local]
+  in_scope_cidrs:  [10.13.0.0/24]
+  out_of_scope:    [10.13.0.1]               # always-excluded, overrides in-scope
+  allowed_ports:   { default: [80, 443], "10.13.0.0/24": [22, 80, 443, 5432] }
+
+policy:
+  allowed_tactics: [recon, initial-access, discovery, credential-access]
+  forbidden:       [exfil-to-internet, persistence-survive-reset]
+  rate:            { max_rps_per_target: 20, max_actions_per_run: 5000 }
+```
+
+### 4.2 Field semantics and validation rules
+
+- `id` is immutable and keys every `probe_event`, snapshot, and audit entry (see HC-DATA-01).
+- `out_of_scope` always wins: an address in both lists is out of scope.
+- `window` is enforced; the harness refuses to start before `start` and aborts in-flight work at `end`.
+- `max_blast_tier` caps the whole run; a technique card above it is skipped as `blocked_by_policy` (see SPEC.md#6.1).
+- Validation is fail-closed: a missing, malformed, or contradictory field aborts the run before any VM is provisioned.
+- The harness refuses to start if any resolved target IP falls outside `in_scope_cidrs`, or if `in_scope_cidrs` overlaps the operator's own management network.
+
+### 4.3 Target resolution and IP pinning (anti-TOCTOU)
+
+Scope is declared partly by hostname but enforced by IP, which opens a time-of-check/time-of-use gap (DNS rebinding).
+Close it at provisioning:
+
+1. Resolve every `in_scope_host` once, through the sandbox resolver only, to a pinned IP set.
+2. Record the pinned `host -> IP` map in the engagement state; this is what the scope guard enforces on.
+3. The sandbox resolver answers only for pinned in-scope names and refuses everything else; there is no upstream internet DNS.
+4. Re-resolution is never implicit; it happens only through a controlled re-pin step that re-runs validation in section 4.2.
+
+## 5. Scope guard
+
+### 5.1 Enforcement point
+
+The scope guard is a default-deny gateway that sits between the sandbox range and everything else.
+It runs outside the control of both the target VMs and the attacker VM, on the range gateway (a dedicated firewall VM or host-level nftables/eBPF on the virtual switch uplink).
+Nothing inside the range can reconfigure it.
+
+### 5.2 Policy model
+
+- Default deny for all egress leaving the range.
+- Allow only flows to pinned in-scope IPs on `allowed_ports`.
+- No route to the public internet and no route to the operator LAN exists at all, so there is nothing to misconfigure around.
+- Intra-range flows to out-of-scope hosts (for example the gateway itself) are dropped.
+
+### 5.3 Pre-flight re-check (defense in depth)
+
+The gateway is the real enforcement; the harness adds a second, independent check in software.
+Before every tool-adapter call, the harness calls `scope.validate(target, port)` against the pinned allowlist and refuses to dispatch a call that would leave scope.
+If the two layers ever disagree, that is a stop-the-line bug: the harness halts and logs, because a software check passing while the gateway would deny (or vice versa) means one of them is wrong.
+
+### 5.4 Fail-closed
+
+If the gateway or the sandbox resolver is unhealthy, or the guard-proof self-test (section 8) has not passed in this run, the harness does not execute any active tool call.
+It drops to `passive-only` and marks every lead `needs_validation`.
+
+## 6. Sandbox runtime
+
+### 6.1 Topology
+
+```
+  operator host (trusted)
+    |  control plane: narrow authenticated RPC, host-only link
+    v
+  [ attacker VM ] ----data plane----> [ target VM(s) ]      all on one
+        \______________ isolated L2 range (vswitch/VLAN) ______________/
+                                   |
+                           [ scope-guard gateway ]  default-deny, no internet/LAN route
+```
+
+- The isolated L2 range is the "cyber range": target VMs plus one attacker VM where tool adapters execute.
+- The attacker VM has two interfaces: a data interface on the range (subject to the scope guard) and a control interface to the operator host (host-only, policy-restricted).
+- The control plane carries only tool-adapter commands and artifact collection; it is not a route to the internet or the operator LAN, and the orchestrator treats everything returning over it as untrusted output.
+
+### 6.2 Isolation (G4)
+
+- Target and attacker VMs run as microVMs (Firecracker) or on a hardened hypervisor, with no shared folders, no clipboard, and no host-bridged networking.
+- The only path off the range is the scope-guard gateway, which has no onward route.
+- An exploited target that pivots to the attacker VM still cannot egress, and the control-plane RPC is authenticated and narrow, so pivoting to the operator host is not a reachable path.
+
+### 6.3 Reproducibility (G3)
+
+- Each run clones target VMs from a versioned golden snapshot, so every run starts identical.
+- The harness takes a snapshot before any tier-2 or tier-3 action and restores it after the action completes or aborts.
+- `snapshot_id` is recorded on every `probe_event` (see HC-DATA-01), which is what makes a finding replayable by the independent Verifier.
+
+### 6.4 Kill switch (G5)
+
+- A single `sandbox.kill()` disables the range's virtual-switch ports (instant network freeze) and snapshot-freezes the VMs for forensics, then restores from golden.
+- It is callable by the orchestrator, by a watchdog on budget or rate breach, and by a human out-of-band.
+
+## 7. Blast-tier model
+
+Every technique card declares a `blast_tier`.
+The engagement's `max_blast_tier` caps what may run.
+
+| Tier | Name | Permits | Snapshot | Extra authorization |
+|------|------|---------|----------|---------------------|
+| 0 | Passive | Observation only; no active packets to the target beyond what recon requires | No | No |
+| 1 | Active, non-destructive | Active probing that only reads state (port/service scans, read-only injections, auth probes that do not change state) | No | No |
+| 2 | State-changing, recoverable | Actions that modify target state but are fully recoverable by snapshot restore (writes, account creation, config change) | Yes, before | No |
+| 3 | Destructive or persistent | Actions that would destroy data or establish persistence | Yes, before | Explicit tier-3 flag in the contract, per technique |
+
+Tiers 2 and 3 cannot run unless a live snapshot handle exists; if snapshotting fails, the action is refused.
+Tier 3 additionally requires that the contract names it, and it remains fully contained by G1, G2, and G4 regardless.
+
+## 8. Startup self-tests (the proofs)
+
+Before leaving `passive-only`, the harness runs these and aborts fail-closed if any assertion fails.
+This operationalizes the rule "prove you cannot reach an out-of-scope host even when you try."
+
+### 8.1 Guard proof (proves G1 and G2)
+
+From the attacker VM, actively attempt and assert:
+
+- a TCP connection to a known-routable internet canary IP is dropped;
+- a DNS lookup of a public name is refused (no upstream resolver);
+- a connection to an in-range but out-of-scope host is dropped;
+- a connection to a pinned in-scope target on an allowed port succeeds.
+
+All four must hold.
+A single failure aborts the run and logs which assertion failed.
+
+### 8.2 Snapshot round-trip (proves G3)
+
+Write a marker to a target, snapshot, overwrite the marker, restore, and assert the original marker is back.
+
+### 8.3 Escape-attempt (proves G4)
+
+From the attacker VM, attempt to reach the operator host's management interface and a second, unrelated host network, and assert both are unreachable.
+
+### 8.4 Kill-switch drill (proves G5)
+
+In a provisioning dry-run, invoke `sandbox.kill()` and assert all range ports drop within the target time budget and VMs restore from golden.
+
+## 9. passive-only fallback
+
+If the sandbox is not provisioned, or any section-8 proof has not passed in the current run, the harness operates in `passive-only`:
+
+- no active (tier >= 1) tool call executes;
+- every lead is recorded as `needs_validation` and never promoted to `confirmed`;
+- the report states plainly that it ran without an enforced sandbox.
+
+## 10. Interfaces exposed to the orchestrator
+
+```
+sandbox.provision(engagement)        -> { range_id, attacker_vm, golden_snapshot_id, pinned_targets }
+sandbox.snapshot()                   -> snapshot_id
+sandbox.restore(snapshot_id)         -> ok
+sandbox.guard_proof()                -> pass | fail(details)
+sandbox.kill()                       -> ok
+scope.validate(target, port)         -> allow | deny(reason)
+blast.gate(technique_tier, has_snap) -> allow | deny(reason)
+```
+
+Tool adapters (HC-AGENT-01) must call `scope.validate` and `blast.gate` before executing on the attacker VM; the adapter layer is where these are wired, but the gateway in section 5 remains the real enforcement.
+
+## 11. Failure modes
+
+| Condition | Response |
+|-----------|----------|
+| Contract invalid or contradictory | Abort before provisioning; log; no VM created |
+| Target resolves out of scope | Abort; refuse to start |
+| Guard-proof fails | Abort; drop to passive-only; log failing assertion |
+| Gateway or resolver unhealthy mid-run | Halt active work; passive-only; alert |
+| Snapshot fails before a tier-2/3 action | Refuse the action; continue with lower-tier work |
+| Rate or budget breach | Watchdog triggers kill switch; snapshot-freeze for forensics |
+| Window `end` reached | Abort in-flight work; restore; finalize report |
+
+## 12. Acceptance criteria (M0 done)
+
+- A contract with an out-of-scope target is rejected before any VM is provisioned.
+- All four guard-proof assertions pass on a provisioned range, and flipping any scope rule flips the matching assertion.
+- Snapshot round-trip restores a known-good state deterministically.
+- The escape-attempt test confirms the operator host is unreachable from the attacker VM.
+- The kill switch freezes the range within its time budget and restores from golden.
+- With the sandbox torn down, the harness runs and stays in passive-only with all leads `needs_validation`.
+
+## 13. Open questions
+
+- Provisioning dependencies: some golden images need package installs that require internet; resolve by building golden images in a separate, pre-lockdown bake step, never during a live engagement.
+- Multi-host and segmented ranges: whether tier-5-style lateral movement across sub-segments is in scope for v1, or deferred.
+- IPv6: the scope guard must deny IPv6 egress explicitly, not only IPv4, or disable IPv6 on the range entirely (leaning toward disable for v1).
+- Realistic data: if a target ever mirrors production-like data, decide retention and redaction here in coordination with HC-DATA-01's PII tagging.
