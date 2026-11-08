@@ -474,6 +474,10 @@ These live in harness code, and each has a test:
 - 2026-11-08 (HC-AGENT-01): The Verifier is pinned and never falls back onto the Operator's provider, because a shared model would silently break finder-is-not-verifier.
 - 2026-11-08 (HC-AGENT-01): Semantic cache is disabled for Operator and Verifier turns and allowed only for Planner/Reporter prose, so a cached response can never drive a live action.
 - 2026-11-08 (HC-AGENT-01): v1 concurrency is one Operator per target, parallel only across independent target clones, to keep snapshot reproducibility.
+- 2026-11-08 (HC-KB-01): Applicability is a small safe expression DSL, not arbitrary code, so cards stay auditable and a bad card cannot execute logic.
+- 2026-11-08 (HC-KB-01): Success signals are deterministic-first; Laya is named only for inherently fuzzy judgments and its confidence feeds the needs_validation gate.
+- 2026-11-08 (HC-KB-01): Out-of-band callbacks must terminate at an in-sandbox collaborator, never the internet; an external collaborator fails card validation.
+- 2026-11-08 (HC-KB-01): Every probe_event pins card id and version, so a finding stays interpretable against the exact card that produced it.
 
 ---
 

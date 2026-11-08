@@ -44,7 +44,7 @@ updated: 2026-11-08
 | HC-MODEL-02 | Laya decision layer and fine-tuning pipeline           | SPEC.md#5.2, #10 | planned |
 | HC-ENRICH-01| Tavily enrichment service and untrusted-data handling  | SPEC.md#5.3      | planned |
 | HC-KB-01    | Technique-card schema and KB structure                 | SPEC.md#7        | draft   |
-| HC-KB-02    | Web and auth technique-card starter set                | SPEC.md#7        | planned |
+| HC-KB-02    | Web and auth technique-card starter set                | SPEC.md#7        | draft   |
 | HC-AGENT-01 | Agent loop and role orchestration                      | SPEC.md#4, #6    | draft   |
 | HC-FIND-01  | Findings model and verification protocol               | SPEC.md#8        | planned |
 | HC-DATA-01  | Evidence store and self-labeling corpus                | SPEC.md#9        | planned |
