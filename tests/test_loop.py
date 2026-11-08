@@ -26,6 +26,7 @@ sys.path.insert(0, ROOT)
 from harness import loop, ratelimit                            # noqa: E402
 from harness.dispatch import Dispatcher                        # noqa: E402
 from harness.loop import Loop, Pair                            # noqa: E402
+from harness.planner import DeterministicPlanner               # noqa: E402
 from harness.store import blobstore, db, findings              # noqa: E402
 from harness.substrate import contract                         # noqa: E402
 
@@ -357,6 +358,21 @@ def test_verifier_cannot_reproduce_marks_inconclusive():
         assert findings.confirmed(conn, eng.id) == []
         assert findings.leads(conn, eng.id) == []           # inconclusive is terminal, not a lead
         assert _ledger_status(conn, eng, "web", "KB-TEST-SQLI-001") == "inconclusive"
+
+
+def test_real_planner_drives_the_loop():
+    # the deterministic planner orders the loop's own candidates end to end: both
+    # vulnerable assets confirm, and the tier-3 card it ranks first (critical) is
+    # harmlessly blocked by the blast cap rather than dispatched.
+    hits = [("10.10.0.5", "KB-TEST-SQLI-001"), ("10.10.0.6", "KB-TEST-SQLI-001")]
+    with tempfile.TemporaryDirectory() as root:
+        conn, eng, disp, sandbox = _build(root, hits=hits)
+        res = Loop(conn, eng, kb_index=KB, dispatcher=disp, sandbox=sandbox,
+                   planner=DeterministicPlanner(KB), operator=Operator("op", TM),
+                   verifier=Verifier("ver", conn)).run(TM)
+        assert {r["asset"] for r in findings.confirmed(conn, eng.id)} == {"web", "db"}
+        assert res.valid, res.errors
+        assert _ledger_status(conn, eng, "web", "KB-TEST-DESTRUCT-001") == "blocked_by_policy"
 
 
 def test_verifier_actively_disproves_rejects():

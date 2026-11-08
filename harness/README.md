@@ -105,6 +105,17 @@ the signal triage the harness owns on top of them.
   and the report ships nothing confirmed. The report ships only if
   `validate_report` passes.
 
+## What's here (the Planner)
+
+The first of the four roles with a real (non-stub) implementation, slotted into
+the loop's role seam.
+
+- `planner.py` - `DeterministicPlanner(kb_index)` ranks the candidate pairs the
+  loop hunts: most-severe-first by the card's base band, then
+  lowest-blast-tier-first within a band, then a stable (technique, asset)
+  tiebreak so a plan is reproducible. Read-only and model-free; it is the v1
+  stand-in the reasoning-model planner swaps behind later, same `plan` interface.
+
 ## Run
 
 ```sh
@@ -114,6 +125,7 @@ python3 tests/test_store.py                                 # M1 store invariant
 python3 tests/test_dispatch.py                              # propose-and-dispose chokepoint
 python3 tests/test_findings_report.py                       # finding/report layer
 python3 tests/test_loop.py                                  # outer control loop + roles
+python3 tests/test_planner.py                               # deterministic planner
 python3 -m harness.substrate.contract harness/substrate/examples/engagement.example.yaml
 ```
 
@@ -121,7 +133,8 @@ python3 -m harness.substrate.contract harness/substrate/examples/engagement.exam
 
 Provisioning, snapshot/restore, the gateway, the guard-proof self-tests as live
 probes, and the kill switch (infrastructure). On the model plane: the
-Bifrost-backed role sessions that implement the loop's role seam (the Planner,
-Operator, Verifier, and Reporter prompts and their virtual keys) and the live
-`phase_recon` that produces the target model. This slice is the policy core and
-the orchestration those plug into.
+Bifrost-backed role sessions that implement the loop's role seam (the Operator,
+Verifier, and Reporter prompts and their virtual keys, plus the reasoning-model
+planner that would replace the deterministic one) and the live `phase_recon`
+that produces the target model. This slice is the policy core and the
+orchestration those plug into.

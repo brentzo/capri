@@ -22,6 +22,7 @@ test:
 	python3 tests/test_dispatch.py
 	python3 tests/test_findings_report.py
 	python3 tests/test_loop.py
+	python3 tests/test_planner.py
 
 ## contract: validate the example engagement contract (HC-SUB-01 §4)
 contract:

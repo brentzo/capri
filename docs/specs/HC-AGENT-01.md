@@ -207,7 +207,8 @@ The outer control loop (§4, §4.1, §4.2) is implemented as pure-standard-libra
 Signal triage is in harness code, not the Operator's context: the loop reads the probe_event's recorded `deterministic_signals` through `harness/store/evidence.py:get_signals` and applies the card's success-signal rule (`signal_evaluator`, the seam where Laya replaces the deterministic default), so an injected instruction in a target response cannot forge a lead (§7).
 finder != verifier is asserted at the loop before any confirm, over the DB CHECK; with the sandbox down the loop runs passive-only and holds every lead at `needs_validation`; the report ships only if `validate_report` passes.
 The four roles, the sandbox, and the Reporter are injected (the real roles are Bifrost-backed LLM sessions and the sandbox is infrastructure), so `tests/test_loop.py` drives the loop with deterministic stub roles and a stub sandbox, proving the §11 criteria (confirmed-ships-valid, finder!=verifier refused, resume-from-ledger, injected-target-denied, passive-only); these run in CI.
-The Bifrost-backed role sessions (the Planner, Operator, Verifier, and Reporter prompts and their virtual keys, §6) and the live `phase_recon` that produces the target model remain to be built against this seam.
+The Planner (§3) is implemented against this seam as `harness/planner.py:DeterministicPlanner`, the first role with a real rather than stub implementation: it ranks the candidate pairs most-severe-first, then lowest-blast-tier-first, then by a stable (technique, asset) tiebreak, read-only and model-free, with `tests/test_planner.py` in CI.
+The remaining Bifrost-backed role sessions (the Operator, Verifier, and Reporter prompts and their virtual keys, §6, plus the reasoning-model planner that would replace the deterministic one) and the live `phase_recon` that produces the target model remain to be built against this seam.
 
 ## 11. Acceptance criteria
 
