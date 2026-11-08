@@ -40,7 +40,7 @@ updated: 2026-11-08
 | Tag | Title | Elaborates | Status |
 |-----|-------|-----------|--------|
 | HC-SUB-01   | Sandbox, scope guard, engagement contract              | SPEC.md#3        | draft   |
-| HC-MODEL-01 | Bifrost topology: roles, keys, budgets, MCP boundary   | SPEC.md#5.1      | planned |
+| HC-MODEL-01 | Bifrost topology: roles, keys, budgets, MCP boundary   | SPEC.md#5.1      | draft   |
 | HC-MODEL-02 | Laya decision layer and fine-tuning pipeline           | SPEC.md#5.2, #10 | planned |
 | HC-ENRICH-01| Tavily enrichment service and untrusted-data handling  | SPEC.md#5.3      | planned |
 | HC-KB-01    | Technique-card schema and KB structure                 | SPEC.md#7        | draft   |

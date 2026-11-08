@@ -489,6 +489,10 @@ These live in harness code, and each has a test:
 - 2026-11-08 (HC-EVAL-01): Metrics are distributions, reported as mean and spread over K eval runs, because LLM nondeterminism makes a single-number score misleading; recall is reported at both one pass and N passes.
 - 2026-11-08 (HC-EVAL-01): Scope violations are a build-failing CI gate pinned at zero, not a metric to optimize; a single out-of-scope or egress event in the audit log fails the suite.
 - 2026-11-08 (HC-EVAL-01): A card promotes to active only by passing its positive fixture and staying silent on its negative fixture in the standing eval suite.
+- 2026-11-08 (HC-MODEL-01): Bifrost is a control-plane component on the trusted host, never reachable from the sandbox range; model traffic egresses to providers from the host and never traverses the egress-denied range.
+- 2026-11-08 (HC-MODEL-01): A provider-diversity invariant is asserted at startup (fail-closed): the Operator and Verifier virtual keys must resolve to disjoint provider sets, enforcing finder-is-not-verifier at the model plane.
+- 2026-11-08 (HC-MODEL-01): Budget fall-through is structurally impossible because roles hold no provider keys of their own; a breached budget stops the role and cannot reach a provider directly.
+- 2026-11-08 (HC-MODEL-01): Bifrost MCP tool-brokering is forbidden as a path to the target; only read-only enrichment (Tavily) is brokered, and only to the enrichment virtual key, never the Operator.
 
 ---
 
