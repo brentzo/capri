@@ -478,6 +478,10 @@ These live in harness code, and each has a test:
 - 2026-11-08 (HC-KB-01): Success signals are deterministic-first; Laya is named only for inherently fuzzy judgments and its confidence feeds the needs_validation gate.
 - 2026-11-08 (HC-KB-01): Out-of-band callbacks must terminate at an in-sandbox collaborator, never the internet; an external collaborator fails card validation.
 - 2026-11-08 (HC-KB-01): Every probe_event pins card id and version, so a finding stays interpretable against the exact card that produced it.
+- 2026-11-08 (HC-FIND-01): Independent verification is universal; finder-is-not-verifier reproduction is always required to reach confirmed, and signal confidence only gates whether a lead is emitted, never substitutes for verification.
+- 2026-11-08 (HC-FIND-01): rejected and inconclusive are distinct verdicts; only active disproof or a known false positive is rejected, while an unestablished verdict is inconclusive and never ships as confirmed.
+- 2026-11-08 (HC-FIND-01): The harness, not the Verifier model, renders the final deterministic verdict; the Verifier role exists to drive and adapt repro, so a model cannot talk itself into a confirmation.
+- 2026-11-08 (HC-FIND-01): Hardening notes carry no CVSS and are reported separately from vulnerabilities, keeping severity tied to demonstrated impact.
 
 ---
 

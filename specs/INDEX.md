@@ -46,7 +46,7 @@ updated: 2026-11-08
 | HC-KB-01    | Technique-card schema and KB structure                 | SPEC.md#7        | draft   |
 | HC-KB-02    | Web and auth technique-card starter set                | SPEC.md#7        | draft   |
 | HC-AGENT-01 | Agent loop and role orchestration                      | SPEC.md#4, #6    | draft   |
-| HC-FIND-01  | Findings model and verification protocol               | SPEC.md#8        | planned |
+| HC-FIND-01  | Findings model and verification protocol               | SPEC.md#8        | draft   |
 | HC-DATA-01  | Evidence store and self-labeling corpus                | SPEC.md#9        | planned |
 | HC-SAFE-01  | Safety and guardrails                                  | SPEC.md#11       | planned |
 | HC-EVAL-01  | Evaluation harness and seeded vulns                    | SPEC.md#14       | planned |

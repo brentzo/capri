@@ -119,7 +119,7 @@ Every signal declares a `type`, an `evaluator`, and an `assert`, and returns `{h
 Rules:
 
 - Deterministic first: a signal uses a deterministic evaluator unless the phenomenon is inherently a judgment call, in which case it names a Laya decision point (`evaluator: laya:success_signal`) per HC-MODEL-02.
-- The returned `confidence` feeds the HC-FIND-01 gate: below the configured floor, the lead stays `needs_validation` and goes to the Verifier; a deterministic evaluator returns 1.0 or 0.0.
+- The returned `confidence` feeds the HC-FIND-01 gate: below the configured floor a signal is not emitted as a lead at all, and every emitted lead is independently verified regardless of confidence (HC-FIND-01 is the authority on this); a deterministic evaluator returns 1.0 or 0.0.
 - `oob_callback` must terminate at an in-sandbox collaborator service (a DNS/HTTP listener on the range), never an internet host, which keeps the egress-denied guarantee (HC-SUB-01 G2) intact. A card that names an external collaborator fails validation.
 
 ## 6. Chaining through the blackboard
