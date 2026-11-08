@@ -493,6 +493,10 @@ These live in harness code, and each has a test:
 - 2026-11-08 (HC-MODEL-01): A provider-diversity invariant is asserted at startup (fail-closed): the Operator and Verifier virtual keys must resolve to disjoint provider sets, enforcing finder-is-not-verifier at the model plane.
 - 2026-11-08 (HC-MODEL-01): Budget fall-through is structurally impossible because roles hold no provider keys of their own; a breached budget stops the role and cannot reach a provider directly.
 - 2026-11-08 (HC-MODEL-01): Bifrost MCP tool-brokering is forbidden as a path to the target; only read-only enrichment (Tavily) is brokered, and only to the enrichment virtual key, never the Operator.
+- 2026-11-08 (HC-MODEL-02): Laya is a per-decision family of LoRA heads on one self-hosted base, called directly by the harness off the Bifrost plane, because its classify-not-chat I/O does not fit chat-completions.
+- 2026-11-08 (HC-MODEL-02): Calibration, not accuracy, is the promotion criterion for a fine-tuned decision head; a calibration regression blocks promotion even when accuracy improves.
+- 2026-11-08 (HC-MODEL-02): Graceful degradation when Laya is unavailable: deterministic evaluators run, and a laya-only signal keeps its lead at needs_validation rather than ever silently confirming.
+- 2026-11-08 (HC-MODEL-02): If the bake-off shows poor calibration, the emission/confirm gate stays deterministic and Laya is demoted to an advisory ranker only.
 
 ---
 
