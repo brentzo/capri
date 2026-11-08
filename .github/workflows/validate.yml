@@ -37,8 +37,8 @@ jobs:
       - name: Business-requirement features are valid and in sync
         run: |
           python3 tools/gen_features.py
-          if [ -n "$(git status --porcelain -- requirements/features)" ]; then
-            echo "::error::requirements/features is out of sync; run 'make features' and commit."
-            git status --porcelain -- requirements/features
+          if [ -n "$(git status --porcelain -- docs/requirements/features)" ]; then
+            echo "::error::docs/requirements/features is out of sync; run 'make features' and commit."
+            git status --porcelain -- docs/requirements/features
             exit 1
           fi

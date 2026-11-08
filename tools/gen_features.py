@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Extract the Gherkin from the business-requirement specs into .feature files.
 
-Each requirements/BR-*.md carries exactly one ```gherkin fenced Feature block.
-This writes it to requirements/features/<same-stem>.feature so the scenarios are
+Each docs/requirements/BR-*.md carries exactly one ```gherkin fenced Feature block.
+This writes it to docs/requirements/features/<same-stem>.feature so the scenarios are
 available as standard, BDD-runnable Gherkin. The BR docs stay the source of
 truth; CI regenerates and fails if the features drift.
 
@@ -18,11 +18,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def main():
-    md_files = sorted(glob.glob(os.path.join(ROOT, "requirements", "BR-*.md")))
+    md_files = sorted(glob.glob(os.path.join(ROOT, "docs", "requirements", "BR-*.md")))
     if not md_files:
-        print("no requirements/BR-*.md files found")
+        print("no docs/requirements/BR-*.md files found")
         return 1
-    out_dir = os.path.join(ROOT, "requirements", "features")
+    out_dir = os.path.join(ROOT, "docs", "requirements", "features")
     os.makedirs(out_dir, exist_ok=True)
 
     problems, written = [], 0
@@ -44,7 +44,7 @@ def main():
 
     n_scen = sum(len(re.findall(r"^\s*Scenario", open(f).read(), re.M))
                  for f in glob.glob(os.path.join(out_dir, "*.feature")))
-    print(f"generated {written} feature file(s), {n_scen} scenarios -> requirements/features/")
+    print(f"generated {written} feature file(s), {n_scen} scenarios -> docs/requirements/features/")
     if problems:
         print("PROBLEMS:")
         for p in problems:

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Materialize the condensed technique cards into the full kb/<class>/*.yaml tree.
 
-Reads the authored condensed card blocks from specs/HC-KB-*.md and writes one
+Reads the authored condensed card blocks from docs/specs/HC-KB-*.md and writes one
 complete card file per card under kb/<class-dir>/<id>.yaml, filling the
 full-template fields HC-KB-01 §3 requires that the condensed blocks omit:
 
@@ -195,7 +195,7 @@ def emit_card(fields, order, cls):
 # driver
 # --------------------------------------------------------------------------
 def main():
-    specs = sorted(glob.glob(os.path.join(ROOT, "specs", "HC-KB-*.md")))
+    specs = sorted(glob.glob(os.path.join(ROOT, "docs", "specs", "HC-KB-*.md")))
     specs = [p for p in specs if os.path.basename(p) != "HC-KB-01.md"]
     by_class = {}
     written = 0

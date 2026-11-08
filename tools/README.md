@@ -1,13 +1,13 @@
 # KB tooling
 
 The reference implementation of the technique-card validator specified in
-[HC-KB-01 §9](../specs/HC-KB-01.md) and its acceptance behavior in HC-KB-01 §12.
+[HC-KB-01 §9](../docs/specs/HC-KB-01.md) and its acceptance behavior in HC-KB-01 §12.
 Pure Python standard library, no third-party dependency, runnable in CI.
 
 ## Files
 
 - `materialize_kb.py` - generator. Reads the condensed card blocks in
-  `specs/HC-KB-*.md` and writes the full cards to `kb/<class>/*.yaml`, plus
+  `docs/specs/HC-KB-*.md` and writes the full cards to `kb/<class>/*.yaml`, plus
   `kb/index.md` and the `eval/manifests/*.yaml` ground-truth manifests.
 - `validate_kb.py` - the validator. By default checks the materialized
   `kb/<class>/*.yaml` tree (full cards); `--from-specs` checks the condensed
@@ -21,7 +21,7 @@ Pure Python standard library, no third-party dependency, runnable in CI.
 The specs are authored in condensed form and remain the source of truth.
 `make materialize` regenerates the `kb/` tree and `eval/manifests/` from them;
 the tree is committed, and CI fails if it drifts from the specs. Edit a card in
-its `specs/HC-KB-*.md` block, then re-materialize.
+its `docs/specs/HC-KB-*.md` block, then re-materialize.
 
 ## Usage
 

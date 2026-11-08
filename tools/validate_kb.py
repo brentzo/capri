@@ -3,7 +3,7 @@
 
 Implements the validation gate specified in HC-KB-01 §9 and the acceptance
 behaviors in HC-KB-01 §12. It reads the authored technique cards (by default
-from the condensed YAML blocks in specs/HC-KB-*.md, the current source of
+from the condensed YAML blocks in docs/specs/HC-KB-*.md, the current source of
 truth) and checks each one:
 
   - schema shape and required fields (HC-KB-01 §3)
@@ -417,7 +417,7 @@ def main():
     ap.add_argument("paths", nargs="*",
                     help="card .yaml files, or spec .md files with --from-specs")
     ap.add_argument("--from-specs", action="store_true",
-                    help="validate the condensed blocks in specs/HC-KB-*.md "
+                    help="validate the condensed blocks in docs/specs/HC-KB-*.md "
                          "instead of the materialized kb/<class>/*.yaml tree")
     ap.add_argument("--strict", action="store_true",
                     help="treat UNRESOLVED taxonomy ids as failures too")
@@ -430,7 +430,7 @@ def main():
     if args.from_specs:
         # Condensed blocks in the class specs. HC-KB-01.md holds the block-style
         # schema TEMPLATE (the definition), not a card instance, so it is skipped.
-        specs = args.paths or sorted(glob.glob(os.path.join(ROOT, "specs", "HC-KB-*.md")))
+        specs = args.paths or sorted(glob.glob(os.path.join(ROOT, "docs", "specs", "HC-KB-*.md")))
         for path in [p for p in specs if os.path.basename(p) != "HC-KB-01.md"]:
             rel = os.path.relpath(path, ROOT)
             for raw in extract_card_blocks(open(path).read()):

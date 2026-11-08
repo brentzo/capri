@@ -1,6 +1,6 @@
 # HackCulture spec index
 
-This directory holds the detailed component specs that elaborate the sections of [../SPEC.md](../SPEC.md).
+This directory holds the detailed component specs that elaborate the sections of [../../SPEC.md](../../SPEC.md).
 SPEC.md stays the overview and decision log; each file here goes deep on exactly one component.
 
 ## Tagging convention
