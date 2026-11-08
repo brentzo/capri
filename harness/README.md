@@ -84,6 +84,27 @@ The verdict-to-report path of HC-FIND-01, as pure-stdlib code.
   verifier-event-and-repro, vuln-has-cvss+cwe / hardening-has-neither, technique
   resolves, no raw internal error text, passive-only ships nothing confirmed).
 
+## What's here (the outer control loop)
+
+The engine of HC-AGENT-01 §4: the deterministic loop that drives a run through
+plan -> hunt -> verify -> report. The four roles, the sandbox, and the model
+plane (Bifrost) are infrastructure, injected here; this is the orchestration and
+the signal triage the harness owns on top of them.
+
+- `loop.py` - `Loop.run(target_model)` runs `phase_threat_model` (assets x
+  applicable KB cards, via the applicability DSL), lets the injected Planner
+  order the pairs, then for each pair runs the Operator inner loop through
+  `dispatch()` until a deterministic success signal fires and a lead is emitted,
+  and reproduces each lead on a disjoint Verifier session (finder != verifier,
+  asserted here over the DB CHECK). Signal triage stays in harness code: the loop
+  reads the probe_event's recorded `deterministic_signals` (`evidence.get_signals`)
+  and applies the card's success-signal rule, so the Operator never sees the raw
+  signal and an injected instruction cannot forge a lead. `signal_evaluator` is
+  the seam where Laya (HC-MODEL-02) replaces the deterministic default. With the
+  sandbox down the loop runs passive-only: every lead is held `needs_validation`
+  and the report ships nothing confirmed. The report ships only if
+  `validate_report` passes.
+
 ## Run
 
 ```sh
@@ -92,11 +113,15 @@ python3 tests/test_substrate.py                             # M0 substrate
 python3 tests/test_store.py                                 # M1 store invariants
 python3 tests/test_dispatch.py                              # propose-and-dispose chokepoint
 python3 tests/test_findings_report.py                       # finding/report layer
+python3 tests/test_loop.py                                  # outer control loop + roles
 python3 -m harness.substrate.contract harness/substrate/examples/engagement.example.yaml
 ```
 
 ## Not here yet
 
 Provisioning, snapshot/restore, the gateway, the guard-proof self-tests as live
-probes, the kill switch, and the agent loop. Those are later milestones (M0 infra,
-then M1 harness skeleton); this slice is the policy core they enforce.
+probes, and the kill switch (infrastructure). On the model plane: the
+Bifrost-backed role sessions that implement the loop's role seam (the Planner,
+Operator, Verifier, and Reporter prompts and their virtual keys) and the live
+`phase_recon` that produces the target model. This slice is the policy core and
+the orchestration those plug into.

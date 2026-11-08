@@ -61,6 +61,21 @@ def get_raw(conn, blobs, probe_event_id):
             "response": blobs.get(row["response_raw_uri"]) if row["response_raw_uri"] else None}
 
 
+def get_signals(conn, probe_event_id):
+    """Return the probe_event's recorded deterministic_signals dict (or {}).
+
+    The harness, not the Operator, reads these to triage a success signal
+    (HC-AGENT-01 §7): the signal stays out of the role's context, so an injected
+    instruction in a target response cannot forge a lead - only the adapter's
+    observed signal, written here at record time, drives emission."""
+    row = conn.execute(
+        "SELECT deterministic_signals FROM probe_event WHERE id=?",
+        (probe_event_id,)).fetchone()
+    if row is None or not row["deterministic_signals"]:
+        return {}
+    return json.loads(row["deterministic_signals"])
+
+
 def verify_integrity(conn, blobs, probe_event_id):
     """Return ('ok', None) or ('mismatch', detail)."""
     row = conn.execute(

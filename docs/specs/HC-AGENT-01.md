@@ -201,7 +201,13 @@ Produces:
 The `dispatch()` chokepoint (§5.2) is implemented as pure-standard-library code in `harness/dispatch.py` (`Dispatcher`, `ProbeContext`): it runs the four guards in order, records one `probe_event` with raw I/O through `harness/store/evidence.py` into the content-addressed `harness/store/blobstore.py`, and writes an audit row through `harness/store/audit.py`.
 The fourth guard (per-target rate and run-action budget) is `harness/ratelimit.py`.
 Tool adapters and the sandbox are injected (the real tools are infrastructure, like the gateway), so tests drive the chokepoint with stub adapters; adversarial tests in `tests/test_dispatch.py` run in CI.
-The planner, the role sessions, Bifrost wiring, and the outer control loop remain to be built.
+
+The outer control loop (§4, §4.1, §4.2) is implemented as pure-standard-library code in `harness/loop.py` (`Loop`, `Pair`, `phase_threat_model`).
+`Loop.run(target_model)` drives plan -> hunt -> verify -> report: `phase_threat_model` turns the recon target model into candidate pairs by evaluating each card's applicability DSL (`harness/predicates.py`), the injected Planner orders them, `_hunt` runs the Operator inner loop through `dispatch()` until a success signal fires, and `_verify` runs the Verifier on a disjoint session.
+Signal triage is in harness code, not the Operator's context: the loop reads the probe_event's recorded `deterministic_signals` through `harness/store/evidence.py:get_signals` and applies the card's success-signal rule (`signal_evaluator`, the seam where Laya replaces the deterministic default), so an injected instruction in a target response cannot forge a lead (§7).
+finder != verifier is asserted at the loop before any confirm, over the DB CHECK; with the sandbox down the loop runs passive-only and holds every lead at `needs_validation`; the report ships only if `validate_report` passes.
+The four roles, the sandbox, and the Reporter are injected (the real roles are Bifrost-backed LLM sessions and the sandbox is infrastructure), so `tests/test_loop.py` drives the loop with deterministic stub roles and a stub sandbox, proving the §11 criteria (confirmed-ships-valid, finder!=verifier refused, resume-from-ledger, injected-target-denied, passive-only); these run in CI.
+The Bifrost-backed role sessions (the Planner, Operator, Verifier, and Reporter prompts and their virtual keys, §6) and the live `phase_recon` that produces the target model remain to be built against this seam.
 
 ## 11. Acceptance criteria
 
