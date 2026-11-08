@@ -14,7 +14,7 @@ updated: 2026-11-08
 
 Ten cards for the `cloud-deployment` class, authored against the HC-KB-01 schema.
 It covers the control-plane and deployment surface: instance metadata, IAM, object storage, infrastructure-as-code secrets, container and orchestration escape, serverless event injection, and network exposure.
-These targets are modeled on the range as self-hosted equivalents (a mock metadata endpoint, a mock cloud API, a MinIO-style store, a local Kubernetes-style API), never a real cloud account, so the egress-denied guarantee holds.
+These targets are modeled on the range as self-hosted equivalents (a mock metadata endpoint, a mock cloud API, an S3-style object store, a local Kubernetes-style API), never a real cloud account, so the egress-denied guarantee holds.
 
 Each card ships as its own YAML file under `kb/cloud-deployment/` (HC-KB-01 §7), condensed here to the meaningful fields.
 Taxonomy IDs marked `# verify` are plausible but must resolve under the HC-KB-01 validator at authoring time.
@@ -231,7 +231,7 @@ false_positive_notes: [ "Reachability is tested only within declared scope; the 
 
 ## 6. Seed targets and fixtures
 
-v1 stands up self-hosted cloud equivalents on the range (no internet): a mock instance-metadata endpoint serving a `metadata_role_canary`, a mock cloud control plane with an over-permissioned role and an `admin_canary` resource, a MinIO-style object store with a public `canary_object` and a writable bucket, a config server exposing a `secret_canary`, a privileged container with a host mount and a node-scoped canary, a Kubernetes-style API that lists a `canary_namespace` anonymously, a serverless function that calls `range-oob` on injected input, and an internal-only service tagged with `internal_canary`.
+v1 stands up self-hosted cloud equivalents on the range (no internet): a mock instance-metadata endpoint serving a `metadata_role_canary`, a mock cloud control plane with an over-permissioned role and an `admin_canary` resource, an S3-style object store with a public `canary_object` and a writable bucket, a config server exposing a `secret_canary`, a privileged container with a host mount and a node-scoped canary, a Kubernetes-style API that lists a `canary_namespace` anonymously, a serverless function that calls `range-oob` on injected input, and an internal-only service tagged with `internal_canary`.
 Each `does_not_fire` fixture applies the control: IMDSv2-style hop limits, least-privilege roles, private buckets, secret references instead of literals, an unprivileged container, authenticated orchestration, event validation, and a tight security group.
 Probing uses `custom.cloud_probe` and `nmap`, both reviewed allowlist adapters (HC-AGENT-01 §5.3); the mock control plane and metadata endpoints live on the range and never egress.
 

@@ -29,8 +29,10 @@ Parsed features can be recomputed; raw request and response cannot be reconstruc
 ## 3. Store topology
 
 - Relational store (Postgres): metadata, parsed features, findings, labels, coverage ledger.
-- Object store (self-hosted, S3-compatible, e.g. MinIO on the trusted host): raw request/response bodies and pcaps as content-addressed, compressed (zstd) blobs.
-- The two are linked by `blob://<sha256>` URIs recorded on the probe_event.
+- Blob store (self-hosted, inside the trust boundary): raw request/response bodies and pcaps as content-addressed, compressed (zstd) blobs.
+- The default blob backend is a content-addressed filesystem store: `blob://<sha256>` maps straight to a path, so deduplication and write-once immutability are intrinsic and no extra service runs on the range.
+- If an S3 API is ever required (an external S3-only tool, or scale-out beyond one node), a lightweight S3-compatible server drops in behind the same interface: Garage (lightest) or SeaweedFS (Apache-2.0, adds file-level access). MinIO is deliberately excluded: its community edition was archived in 2026.
+- The two stores are linked by `blob://<sha256>` URIs recorded on the probe_event.
 - Both are self-hosted with no external managed service, which keeps the sensitive corpus air-gapped and consistent with the HC-SUB-01 egress posture.
 
 ## 4. Schema (Postgres DDL)
@@ -221,7 +223,7 @@ ledger.summary(engagement_id)                   -> coverage_summary  # HC-FIND-0
 
 HC-AGENT-01 pseudocode abbreviates `(asset, technique_id)` as `pair`, with `engagement_id` the ambient run; the canonical keys are the full triple above.
 
-The store is implemented as pure-standard-library code in `harness/store/` (`schema.sql`, `db.py`, `findings.py`, `ledger.py`, `audit.py`), a SQLite realization of the Postgres+MinIO production target (§3) that enforces the §11 invariants in the database: the `finder_not_verifier` CHECK, append-only triggers on `probe_event`, `finding_status`, and `label`, and the hash-chained audit log verified by `audit.verify_chain`.
+The store is implemented as pure-standard-library code in `harness/store/` (`schema.sql`, `db.py`, `findings.py`, `ledger.py`, `audit.py`), a SQLite realization of the production target (§3: Postgres plus a content-addressed blob store) that enforces the §11 invariants in the database: the `finder_not_verifier` CHECK, append-only triggers on `probe_event`, `finding_status`, and `label`, and the hash-chained audit log verified by `audit.verify_chain`.
 Adversarial tests in `tests/test_store.py` run in CI.
 Blob storage, deduplication, and the train/test corpus export remain to be built on this backbone.
 
@@ -237,7 +239,7 @@ Blob storage, deduplication, and the train/test corpus export remain to be built
 ## 12. Open questions
 
 - Compute `parsed` features at write time (chosen for queryability) versus lazily; either way raw stays authoritative and parsed is recomputable on a schema change.
-- Blob backend for the air-gapped case: MinIO versus a plain encrypted filesystem store.
+- Blob backend resolved to a content-addressed filesystem store by default (§3); revisit a lightweight S3 server (Garage or SeaweedFS) only if an external S3-only tool or multi-node scale-out forces it.
 - Whether the coverage ledger deserves its own spec once it grows a richer state machine; kept here for v1.
 - Label consensus when multiple audits of the same event disagree; likely a gold-with-reviewer-id tiebreak.
 - PII detection precision: regex versus local NER and the false-positive cost of over-redacting the corpus.

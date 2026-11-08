@@ -1,7 +1,7 @@
 -- Evidence / findings / ledger / audit store (HC-DATA-01, HC-SAFE-01).
 --
 -- This is a SQLite realization for a zero-dependency, testable reference; the
--- production target is Postgres + MinIO (HC-DATA-01 §3). The invariants the
+-- production target is Postgres plus a content-addressed blob store (HC-DATA-01 §3). The invariants the
 -- specs insist on are enforced here in the database, not only the app:
 --   * finder != verifier               (finding CHECK constraint)
 --   * append-only evidence             (triggers reject UPDATE/DELETE)

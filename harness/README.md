@@ -26,7 +26,8 @@ harness runs on top of it:
 ## What's here (M1 store, the data backbone)
 
 The evidence/findings/ledger/audit store of HC-DATA-01 and HC-SAFE-01, as a
-SQLite realization of the Postgres+MinIO production target. The three guarantees
+SQLite realization of the production target (Postgres plus a content-addressed
+blob store). The three guarantees
 the specs insist on are enforced in the database itself, not only the app:
 
 - `store/schema.sql` - the schema. `finder_not_verifier` is a `finding` CHECK

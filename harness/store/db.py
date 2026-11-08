@@ -1,7 +1,7 @@
 """Store connection + schema bootstrap (HC-DATA-01, HC-SAFE-01).
 
 SQLite realization for a zero-dependency, testable reference. Production target
-is Postgres + MinIO (HC-DATA-01 §3); the invariants are the same and enforced
+is Postgres plus a content-addressed blob store (HC-DATA-01 §3); the invariants are the same and enforced
 in the database here too.
 """
 import os
