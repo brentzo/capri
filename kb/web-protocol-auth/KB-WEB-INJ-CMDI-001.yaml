@@ -1,0 +1,18 @@
+id: KB-WEB-INJ-CMDI-001
+title: OS command injection
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1190}, owasp: [WSTG-INPV-12], cwe: [CWE-78] }
+applicability: [ 'asset.type == "http_endpoint"', 'exists(asset.params)' ]
+preconditions: [ reachable ]
+yields_on_success: [ rce_foothold ]
+inputs: { param: "{asset.params[*]}" }
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.cmdi_probe, intent: sleep_and_oob, args: { delay_s: 5, collaborator: range-oob } }
+success_signal: { type: timing_oracle, evaluator: deterministic, assert: "significant_delay(5) OR oob_received(collaborator=range-oob)", confidence_floor: 0.0 }
+severity_rubric: { base: critical, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/web-protocol-auth/kb-web-inj-cmdi-001-vuln, does_not_fire: seed/web-protocol-auth/kb-web-inj-cmdi-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/78.html", "https://attack.mitre.org/techniques/T1190/", "https://owasp.org/www-project-web-security-testing-guide/" ]

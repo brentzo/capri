@@ -1,0 +1,18 @@
+id: KB-WEB-INJ-SSTI-001
+title: Server-side template injection
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1190}, owasp: [WSTG-INPV-18], cwe: [CWE-1336] }
+applicability: [ 'asset.type == "http_endpoint"', 'exists(asset.params)' ]
+preconditions: [ reachable ]
+yields_on_success: [ rce_foothold ]
+inputs: { param: "{asset.params[*]}" }
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.ssti_probe, intent: arithmetic_eval, args: { expr: "{{7*7}}", expect: "49" } }
+success_signal: { type: differential, evaluator: deterministic, assert: "response_contains('49') AND NOT response_contains('{{7*7}}')", confidence_floor: 0.0 }
+severity_rubric: { base: critical, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/web-protocol-auth/kb-web-inj-ssti-001-vuln, does_not_fire: seed/web-protocol-auth/kb-web-inj-ssti-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/1336.html", "https://attack.mitre.org/techniques/T1190/", "https://owasp.org/www-project-web-security-testing-guide/" ]

@@ -1,0 +1,20 @@
+id: KB-WEB-INJ-XSS-001
+title: Reflected cross-site scripting in a parameter
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1190}, owasp: [WSTG-INPV-01], cwe: [CWE-79] }
+applicability: [ 'asset.type == "http_endpoint"', 'exists(asset.params)' ]
+preconditions: [ reachable ]
+yields_on_success: [ client_exec ]
+inputs: { param: "{asset.params[*]}" }
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.xss_probe,   intent: reflect_marker }
+  - { tool: browser.playwright, intent: observe_execution }
+success_signal: { type: content_match, evaluator: "laya:success_signal", assert: "marker executed in DOM, not merely reflected", confidence_floor: 0.7 }
+severity_rubric: { base: medium, raise_if: [ { when: "asset.auth_context", to: high } ], cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:L/VI:L/VA:N/SC:N/SI:N/SA:N" }
+false_positive_notes: [ "Reflection without execution is not XSS; confirm execution in a browser context." ]
+test_fixture: { fires_on: seed/web-protocol-auth/kb-web-inj-xss-001-vuln, does_not_fire: seed/web-protocol-auth/kb-web-inj-xss-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/79.html", "https://attack.mitre.org/techniques/T1190/", "https://owasp.org/www-project-web-security-testing-guide/" ]

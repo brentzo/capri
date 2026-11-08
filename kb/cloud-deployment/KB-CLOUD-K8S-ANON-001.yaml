@@ -1,0 +1,17 @@
+id: KB-CLOUD-K8S-ANON-001
+title: Anonymous or over-exposed orchestration API
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1610}, cwe: [CWE-306] }
+applicability: [ 'asset.type == "orchestrator_api"' ]
+preconditions: [ reachable ]
+yields_on_success: [ cluster_read ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.cloud_probe, intent: anonymous_api_list, args: { resource: canary_namespace } }
+success_signal: { type: status_match, evaluator: deterministic, assert: "an unauthenticated API call returns 2xx and lists the canary namespace/secret", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/cloud-deployment/kb-cloud-k8s-anon-001-vuln, does_not_fire: seed/cloud-deployment/kb-cloud-k8s-anon-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/306.html", "https://attack.mitre.org/techniques/T1610/" ]

@@ -1,0 +1,17 @@
+id: KB-DOS-MEM-DECOMPRESS-001
+title: Decompression bomb
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1499.004}, cwe: [CWE-409] }
+applicability: [ 'asset.type == "http_endpoint"', 'asset.accepts_compressed_input == true' ]
+preconditions: [ reachable ]
+yields_on_success: [ resource_exhaustion ]
+blast_tier: 2
+cleanup: snapshot-restore
+probe_steps:
+  - { tool: custom.dos_probe, intent: bounded_compression_bomb, args: { cap_s: 10, cap_ratio: 1000 } }
+success_signal: { type: timing_oracle, evaluator: deterministic, assert: "a highly compressed payload is inflated without a decompressed-size cap, within cap_s", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/resource-exhaustion/kb-dos-mem-decompress-001-vuln, does_not_fire: seed/resource-exhaustion/kb-dos-mem-decompress-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/409.html", "https://attack.mitre.org/techniques/T1499/004/" ]

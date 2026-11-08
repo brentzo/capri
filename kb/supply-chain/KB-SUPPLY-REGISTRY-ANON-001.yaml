@@ -1,0 +1,17 @@
+id: KB-SUPPLY-REGISTRY-ANON-001
+title: Internal package registry allows anonymous publish or overwrite
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1195}, cwe: [CWE-306, CWE-284] }
+applicability: [ 'asset.type == "package_registry"' ]
+preconditions: [ reachable ]
+yields_on_success: [ registry_write ]
+blast_tier: 2
+cleanup: snapshot-restore
+probe_steps:
+  - { tool: custom.supply_probe, intent: anonymous_publish, args: { package: canary_pkg, version: "9.9.9" } }
+success_signal: { type: state_change, evaluator: deterministic, assert: "an unauthenticated publish/overwrite of canary_pkg succeeds and is resolvable", confidence_floor: 0.0 }
+severity_rubric: { base: high, raise_if: [ { when: "yields.build_exec", to: critical } ], cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/supply-chain/kb-supply-registry-anon-001-vuln, does_not_fire: seed/supply-chain/kb-supply-registry-anon-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/306.html", "https://cwe.mitre.org/data/definitions/284.html", "https://attack.mitre.org/techniques/T1195/" ]

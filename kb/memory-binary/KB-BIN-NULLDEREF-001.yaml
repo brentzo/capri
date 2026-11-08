@@ -1,0 +1,17 @@
+id: KB-BIN-NULLDEREF-001
+title: Null or invalid pointer dereference crash
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1499.004}, cwe: [CWE-476] }
+applicability: [ 'asset.type == "native_service"' ]
+preconditions: [ reachable, native_service ]
+yields_on_success: [ service_crash ]
+blast_tier: 2
+cleanup: snapshot-restore
+probe_steps:
+  - { tool: custom.bin_probe, intent: trigger_null_path }
+success_signal: { type: state_change, evaluator: deterministic, assert: "the input drives a null/invalid dereference and the service crashes and restarts", confidence_floor: 0.0 }
+severity_rubric: { base: medium, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:L/VI:L/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/memory-binary/kb-bin-nullderef-001-vuln, does_not_fire: seed/memory-binary/kb-bin-nullderef-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/476.html", "https://attack.mitre.org/techniques/T1499/004/" ]

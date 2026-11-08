@@ -1,0 +1,17 @@
+id: KB-SUPPLY-LOCKFILE-TAMPER-001
+title: Lockfile integrity not enforced on install
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1565.001}, cwe: [CWE-354] }
+applicability: [ 'asset.type == "build_resolver"', 'asset.uses_lockfile == true' ]
+preconditions: [ reachable ]
+yields_on_success: [ dependency_hijack ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.supply_probe, intent: install_with_mismatched_hash }
+success_signal: { type: differential, evaluator: deterministic, assert: "an install proceeds when a resolved artifact's hash does not match the lockfile", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/supply-chain/kb-supply-lockfile-tamper-001-vuln, does_not_fire: seed/supply-chain/kb-supply-lockfile-tamper-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/354.html", "https://attack.mitre.org/techniques/T1565/001/" ]

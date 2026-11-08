@@ -1,0 +1,18 @@
+id: KB-BIN-OVERFLOW-STACK-001
+title: Stack buffer overflow in a native service
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1203}, cwe: [CWE-121, CWE-787] }
+applicability: [ 'asset.type == "native_service"' ]
+preconditions: [ reachable, native_service ]
+yields_on_success: [ memory_corruption ]
+blast_tier: 2
+cleanup: snapshot-restore
+probe_steps:
+  - { tool: custom.bin_probe, intent: oversized_field, args: { field: name, len: 4096 } }
+success_signal: { type: state_change, evaluator: deterministic, assert: "sanitizer reports stack-buffer-overflow OR the service crashes and restarts", confidence_floor: 0.0 }
+severity_rubric: { base: high, raise_if: [ { when: "yields.rce_foothold", to: critical } ], cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+false_positive_notes: [ "A graceful input-length rejection is not a finding; require a sanitizer diagnostic or an observed crash." ]
+test_fixture: { fires_on: seed/memory-binary/kb-bin-overflow-stack-001-vuln, does_not_fire: seed/memory-binary/kb-bin-overflow-stack-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/121.html", "https://cwe.mitre.org/data/definitions/787.html", "https://attack.mitre.org/techniques/T1203/" ]

@@ -1,0 +1,18 @@
+id: KB-WEB-INJ-SSRF-001
+title: Server-side request forgery
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1190}, owasp: [WSTG-INPV-19], cwe: [CWE-918] }
+applicability: [ 'asset.type == "http_endpoint"', 'matches(asset.params, /url|uri|callback|dest|next/)' ]
+preconditions: [ reachable ]
+yields_on_success: [ internal_reach ]
+inputs: { param: "{asset.params[*]}" }
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.ssrf_probe, intent: fetch_collaborator, args: { collaborator: range-oob } }
+success_signal: { type: oob_callback, evaluator: deterministic, assert: "oob_received(collaborator=range-oob, from=target)", confidence_floor: 0.0 }
+severity_rubric: { base: high, raise_if: [ { when: "yields.internal_reach", to: critical } ], cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/web-protocol-auth/kb-web-inj-ssrf-001-vuln, does_not_fire: seed/web-protocol-auth/kb-web-inj-ssrf-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/918.html", "https://attack.mitre.org/techniques/T1190/", "https://owasp.org/www-project-web-security-testing-guide/" ]

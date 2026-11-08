@@ -1,0 +1,18 @@
+id: KB-AILLM-DOS-TOKEN-001
+title: Unbounded consumption - missing output or context limits
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { owasp: [LLM10:2025], cwe: [CWE-770] }
+applicability: [ 'asset.type == "llm_endpoint"' ]
+preconditions: [ reachable ]
+yields_on_success: [ resource_exhaustion ]
+blast_tier: 2
+cleanup: snapshot-restore
+probe_steps:
+  - { tool: custom.llm_probe, intent: unbounded_generation_probe, args: { cap_tokens: 20000, cap_s: 30 } }
+success_signal: { type: timing_oracle, evaluator: deterministic, assert: "response_tokens > cap_tokens OR latency_s > cap_s with no server-side limit", confidence_floor: 0.0 }
+severity_rubric: { base: medium, raise_if: [ { when: "asset.unauthenticated", to: high } ], cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:L/VI:L/VA:N/SC:N/SI:N/SA:N" }
+false_positive_notes: [ "Proves the absence of a cap with one bounded request; the dispatch rate limit and the HC-MODEL-01 budget prevent the probe itself from causing a sustained outage." ]
+test_fixture: { fires_on: seed/ai-llm/kb-aillm-dos-token-001-vuln, does_not_fire: seed/ai-llm/kb-aillm-dos-token-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/770.html", "https://genai.owasp.org/llm-top-10/" ]

@@ -1,0 +1,17 @@
+id: KB-CLIENT-WS-HIJACK-001
+title: Cross-site WebSocket hijacking (handshake origin not validated)
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { owasp: [WSTG-CLNT-10], cwe: [CWE-345] }
+applicability: [ 'asset.type == "http_endpoint"', 'asset.has_websocket == true' ]
+preconditions: [ reachable ]
+yields_on_success: [ cross_origin_read ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.client_probe, intent: ws_handshake_foreign_origin, args: { origin: "https://evil.range.local" } }
+success_signal: { type: differential, evaluator: deterministic, assert: "the socket is established for a foreign Origin and returns session-bound data", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/client-side/kb-client-ws-hijack-001-vuln, does_not_fire: seed/client-side/kb-client-ws-hijack-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/345.html", "https://owasp.org/www-project-web-security-testing-guide/" ]

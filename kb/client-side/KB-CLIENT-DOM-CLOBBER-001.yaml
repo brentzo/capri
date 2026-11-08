@@ -1,0 +1,18 @@
+id: KB-CLIENT-DOM-CLOBBER-001
+title: DOM clobbering overrides a script-referenced global
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { owasp: [WSTG-CLNT-01], cwe: [CWE-79] }
+applicability: [ 'asset.type == "http_endpoint"', 'asset.allows_named_markup == true' ]
+preconditions: [ reachable ]
+yields_on_success: [ dom_override ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.client_probe, intent: inject_named_elements }
+  - { tool: browser.playwright, intent: observe_overridden_reference }
+success_signal: { type: differential, evaluator: deterministic, assert: "a script-read global resolves to the injected element instead of its intended value", confidence_floor: 0.0 }
+severity_rubric: { base: medium, raise_if: [ { when: "yields.client_exec", to: high } ], cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:L/VI:L/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/client-side/kb-client-dom-clobber-001-vuln, does_not_fire: seed/client-side/kb-client-dom-clobber-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/79.html", "https://owasp.org/www-project-web-security-testing-guide/" ]

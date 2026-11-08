@@ -1,0 +1,18 @@
+id: KB-CLOUD-NET-SG-001
+title: Overly permissive security group exposes an internal service
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1021}, cwe: [CWE-284] }
+applicability: [ 'asset.type == "network_service"', 'asset.intended_internal == true' ]
+preconditions: [ reachable ]
+yields_on_success: [ lateral_reach ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: nmap, intent: reachability_from_peer_segment, args: { service_marker: internal_canary } }
+success_signal: { type: status_match, evaluator: deterministic, assert: "a service marked internal-only is reachable from an in-scope peer segment", confidence_floor: 0.0 }
+severity_rubric: { base: medium, raise_if: [ { when: "yields.cluster_read", to: high } ], cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:L/VI:L/VA:N/SC:N/SI:N/SA:N" }
+false_positive_notes: [ "Reachability is tested only within declared scope; the scope guard still forbids anything out of scope (HC-SUB-01)." ]
+test_fixture: { fires_on: seed/cloud-deployment/kb-cloud-net-sg-001-vuln, does_not_fire: seed/cloud-deployment/kb-cloud-net-sg-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/284.html", "https://attack.mitre.org/techniques/T1021/" ]

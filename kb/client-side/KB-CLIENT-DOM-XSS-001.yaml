@@ -1,0 +1,19 @@
+id: KB-CLIENT-DOM-XSS-001
+title: DOM-based cross-site scripting via a dangerous sink
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1059.007}, owasp: [WSTG-CLNT-01], cwe: [CWE-79] }
+applicability: [ 'asset.type == "http_endpoint"', 'asset.renders_html == true' ]
+preconditions: [ reachable ]
+yields_on_success: [ client_exec ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.client_probe, intent: seed_marker_into_source }
+  - { tool: browser.playwright, intent: observe_execution }
+success_signal: { type: content_match, evaluator: "laya:success_signal", assert: "marker executed in DOM via a client-side sink, not server-reflected", confidence_floor: 0.7 }
+severity_rubric: { base: high, raise_if: [ { when: "yields.token_exposure", to: critical } ], cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+false_positive_notes: [ "Distinguish a DOM sink from a server reflection; the payload must never reach the server, as in KB-WEB-INJ-XSS-001." ]
+test_fixture: { fires_on: seed/client-side/kb-client-dom-xss-001-vuln, does_not_fire: seed/client-side/kb-client-dom-xss-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/79.html", "https://attack.mitre.org/techniques/T1059/007/", "https://owasp.org/www-project-web-security-testing-guide/" ]

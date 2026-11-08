@@ -1,0 +1,17 @@
+id: KB-BIN-ARGV-INJECT-001
+title: Argument or environment injection into a native subprocess
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1059}, cwe: [CWE-88] }
+applicability: [ 'asset.type == "native_service"', 'asset.spawns_subprocess == true' ]
+preconditions: [ reachable, native_service ]
+yields_on_success: [ rce_foothold ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.bin_probe, intent: inject_argument, args: { collaborator: range-oob } }
+success_signal: { type: oob_callback, evaluator: deterministic, assert: "oob_received(collaborator=range-oob, from=subprocess)", confidence_floor: 0.0 }
+severity_rubric: { base: critical, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/memory-binary/kb-bin-argv-inject-001-vuln, does_not_fire: seed/memory-binary/kb-bin-argv-inject-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/88.html", "https://attack.mitre.org/techniques/T1059/" ]

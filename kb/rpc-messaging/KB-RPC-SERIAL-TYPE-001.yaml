@@ -1,0 +1,17 @@
+id: KB-RPC-SERIAL-TYPE-001
+title: Type confusion or type juggling bypasses a check
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { cwe: [CWE-843] }
+applicability: [ 'asset.type == "rpc_endpoint"' ]
+preconditions: [ reachable, rpc_endpoint ]
+yields_on_success: [ authn_bypass ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.rpc_probe, intent: send_type_juggled_payload }
+success_signal: { type: differential, evaluator: deterministic, assert: "a type-coerced value is accepted where the typed value is rejected", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/rpc-messaging/kb-rpc-serial-type-001-vuln, does_not_fire: seed/rpc-messaging/kb-rpc-serial-type-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/843.html" ]

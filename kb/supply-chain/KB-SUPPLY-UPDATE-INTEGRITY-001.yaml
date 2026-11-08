@@ -1,0 +1,18 @@
+id: KB-SUPPLY-UPDATE-INTEGRITY-001
+title: Update channel lacks integrity verification
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1195}, cwe: [CWE-494] }
+applicability: [ 'asset.type == "update_client"' ]
+preconditions: [ reachable ]
+yields_on_success: [ update_hijack ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.supply_probe, intent: substitute_update_via_range_proxy, args: { marker: update_canary } }
+success_signal: { type: differential, evaluator: deterministic, assert: "a substituted update is installed without an integrity or signature check", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+false_positive_notes: [ "Substitution happens only through the in-range proxy; there is no internet path, so this never leaves scope." ]
+test_fixture: { fires_on: seed/supply-chain/kb-supply-update-integrity-001-vuln, does_not_fire: seed/supply-chain/kb-supply-update-integrity-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/494.html", "https://attack.mitre.org/techniques/T1195/" ]

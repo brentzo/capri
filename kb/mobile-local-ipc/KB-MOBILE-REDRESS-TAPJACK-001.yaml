@@ -1,0 +1,17 @@
+id: KB-MOBILE-REDRESS-TAPJACK-001
+title: Tapjacking on a sensitive action (overlay permitted)
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { owasp: [M8:2024], cwe: [CWE-1021] }
+applicability: [ 'asset.type == "mobile_app"', 'asset.has_sensitive_action == true' ]
+preconditions: [ reachable, mobile_app ]
+yields_on_success: [ ui_redress ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.mobile_probe, intent: overlay_and_target_action }
+success_signal: { type: content_match, evaluator: deterministic, assert: "the sensitive action lacks overlay protection and is operable beneath an overlay", confidence_floor: 0.0 }
+severity_rubric: { base: medium, raise_if: [ { when: "asset.auth_context", to: high } ], cvss_base_vector: "CVSS:4.0/AV:L/AC:L/AT:N/PR:L/UI:N/VC:L/VI:L/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/mobile-local-ipc/kb-mobile-redress-tapjack-001-vuln, does_not_fire: seed/mobile-local-ipc/kb-mobile-redress-tapjack-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/1021.html", "https://owasp.org/www-project-mobile-top-10/" ]

@@ -1,0 +1,18 @@
+id: KB-BIN-RACE-TOCTOU-001
+title: Time-of-check to time-of-use race (double fetch)
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1203}, cwe: [CWE-367, CWE-362] }
+applicability: [ 'asset.type == "native_service"', 'asset.double_fetches == true' ]
+preconditions: [ reachable, native_service ]
+yields_on_success: [ race_corruption ]
+blast_tier: 2
+cleanup: snapshot-restore
+probe_steps:
+  - { tool: custom.bin_probe, intent: concurrent_mutate_between_check_and_use, args: { trials: 100 } }
+success_signal: { type: differential, evaluator: deterministic, assert: "across trials a value validated at check differs at use, with a sanitizer or state divergence", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+false_positive_notes: [ "Require a reproducible divergence across trials, not a single racy sample." ]
+test_fixture: { fires_on: seed/memory-binary/kb-bin-race-toctou-001-vuln, does_not_fire: seed/memory-binary/kb-bin-race-toctou-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/367.html", "https://cwe.mitre.org/data/definitions/362.html", "https://attack.mitre.org/techniques/T1203/" ]

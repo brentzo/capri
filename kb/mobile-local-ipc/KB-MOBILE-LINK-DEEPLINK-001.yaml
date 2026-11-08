@@ -1,0 +1,17 @@
+id: KB-MOBILE-LINK-DEEPLINK-001
+title: Deep link reaches a sensitive action without validation
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { owasp: [M4:2024], cwe: [CWE-939] }
+applicability: [ 'asset.type == "mobile_app"', 'asset.has_deep_link == true' ]
+preconditions: [ reachable, mobile_app, has_deep_link ]
+yields_on_success: [ deeplink_abuse ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.mobile_probe, intent: invoke_deeplink, args: { action: fetch, collaborator: range-oob } }
+success_signal: { type: oob_callback, evaluator: deterministic, assert: "oob_received(collaborator=range-oob, from=app) driven by an unvalidated deep link", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:L/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/mobile-local-ipc/kb-mobile-link-deeplink-001-vuln, does_not_fire: seed/mobile-local-ipc/kb-mobile-link-deeplink-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/939.html", "https://owasp.org/www-project-mobile-top-10/" ]

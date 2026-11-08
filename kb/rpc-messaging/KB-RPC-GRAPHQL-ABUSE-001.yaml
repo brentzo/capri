@@ -1,0 +1,19 @@
+id: KB-RPC-GRAPHQL-ABUSE-001
+title: GraphQL introspection and broken field authorization
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { owasp: [API3:2023], cwe: [CWE-639, CWE-200] }
+applicability: [ 'asset.type == "graphql_endpoint"' ]
+preconditions: [ reachable, authenticated_session ]
+yields_on_success: [ cross_object_read ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.graphql_probe, intent: introspect_schema }
+  - { tool: custom.graphql_probe, intent: query_foreign_tenant_field, args: { canary: tenant_b_canary } }
+success_signal: { type: content_match, evaluator: deterministic, assert: "introspection is enabled AND a field returns tenant_b_canary to tenant A", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+false_positive_notes: [ "Introspection alone is a hardening note; it becomes a finding only when a field returns data across an authorization boundary." ]
+test_fixture: { fires_on: seed/rpc-messaging/kb-rpc-graphql-abuse-001-vuln, does_not_fire: seed/rpc-messaging/kb-rpc-graphql-abuse-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/639.html", "https://cwe.mitre.org/data/definitions/200.html", "https://owasp.org/API-Security/editions/2023/en/0x11-t10/" ]

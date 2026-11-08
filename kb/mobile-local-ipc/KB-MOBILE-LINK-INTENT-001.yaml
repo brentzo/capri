@@ -1,0 +1,17 @@
+id: KB-MOBILE-LINK-INTENT-001
+title: Intent redirection (confused deputy via a forwarded intent)
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { owasp: [M8:2024], cwe: [CWE-927, CWE-441] }
+applicability: [ 'asset.type == "mobile_app"' ]
+preconditions: [ reachable, mobile_app ]
+yields_on_success: [ intent_redirect ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.mobile_probe, intent: supply_redirected_intent, args: { collaborator: range-oob } }
+success_signal: { type: oob_callback, evaluator: deterministic, assert: "the app forwards an attacker-supplied intent that reaches range-oob", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:L/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/mobile-local-ipc/kb-mobile-link-intent-001-vuln, does_not_fire: seed/mobile-local-ipc/kb-mobile-link-intent-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/927.html", "https://cwe.mitre.org/data/definitions/441.html", "https://owasp.org/www-project-mobile-top-10/" ]

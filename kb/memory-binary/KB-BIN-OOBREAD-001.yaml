@@ -1,0 +1,17 @@
+id: KB-BIN-OOBREAD-001
+title: Out-of-bounds read discloses adjacent memory
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1203}, cwe: [CWE-125] }
+applicability: [ 'asset.type == "native_service"' ]
+preconditions: [ reachable, native_service ]
+yields_on_success: [ info_leak ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.bin_probe, intent: over_read_length, args: { declared_len: 65535 } }
+success_signal: { type: content_match, evaluator: deterministic, assert: "the response returns the adjacent mem_canary beyond the intended bounds", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/memory-binary/kb-bin-oobread-001-vuln, does_not_fire: seed/memory-binary/kb-bin-oobread-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/125.html", "https://attack.mitre.org/techniques/T1203/" ]

@@ -1,0 +1,17 @@
+id: KB-CLOUD-STORAGE-READ-001
+title: Public object storage exposes data
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1530}, cwe: [CWE-284, CWE-200] }
+applicability: [ 'asset.type == "object_store"' ]
+preconditions: [ reachable ]
+yields_on_success: [ data_exposure ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.cloud_probe, intent: anonymous_get, args: { object: canary_object } }
+success_signal: { type: content_match, evaluator: deterministic, assert: "an unauthenticated request returns the canary object's contents", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/cloud-deployment/kb-cloud-storage-read-001-vuln, does_not_fire: seed/cloud-deployment/kb-cloud-storage-read-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/284.html", "https://cwe.mitre.org/data/definitions/200.html", "https://attack.mitre.org/techniques/T1530/" ]

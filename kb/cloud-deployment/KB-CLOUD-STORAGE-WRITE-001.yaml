@@ -1,0 +1,18 @@
+id: KB-CLOUD-STORAGE-WRITE-001
+title: Unauthenticated or world-writable object storage
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1530}, cwe: [CWE-284] }
+applicability: [ 'asset.type == "object_store"' ]
+preconditions: [ reachable ]
+yields_on_success: [ storage_write ]
+blast_tier: 2
+cleanup: snapshot-restore
+probe_steps:
+  - { tool: custom.cloud_probe, intent: anonymous_put, args: { object: write_marker } }
+  - { tool: custom.cloud_probe, intent: read_back_marker }
+success_signal: { type: state_change, evaluator: deterministic, assert: "an unauthenticated PUT persists and the marker reads back", confidence_floor: 0.0 }
+severity_rubric: { base: high, raise_if: [ { when: "asset.serves_content", to: critical } ], cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/cloud-deployment/kb-cloud-storage-write-001-vuln, does_not_fire: seed/cloud-deployment/kb-cloud-storage-write-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/284.html", "https://attack.mitre.org/techniques/T1530/" ]

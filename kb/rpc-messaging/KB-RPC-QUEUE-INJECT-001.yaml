@@ -1,0 +1,17 @@
+id: KB-RPC-QUEUE-INJECT-001
+title: Message queue accepts a poison message
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1190}, cwe: [CWE-74] }
+applicability: [ 'asset.type == "message_queue"' ]
+preconditions: [ reachable, has_message_queue ]
+yields_on_success: [ queue_inject ]
+blast_tier: 2
+cleanup: snapshot-restore
+probe_steps:
+  - { tool: custom.rpc_probe, intent: publish_poison_message, args: { collaborator: range-oob } }
+success_signal: { type: oob_callback, evaluator: deterministic, assert: "oob_received(collaborator=range-oob, from=consumer)", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/rpc-messaging/kb-rpc-queue-inject-001-vuln, does_not_fire: seed/rpc-messaging/kb-rpc-queue-inject-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/74.html", "https://attack.mitre.org/techniques/T1190/" ]

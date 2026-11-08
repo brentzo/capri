@@ -1,0 +1,17 @@
+id: KB-DOS-MEM-XMLEXPAND-001
+title: XML entity expansion (billion laughs)
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1499.004}, cwe: [CWE-776] }
+applicability: [ 'asset.type == "http_endpoint"', 'asset.parses_xml == true' ]
+preconditions: [ reachable ]
+yields_on_success: [ resource_exhaustion ]
+blast_tier: 2
+cleanup: snapshot-restore
+probe_steps:
+  - { tool: custom.dos_probe, intent: bounded_entity_expansion, args: { cap_s: 10, cap_bytes: 5000000 } }
+success_signal: { type: timing_oracle, evaluator: deterministic, assert: "a bounded nested-entity document expands without a parser entity-limit, within cap_s", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/resource-exhaustion/kb-dos-mem-xmlexpand-001-vuln, does_not_fire: seed/resource-exhaustion/kb-dos-mem-xmlexpand-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/776.html", "https://attack.mitre.org/techniques/T1499/004/" ]

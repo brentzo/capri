@@ -1,0 +1,19 @@
+id: KB-DATA-IDOR-ENUM-001
+title: Predictable identifiers enable bulk extraction
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { owasp: [API1:2023], cwe: [CWE-340, CWE-639] }
+applicability: [ 'asset.type == "http_endpoint"', 'matches(asset.params, /id|seq|num/)' ]
+preconditions: [ reachable, authenticated_session ]
+yields_on_success: [ cross_object_read ]
+inputs: { param: "{asset.params[*]}" }
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.data_probe, intent: walk_sequential_ids, args: { bounded: 20, canary: foreign_owner_canary } }
+success_signal: { type: differential, evaluator: deterministic, assert: "sequential identifiers return records owned by other principals (foreign_owner_canary)", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+false_positive_notes: [ "Enumeration is bounded; one foreign record proves the weakness without extracting the dataset." ]
+test_fixture: { fires_on: seed/data-isolation/kb-data-idor-enum-001-vuln, does_not_fire: seed/data-isolation/kb-data-idor-enum-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/340.html", "https://cwe.mitre.org/data/definitions/639.html", "https://owasp.org/API-Security/editions/2023/en/0x11-t10/" ]

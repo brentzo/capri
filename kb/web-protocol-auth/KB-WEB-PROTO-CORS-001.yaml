@@ -1,0 +1,17 @@
+id: KB-WEB-PROTO-CORS-001
+title: CORS misconfiguration (reflected origin with credentials)
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { owasp: [WSTG-CLNT-07], cwe: [CWE-942] }
+applicability: [ 'asset.type == "http_endpoint"' ]
+preconditions: [ reachable ]
+yields_on_success: [ cross_origin_read ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: httpx, intent: cors_reflect, args: { origin: "https://evil.range.local" } }
+success_signal: { type: content_match, evaluator: deterministic, assert: "ACAO reflects attacker origin AND ACA-Credentials: true", confidence_floor: 0.0 }
+severity_rubric: { base: medium, raise_if: [ { when: "asset.auth_context", to: high } ], cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:L/VI:L/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/web-protocol-auth/kb-web-proto-cors-001-vuln, does_not_fire: seed/web-protocol-auth/kb-web-proto-cors-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/942.html", "https://owasp.org/www-project-web-security-testing-guide/" ]

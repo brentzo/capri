@@ -1,0 +1,17 @@
+id: KB-WEB-AUTH-JWT-001
+title: JWT algorithm confusion / unverified signature
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1550.001}, owasp: [WSTG-SESS-10], cwe: [CWE-347] }
+applicability: [ 'asset.auth == "jwt"' ]
+preconditions: [ reachable, authenticated_session ]
+yields_on_success: [ authenticated_session, privilege_escalation ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.jwt_probe, intent: alg_none_and_hs_rs_confusion }
+success_signal: { type: status_match, evaluator: deterministic, assert: "a tampered/forged token is accepted (2xx on an authenticated endpoint)", confidence_floor: 0.0 }
+severity_rubric: { base: critical, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/web-protocol-auth/kb-web-auth-jwt-001-vuln, does_not_fire: seed/web-protocol-auth/kb-web-auth-jwt-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/347.html", "https://attack.mitre.org/techniques/T1550/001/", "https://owasp.org/www-project-web-security-testing-guide/" ]

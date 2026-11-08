@@ -1,0 +1,17 @@
+id: KB-DATA-LOG-PII-001
+title: PII or secrets written to accessible logs
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { cwe: [CWE-532, CWE-200] }
+applicability: [ 'asset.type == "http_endpoint"', 'asset.has_log_surface == true' ]
+preconditions: [ reachable ]
+yields_on_success: [ data_exposure ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.data_probe, intent: read_reachable_application_log }
+success_signal: { type: content_match, evaluator: deterministic, assert: "a reachable log exposes the log_pii_canary (token or PII)", confidence_floor: 0.0 }
+severity_rubric: { base: medium, raise_if: [ { when: "yields.cloud_credential", to: high } ], cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:L/VI:L/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/data-isolation/kb-data-log-pii-001-vuln, does_not_fire: seed/data-isolation/kb-data-log-pii-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/532.html", "https://cwe.mitre.org/data/definitions/200.html" ]

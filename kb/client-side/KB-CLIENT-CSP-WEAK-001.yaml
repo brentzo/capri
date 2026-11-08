@@ -1,0 +1,19 @@
+id: KB-CLIENT-CSP-WEAK-001
+title: Missing or bypassable Content-Security-Policy
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { owasp: [WSTG-CLNT-12], cwe: [CWE-693] }
+applicability: [ 'asset.type == "http_endpoint"', 'asset.renders_html == true' ]
+preconditions: [ reachable ]
+yields_on_success: [ csp_weak ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: httpx, intent: fetch_csp_header }
+  - { tool: browser.playwright, intent: attempt_inline_marker }
+success_signal: { type: content_match, evaluator: deterministic, assert: "CSP is absent or allows unsafe-inline AND an injected inline marker executes", confidence_floor: 0.0 }
+severity_rubric: { base: low, raise_if: [ { when: "yields.client_exec", to: medium } ], cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:N/VA:N/SC:N/SI:N/SA:N" }
+false_positive_notes: [ "On its own a weak CSP is a hardening note; it becomes a finding only when it lets a marker execute." ]
+test_fixture: { fires_on: seed/client-side/kb-client-csp-weak-001-vuln, does_not_fire: seed/client-side/kb-client-csp-weak-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/693.html", "https://owasp.org/www-project-web-security-testing-guide/" ]

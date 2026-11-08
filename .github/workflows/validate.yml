@@ -16,9 +16,11 @@ jobs:
       - uses: actions/setup-python@v5.3.0
         with:
           python-version: "3.12"
-      - name: Validate technique cards (HC-KB-01 §9)
-        # Non-strict: UNRESOLVED taxonomy ids are tracked, not fatal, until the
-        # full upstream catalogs are bundled. Switch to --strict after that.
-        run: python3 tools/validate_kb.py
+      - name: Validate materialized cards (HC-KB-01 §9, strict)
+        run: python3 tools/validate_kb.py --strict
+      - name: kb/ tree is in sync with the specs
+        run: |
+          python3 tools/materialize_kb.py
+          git diff --exit-status kb eval
       - name: Validator self-tests (HC-KB-01 §12)
         run: python3 tests/test_validator.py

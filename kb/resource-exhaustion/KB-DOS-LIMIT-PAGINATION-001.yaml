@@ -1,0 +1,18 @@
+id: KB-DOS-LIMIT-PAGINATION-001
+title: Unbounded pagination or result size
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1499.003}, cwe: [CWE-770] }
+applicability: [ 'asset.type == "http_endpoint"', 'matches(asset.params, /limit|page_size|count|per_page/)' ]
+preconditions: [ reachable ]
+yields_on_success: [ resource_exhaustion ]
+inputs: { param: "{asset.params[*]}" }
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.dos_probe, intent: request_unreasonable_limit, args: { limit: 1000000, materialize: false } }
+success_signal: { type: differential, evaluator: deterministic, assert: "an unreasonable page size is accepted (no server-side maximum) without fetching the full set", confidence_floor: 0.0 }
+severity_rubric: { base: low, raise_if: [ { when: "asset.unauthenticated", to: medium } ], cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:L/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/resource-exhaustion/kb-dos-limit-pagination-001-vuln, does_not_fire: seed/resource-exhaustion/kb-dos-limit-pagination-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/770.html", "https://attack.mitre.org/techniques/T1499/003/" ]

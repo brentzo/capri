@@ -1,0 +1,18 @@
+id: KB-RPC-BIND-MASSASSIGN-001
+title: Mass assignment sets a protected field
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { owasp: [API6:2023], cwe: [CWE-915] }
+applicability: [ 'asset.type == "rpc_endpoint"', 'asset.binds_object == true' ]
+preconditions: [ reachable, authenticated_session ]
+yields_on_success: [ privilege_escalation ]
+blast_tier: 2
+cleanup: snapshot-restore
+probe_steps:
+  - { tool: custom.rpc_probe, intent: overpost_protected_field, args: { field: role, value: admin_canary } }
+  - { tool: custom.rpc_probe, intent: confirm_field_applied }
+success_signal: { type: state_change, evaluator: deterministic, assert: "a protected field is set to admin_canary and persists", confidence_floor: 0.0 }
+severity_rubric: { base: critical, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/rpc-messaging/kb-rpc-bind-massassign-001-vuln, does_not_fire: seed/rpc-messaging/kb-rpc-bind-massassign-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/915.html", "https://owasp.org/API-Security/editions/2023/en/0x11-t10/" ]

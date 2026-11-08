@@ -1,0 +1,17 @@
+id: KB-DOS-MEM-UPLOAD-001
+title: Missing upload-size cap
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1499.003}, cwe: [CWE-400] }
+applicability: [ 'asset.type == "http_endpoint"', 'asset.accepts_upload == true' ]
+preconditions: [ reachable ]
+yields_on_success: [ resource_exhaustion ]
+blast_tier: 2
+cleanup: snapshot-restore
+probe_steps:
+  - { tool: custom.dos_probe, intent: oversize_upload_probe, args: { cap_bytes: 50000000 } }
+success_signal: { type: differential, evaluator: deterministic, assert: "an upload above a reasonable limit is accepted where a size cap should reject it", confidence_floor: 0.0 }
+severity_rubric: { base: medium, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:L/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/resource-exhaustion/kb-dos-mem-upload-001-vuln, does_not_fire: seed/resource-exhaustion/kb-dos-mem-upload-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/400.html", "https://attack.mitre.org/techniques/T1499/003/" ]

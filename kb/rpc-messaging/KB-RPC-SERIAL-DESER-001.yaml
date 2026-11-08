@@ -1,0 +1,17 @@
+id: KB-RPC-SERIAL-DESER-001
+title: Insecure deserialization reaches code execution
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1190}, cwe: [CWE-502] }
+applicability: [ 'asset.type == "rpc_endpoint"', 'asset.deserializes_input == true' ]
+preconditions: [ reachable, deserializes_input ]
+yields_on_success: [ rce_foothold ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.rpc_probe, intent: send_deser_gadget, args: { collaborator: range-oob } }
+success_signal: { type: oob_callback, evaluator: deterministic, assert: "oob_received(collaborator=range-oob, from=target)", confidence_floor: 0.0 }
+severity_rubric: { base: critical, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/rpc-messaging/kb-rpc-serial-deser-001-vuln, does_not_fire: seed/rpc-messaging/kb-rpc-serial-deser-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/502.html", "https://attack.mitre.org/techniques/T1190/" ]

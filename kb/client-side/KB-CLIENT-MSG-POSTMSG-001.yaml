@@ -1,0 +1,17 @@
+id: KB-CLIENT-MSG-POSTMSG-001
+title: postMessage handler without an origin check
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { owasp: [WSTG-CLNT-11], cwe: [CWE-345] }
+applicability: [ 'asset.type == "http_endpoint"', 'asset.has_message_listener == true' ]
+preconditions: [ reachable ]
+yields_on_success: [ cross_origin_exec ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: browser.playwright, intent: post_message_from_foreign_origin, args: { origin: "https://evil.range.local" } }
+success_signal: { type: differential, evaluator: deterministic, assert: "the handler acts on a message from an untrusted origin (state change or sink reached)", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/client-side/kb-client-msg-postmsg-001-vuln, does_not_fire: seed/client-side/kb-client-msg-postmsg-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/345.html", "https://owasp.org/www-project-web-security-testing-guide/" ]

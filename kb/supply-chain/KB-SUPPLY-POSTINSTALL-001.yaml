@@ -1,0 +1,17 @@
+id: KB-SUPPLY-POSTINSTALL-001
+title: Lifecycle script executes arbitrary code on install
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1195.001}, cwe: [CWE-94] }
+applicability: [ 'asset.type == "build_resolver"' ]
+preconditions: [ reachable, build_pipeline ]
+yields_on_success: [ build_exec ]
+blast_tier: 2
+cleanup: snapshot-restore
+probe_steps:
+  - { tool: custom.supply_probe, intent: install_package_with_lifecycle_script, args: { collaborator: range-oob } }
+success_signal: { type: oob_callback, evaluator: deterministic, assert: "oob_received(collaborator=range-oob, from=install)", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/supply-chain/kb-supply-postinstall-001-vuln, does_not_fire: seed/supply-chain/kb-supply-postinstall-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/94.html", "https://attack.mitre.org/techniques/T1195/001/" ]

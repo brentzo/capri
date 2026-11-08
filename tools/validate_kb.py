@@ -233,8 +233,12 @@ def parse_kv_flow(body):
 # --------------------------------------------------------------------------
 # the checks
 # --------------------------------------------------------------------------
-def validate_card(fields, clean, source):
-    """Return a list of (grade, message) for one card."""
+def validate_card(fields, clean, source="", full=False):
+    """Return a list of (grade, message) for one card.
+
+    full=True enforces the shipping fields of a materialized kb/ card
+    (version, status, references, test_fixture, cvss_base_vector,
+    confidence_floor); full=False validates a condensed spec block."""
     issues = []
 
     def err(m): issues.append((ERROR, m))
@@ -376,12 +380,33 @@ def validate_card(fields, clean, source):
                     for e in check_dsl(unquote(okv["when"])):
                         err(f"{clause_key} when-clause: {e}")
 
+    # full-template shipping fields (materialized kb/ cards; HC-KB-01 §3, §9)
+    if full:
+        ver = fields.get("version", "")
+        if not re.match(r"^\d+\.\d+\.\d+$", ver):
+            err(f"version '{ver}' is not semver")
+        if fields.get("status") not in ("draft", "active", "deprecated"):
+            err(f"status '{fields.get('status')}' is not draft|active|deprecated")
+        if not flow_list(_inner(fields.get("references", "[]"))):
+            err("references is empty")
+        tf = parse_kv_flow(_inner(fields.get("test_fixture", "{}")))
+        if "fires_on" not in tf or "does_not_fire" not in tf:
+            err("test_fixture must have fires_on and does_not_fire")
+        srkv = parse_kv_flow(_inner(fields.get("severity_rubric", "{}")))
+        cvss = unquote(srkv.get("cvss_base_vector", ""))
+        if not cvss.startswith("CVSS:4.0/"):
+            err("severity_rubric.cvss_base_vector missing or not a CVSS v4 vector")
+        sskv = parse_kv_flow(_inner(fields.get("success_signal", "{}")))
+        if "confidence_floor" not in sskv:
+            err("success_signal missing confidence_floor")
+
     return issues
 
 
 def is_condensed(fields, clean):
-    """A card is 'condensed' when it omits the full-template shipping fields."""
-    return any(opt not in fields and opt not in clean for opt in CONDENSED_OPTIONAL)
+    """A card is 'condensed' when it omits the always-present shipping fields.
+    (`inputs` is optional and `cvss_base_vector` is nested, so neither counts.)"""
+    return any(f not in fields for f in ("version", "status", "references", "test_fixture"))
 
 
 # --------------------------------------------------------------------------
@@ -390,54 +415,82 @@ def is_condensed(fields, clean):
 def main():
     ap = argparse.ArgumentParser(description="HC-KB-01 technique-card validator")
     ap.add_argument("paths", nargs="*",
-                    help="spec .md files (default: specs/HC-KB-*.md)")
+                    help="card .yaml files, or spec .md files with --from-specs")
+    ap.add_argument("--from-specs", action="store_true",
+                    help="validate the condensed blocks in specs/HC-KB-*.md "
+                         "instead of the materialized kb/<class>/*.yaml tree")
     ap.add_argument("--strict", action="store_true",
                     help="treat UNRESOLVED taxonomy ids as failures too")
     ap.add_argument("--quiet", action="store_true",
                     help="only print the summary and any ERROR/UNRESOLVED")
     args = ap.parse_args()
 
-    paths = args.paths or sorted(glob.glob(os.path.join(ROOT, "specs", "HC-KB-*.md")))
-    # HC-KB-01.md holds the block-style schema TEMPLATE (the definition), not a
-    # card instance; the condensed class specs (KB-02..KB-11) are the instances.
-    # Block-style loading of materialized kb/<class>/*.yaml files is an M2 follow-on.
-    paths = [p for p in paths if os.path.basename(p) != "HC-KB-01.md"]
+    # Build the list of (source_label, card_text, full, expected_id) units.
+    units = []
+    if args.from_specs:
+        # Condensed blocks in the class specs. HC-KB-01.md holds the block-style
+        # schema TEMPLATE (the definition), not a card instance, so it is skipped.
+        specs = args.paths or sorted(glob.glob(os.path.join(ROOT, "specs", "HC-KB-*.md")))
+        for path in [p for p in specs if os.path.basename(p) != "HC-KB-01.md"]:
+            rel = os.path.relpath(path, ROOT)
+            for raw in extract_card_blocks(open(path).read()):
+                units.append((rel, raw, False, None))
+    else:
+        files = args.paths or sorted(
+            glob.glob(os.path.join(ROOT, "kb", "**", "*.yaml"), recursive=True))
+        for f in files:
+            rel = os.path.relpath(f, ROOT)
+            units.append((rel, open(f).read(), True, os.path.basename(f)[:-5]))
+
+    if not units:
+        print("no cards found. Run tools/materialize_kb.py, or pass --from-specs.")
+        return 1
+
     totals = {ERROR: 0, UNRESOLVED: 0, WARN: 0}
     n_cards = n_condensed = 0
     unresolved_ids = {}
+    seen_ids = set()
 
-    for path in paths:
-        md = open(path).read()
-        blocks = list(extract_card_blocks(md))
-        if not blocks:
-            continue
-        rel = os.path.relpath(path, ROOT)
-        card_lines = []
-        for raw in blocks:
-            n_cards += 1
-            fields, clean = parse_card(raw)
-            cid = fields.get("id", "<no-id>")
-            if is_condensed(fields, clean):
-                n_condensed += 1
-            issues = validate_card(fields, clean, source=rel)
-            for grade, msg in issues:
-                totals[grade] += 1
-                if grade == UNRESOLVED:
-                    unresolved_ids.setdefault(msg.split(" not in")[0], []).append(cid)
-                if grade == ERROR or grade == UNRESOLVED or not args.quiet:
-                    card_lines.append(f"    [{grade:10}] {cid}: {msg}")
-        if card_lines:
-            print(f"\n{rel}  ({len(blocks)} cards)")
-            print("\n".join(card_lines))
+    for rel, raw, full, expect_id in units:
+        n_cards += 1
+        fields, clean = parse_card(raw)
+        cid = fields.get("id", "<no-id>")
+        seen_ids.add(cid)
+        if is_condensed(fields, clean):
+            n_condensed += 1
+        issues = validate_card(fields, clean, source=rel, full=full)
+        if expect_id and cid != expect_id:
+            issues.append((ERROR, f"id '{cid}' does not match filename '{expect_id}'"))
+        lines = []
+        for grade, msg in issues:
+            totals[grade] += 1
+            if grade == UNRESOLVED:
+                unresolved_ids.setdefault(msg.split(" not in")[0], []).append(cid)
+            if grade == ERROR or grade == UNRESOLVED or not args.quiet:
+                lines.append(f"    [{grade:10}] {cid}: {msg}")
+        if lines:
+            print(f"\n{rel}")
+            print("\n".join(lines))
+
+    # manifest coverage: every materialized card must have an eval manifest
+    # entry (HC-EVAL-01 §9). Only meaningful for the kb/ tree.
+    if not args.from_specs:
+        manifest_ids = set()
+        for mf in glob.glob(os.path.join(ROOT, "eval", "manifests", "*.yaml")):
+            manifest_ids |= set(re.findall(r"card:\s*(KB-\S+)", open(mf).read()))
+        for missing in sorted(seen_ids - manifest_ids):
+            totals[ERROR] += 1
+            print(f"\n(manifest)\n    [{ERROR:10}] {missing}: no eval manifest entry "
+                  f"(HC-EVAL-01 §9)")
 
     print("\n" + "=" * 68)
+    print(f"source: {'specs (condensed)' if args.from_specs else 'kb/ (materialized)'}")
     print(f"cards checked: {n_cards}   "
           f"ERROR: {totals[ERROR]}   "
           f"UNRESOLVED: {totals[UNRESOLVED]}   "
           f"WARN: {totals[WARN]}")
     if n_condensed:
-        print(f"condensed cards (substantive fields only; shipping fields filled "
-              f"at M2 materialization): {n_condensed}")
+        print(f"condensed cards (substantive fields only): {n_condensed}")
     if unresolved_ids:
         print("\nUNRESOLVED taxonomy ids (the `# verify` to-do surface):")
         for ident, cards in sorted(unresolved_ids.items()):

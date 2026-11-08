@@ -1,0 +1,17 @@
+id: KB-SUPPLY-CI-INJECT-001
+title: Build injection via untrusted pipeline input
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1195.002}, cwe: [CWE-94] }
+applicability: [ 'asset.type == "ci_pipeline"' ]
+preconditions: [ reachable, build_pipeline ]
+yields_on_success: [ build_exec ]
+blast_tier: 2
+cleanup: snapshot-restore
+probe_steps:
+  - { tool: custom.supply_probe, intent: submit_poisoned_workflow_input, args: { collaborator: range-oob } }
+success_signal: { type: oob_callback, evaluator: deterministic, assert: "oob_received(collaborator=range-oob, from=ci_runner)", confidence_floor: 0.0 }
+severity_rubric: { base: critical, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/supply-chain/kb-supply-ci-inject-001-vuln, does_not_fire: seed/supply-chain/kb-supply-ci-inject-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/94.html", "https://attack.mitre.org/techniques/T1195/002/" ]

@@ -1,0 +1,17 @@
+id: KB-DOS-COMPUTE-HASHDOS-001
+title: Hash-collision algorithmic complexity
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1499.003}, cwe: [CWE-407] }
+applicability: [ 'asset.type == "http_endpoint"', 'asset.parses_structured_keys == true' ]
+preconditions: [ reachable ]
+yields_on_success: [ resource_exhaustion ]
+blast_tier: 2
+cleanup: snapshot-restore
+probe_steps:
+  - { tool: custom.dos_probe, intent: colliding_keys_payload, args: { cap_s: 10, trials: 3 } }
+success_signal: { type: timing_oracle, evaluator: deterministic, assert: "colliding-key input is superlinear versus random-key input within cap_s", confidence_floor: 0.0 }
+severity_rubric: { base: medium, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:L/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/resource-exhaustion/kb-dos-compute-hashdos-001-vuln, does_not_fire: seed/resource-exhaustion/kb-dos-compute-hashdos-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/407.html", "https://attack.mitre.org/techniques/T1499/003/" ]

@@ -1,0 +1,18 @@
+id: KB-CLIENT-CSRF-001
+title: Cross-site request forgery on a state-changing endpoint
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { owasp: [WSTG-SESS-05], cwe: [CWE-352] }
+applicability: [ 'asset.type == "http_endpoint"', 'asset.has_state_changing_action == true' ]
+preconditions: [ reachable, authenticated_session ]
+yields_on_success: [ csrf_action ]
+blast_tier: 2
+cleanup: snapshot-restore
+probe_steps:
+  - { tool: custom.client_probe, intent: forge_cross_origin_request }
+  - { tool: custom.client_probe, intent: confirm_state_marker }
+success_signal: { type: differential, evaluator: deterministic, assert: "the state change completes without an anti-CSRF token and without SameSite protection", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/client-side/kb-client-csrf-001-vuln, does_not_fire: seed/client-side/kb-client-csrf-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/352.html", "https://owasp.org/www-project-web-security-testing-guide/" ]

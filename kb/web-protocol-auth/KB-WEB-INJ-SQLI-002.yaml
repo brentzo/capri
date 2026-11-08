@@ -1,0 +1,19 @@
+id: KB-WEB-INJ-SQLI-002
+title: Time-based blind SQL injection
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1190}, owasp: [WSTG-INPV-05], cwe: [CWE-89] }
+applicability: [ 'asset.type == "http_endpoint"', 'exists(asset.params)' ]
+preconditions: [ reachable ]
+yields_on_success: [ db_read ]
+inputs: { param: "{asset.params[*]}" }
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.sqli_probe, intent: time_payloads, args: { delay_s: 5, trials: 5 } }
+success_signal: { type: timing_oracle, evaluator: deterministic, assert: "significant_delay(delay_s=5, trials=5, p<0.01)", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+false_positive_notes: [ "Network jitter; require a stats test across trials, not a single slow response." ]
+test_fixture: { fires_on: seed/web-protocol-auth/kb-web-inj-sqli-002-vuln, does_not_fire: seed/web-protocol-auth/kb-web-inj-sqli-002-patched }
+references: [ "https://cwe.mitre.org/data/definitions/89.html", "https://attack.mitre.org/techniques/T1190/", "https://owasp.org/www-project-web-security-testing-guide/" ]

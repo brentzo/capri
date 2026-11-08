@@ -1,0 +1,17 @@
+id: KB-DATA-DELETE-INCOMPLETE-001
+title: Deleted data remains retrievable
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1485}, cwe: [CWE-212] }
+applicability: [ 'asset.type == "http_endpoint"', 'asset.supports_delete == true' ]
+preconditions: [ reachable, authenticated_session ]
+yields_on_success: [ data_recovery ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.data_probe, intent: delete_then_retrieve, args: { canary: delete_canary } }
+success_signal: { type: content_match, evaluator: deterministic, assert: "a record reported deleted still returns delete_canary via an alternate path or id", confidence_floor: 0.0 }
+severity_rubric: { base: medium, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:L/VI:L/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/data-isolation/kb-data-delete-incomplete-001-vuln, does_not_fire: seed/data-isolation/kb-data-delete-incomplete-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/212.html", "https://attack.mitre.org/techniques/T1485/" ]

@@ -1,0 +1,18 @@
+id: KB-WEB-INJ-PATH-001
+title: Path traversal / local file read
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1190}, owasp: [WSTG-ATHZ-01], cwe: [CWE-22] }
+applicability: [ 'asset.type == "http_endpoint"', 'matches(asset.params, /file|path|name|template/)' ]
+preconditions: [ reachable ]
+yields_on_success: [ file_read ]
+inputs: { param: "{asset.params[*]}" }
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.path_probe, intent: traversal_markers }
+success_signal: { type: content_match, evaluator: deterministic, assert: "response_contains(range_canary_marker)", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/web-protocol-auth/kb-web-inj-path-001-vuln, does_not_fire: seed/web-protocol-auth/kb-web-inj-path-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/22.html", "https://attack.mitre.org/techniques/T1190/", "https://owasp.org/www-project-web-security-testing-guide/" ]

@@ -1,0 +1,17 @@
+id: KB-BIN-TYPECONF-001
+title: Type confusion in a native parser
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1203}, cwe: [CWE-843] }
+applicability: [ 'asset.type == "native_service"', 'asset.parses_tagged_union == true' ]
+preconditions: [ reachable, native_service ]
+yields_on_success: [ memory_corruption ]
+blast_tier: 2
+cleanup: snapshot-restore
+probe_steps:
+  - { tool: custom.bin_probe, intent: mismatched_type_tag }
+success_signal: { type: state_change, evaluator: deterministic, assert: "a confused type is dereferenced and sanitizer reports an invalid access", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/memory-binary/kb-bin-typeconf-001-vuln, does_not_fire: seed/memory-binary/kb-bin-typeconf-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/843.html", "https://attack.mitre.org/techniques/T1203/" ]

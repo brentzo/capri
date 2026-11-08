@@ -1,0 +1,18 @@
+id: KB-SUPPLY-DEP-CONFUSION-001
+title: Dependency confusion, internal name shadowed by a publishable source
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1195.001}, cwe: [CWE-1104] }
+applicability: [ 'asset.type == "build_resolver"' ]
+preconditions: [ reachable, registry_write ]
+yields_on_success: [ build_exec ]
+blast_tier: 2
+cleanup: snapshot-restore
+probe_steps:
+  - { tool: custom.supply_probe, intent: publish_shadow_package, args: { name: internal_canary_pkg, collaborator: range-oob } }
+  - { tool: custom.supply_probe, intent: trigger_resolve_and_install }
+success_signal: { type: oob_callback, evaluator: deterministic, assert: "oob_received(collaborator=range-oob, from=build) proving the shadow package ran", confidence_floor: 0.0 }
+severity_rubric: { base: critical, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/supply-chain/kb-supply-dep-confusion-001-vuln, does_not_fire: seed/supply-chain/kb-supply-dep-confusion-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/1104.html", "https://attack.mitre.org/techniques/T1195/001/" ]

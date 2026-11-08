@@ -1,0 +1,18 @@
+id: KB-CLIENT-REDRESS-CLICKJACK-001
+title: Clickjacking on a sensitive action (missing frame-ancestors / XFO)
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { owasp: [WSTG-CLNT-09], cwe: [CWE-1021] }
+applicability: [ 'asset.type == "http_endpoint"', 'asset.has_state_changing_action == true' ]
+preconditions: [ reachable ]
+yields_on_success: [ ui_redress ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: httpx, intent: fetch_headers }
+  - { tool: browser.playwright, intent: frame_and_target_action }
+success_signal: { type: content_match, evaluator: deterministic, assert: "no frame-ancestors/X-Frame-Options AND the action is operable inside a cross-origin frame", confidence_floor: 0.0 }
+severity_rubric: { base: medium, raise_if: [ { when: "asset.auth_context", to: high } ], cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:L/VI:L/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/client-side/kb-client-redress-clickjack-001-vuln, does_not_fire: seed/client-side/kb-client-redress-clickjack-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/1021.html", "https://owasp.org/www-project-web-security-testing-guide/" ]

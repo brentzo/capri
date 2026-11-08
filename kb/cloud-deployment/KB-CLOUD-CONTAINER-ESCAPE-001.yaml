@@ -1,0 +1,19 @@
+id: KB-CLOUD-CONTAINER-ESCAPE-001
+title: Container escape via misconfiguration
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1611}, cwe: [CWE-269] }
+applicability: [ 'asset.type == "container_workload"' ]
+preconditions: [ reachable, rce_foothold ]
+yields_on_success: [ node_foothold ]
+blast_tier: 2
+cleanup: snapshot-restore
+probe_steps:
+  - { tool: custom.cloud_probe, intent: probe_escape_surface, args: { checks: [privileged, host_mount, docker_sock] } }
+  - { tool: custom.cloud_probe, intent: touch_node_canary }
+success_signal: { type: state_change, evaluator: deterministic, assert: "a node-scoped canary reachable only after escape is read or written", confidence_floor: 0.0 }
+severity_rubric: { base: critical, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:N/SC:N/SI:N/SA:N" }
+false_positive_notes: [ "The node here is the range node; the operator host stays unreachable by HC-SUB-01 §8.3, which bounds blast regardless of confirmation." ]
+test_fixture: { fires_on: seed/cloud-deployment/kb-cloud-container-escape-001-vuln, does_not_fire: seed/cloud-deployment/kb-cloud-container-escape-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/269.html", "https://attack.mitre.org/techniques/T1611/" ]

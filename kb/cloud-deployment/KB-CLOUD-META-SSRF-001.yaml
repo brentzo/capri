@@ -1,0 +1,18 @@
+id: KB-CLOUD-META-SSRF-001
+title: Instance metadata service reachable, credential theft
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1552.005}, cwe: [CWE-918, CWE-200] }
+applicability: [ 'asset.type == "cloud_instance" || asset.has_fetch_surface == true' ]
+preconditions: [ reachable, internal_reach ]
+yields_on_success: [ cloud_credential ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.cloud_probe, intent: fetch_metadata_credentials, args: { endpoint: mock-imds } }
+success_signal: { type: content_match, evaluator: deterministic, assert: "response_contains(metadata_role_canary) OR response_contains(temp_credential_canary)", confidence_floor: 0.0 }
+severity_rubric: { base: high, raise_if: [ { when: "yields.cloud_admin", to: critical } ], cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+false_positive_notes: [ "The metadata endpoint must require no app credentials; a hop that itself authenticates is not this weakness." ]
+test_fixture: { fires_on: seed/cloud-deployment/kb-cloud-meta-ssrf-001-vuln, does_not_fire: seed/cloud-deployment/kb-cloud-meta-ssrf-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/918.html", "https://cwe.mitre.org/data/definitions/200.html", "https://attack.mitre.org/techniques/T1552/005/" ]

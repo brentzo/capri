@@ -1,0 +1,17 @@
+id: KB-RPC-QUEUE-ANON-001
+title: Unauthenticated queue subscription exposes messages
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1190}, cwe: [CWE-306, CWE-200] }
+applicability: [ 'asset.type == "message_queue"' ]
+preconditions: [ reachable, has_message_queue ]
+yields_on_success: [ data_exposure ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.rpc_probe, intent: anonymous_subscribe, args: { topic: canary_topic } }
+success_signal: { type: content_match, evaluator: deterministic, assert: "an unauthenticated subscriber receives canary_topic messages", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/rpc-messaging/kb-rpc-queue-anon-001-vuln, does_not_fire: seed/rpc-messaging/kb-rpc-queue-anon-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/306.html", "https://cwe.mitre.org/data/definitions/200.html", "https://attack.mitre.org/techniques/T1190/" ]

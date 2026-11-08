@@ -1,0 +1,17 @@
+id: KB-DATA-RESIDUAL-001
+title: Residual data on a reused or deprovisioned resource
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1530}, cwe: [CWE-226] }
+applicability: [ 'asset.type == "data_store"', 'asset.reuses_resources == true' ]
+preconditions: [ reachable ]
+yields_on_success: [ data_recovery ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.data_probe, intent: allocate_reused_resource_and_read }
+success_signal: { type: content_match, evaluator: deterministic, assert: "a freshly allocated resource still carries a prior tenant's residual_canary", confidence_floor: 0.0 }
+severity_rubric: { base: medium, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:L/VI:L/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/data-isolation/kb-data-residual-001-vuln, does_not_fire: seed/data-isolation/kb-data-residual-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/226.html", "https://attack.mitre.org/techniques/T1530/" ]

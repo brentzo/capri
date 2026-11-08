@@ -1,0 +1,17 @@
+id: KB-RPC-SERIAL-XXE-001
+title: XML external entity injection
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { owasp: [WSTG-INPV-07], cwe: [CWE-611] }
+applicability: [ 'asset.type == "rpc_endpoint"', 'asset.parses_xml == true' ]
+preconditions: [ reachable, rpc_endpoint ]
+yields_on_success: [ file_read ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.rpc_probe, intent: xxe_file_entity, args: { target: range_canary_file } }
+success_signal: { type: content_match, evaluator: deterministic, assert: "response_contains(range_canary_marker)", confidence_floor: 0.0 }
+severity_rubric: { base: high, raise_if: [ { when: "yields.internal_reach", to: critical } ], cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/rpc-messaging/kb-rpc-serial-xxe-001-vuln, does_not_fire: seed/rpc-messaging/kb-rpc-serial-xxe-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/611.html", "https://owasp.org/www-project-web-security-testing-guide/" ]

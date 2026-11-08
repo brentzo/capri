@@ -1,0 +1,19 @@
+id: KB-DOS-COMPUTE-REDOS-001
+title: Regular-expression denial of service (catastrophic backtracking)
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1499.003}, cwe: [CWE-1333, CWE-400] }
+applicability: [ 'asset.type == "http_endpoint"', 'exists(asset.params)' ]
+preconditions: [ reachable ]
+yields_on_success: [ resource_exhaustion ]
+inputs: { param: "{asset.params[*]}" }
+blast_tier: 2
+cleanup: snapshot-restore
+probe_steps:
+  - { tool: custom.dos_probe, intent: redos_payload, args: { cap_s: 10, trials: 3 } }
+success_signal: { type: timing_oracle, evaluator: deterministic, assert: "superlinear_time(payload_vs_baseline, p<0.01) within cap_s, no input-length cap", confidence_floor: 0.0 }
+severity_rubric: { base: medium, raise_if: [ { when: "asset.unauthenticated", to: high } ], cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:L/SC:N/SI:N/SA:N" }
+false_positive_notes: [ "Require a statistically significant superlinear curve across trials, not one slow response; the probe stays under cap_s." ]
+test_fixture: { fires_on: seed/resource-exhaustion/kb-dos-compute-redos-001-vuln, does_not_fire: seed/resource-exhaustion/kb-dos-compute-redos-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/1333.html", "https://cwe.mitre.org/data/definitions/400.html", "https://attack.mitre.org/techniques/T1499/003/" ]

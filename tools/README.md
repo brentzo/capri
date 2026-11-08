@@ -6,19 +6,31 @@ Pure Python standard library, no third-party dependency, runnable in CI.
 
 ## Files
 
-- `validate_kb.py` - the validator. Reads the condensed technique-card blocks
-  from `specs/HC-KB-*.md` (the current source of truth) and checks each card.
+- `materialize_kb.py` - generator. Reads the condensed card blocks in
+  `specs/HC-KB-*.md` and writes the full cards to `kb/<class>/*.yaml`, plus
+  `kb/_index/index.md` and the `eval/manifests/*.yaml` ground-truth manifests.
+- `validate_kb.py` - the validator. By default checks the materialized
+  `kb/<class>/*.yaml` tree (full cards); `--from-specs` checks the condensed
+  spec blocks instead.
 - `taxonomy.py` - the bundled identifier reference (CWE, ATT&CK, ATLAS, CAPEC)
   the cards cite, so taxonomy resolution runs offline.
 - `../tests/test_validator.py` - adversarial tests proving each §12 failure mode.
 
+## Source of truth and materialization
+
+The specs are authored in condensed form and remain the source of truth.
+`make materialize` regenerates the `kb/` tree and `eval/manifests/` from them;
+the tree is committed, and CI fails if it drifts from the specs. Edit a card in
+its `specs/HC-KB-*.md` block, then re-materialize.
+
 ## Usage
 
 ```sh
-make validate         # check all cards (CI default)
-make validate-strict  # also fail on UNRESOLVED taxonomy ids
+make materialize      # regenerate kb/ and eval/manifests from the specs
+make validate         # check the materialized kb/ tree (CI default, strict)
 make test             # run the validator self-tests
-python3 tools/validate_kb.py specs/HC-KB-03.md   # one spec
+python3 tools/validate_kb.py --from-specs   # check the condensed spec blocks
+python3 tools/validate_kb.py kb/ai-llm/KB-AILLM-INJ-DIRECT-001.yaml   # one card
 ```
 
 ## What it checks (HC-KB-01 §9)
@@ -37,15 +49,17 @@ python3 tools/validate_kb.py specs/HC-KB-03.md   # one spec
   is a `{when, to}` object with a parseable `when` and a valid `to`
 - taxonomy ids are well-formed and resolve against `taxonomy.py`
 
+For materialized `kb/` cards it additionally enforces the shipping fields:
+semver `version`, a valid `status`, non-empty `references`, a `test_fixture`
+with `fires_on` and `does_not_fire`, a CVSS v4 `cvss_base_vector`, and a
+`success_signal.confidence_floor`; it also checks that the filename matches the
+card id and that every card has an `eval/manifests/` entry (HC-EVAL-01 §9).
+
 ## Finding grades
 
 - **ERROR** - a substantive schema / DSL / safety violation. Fails the build.
 - **UNRESOLVED** - a well-formed taxonomy id not in the bundled reference. This
-  is the `# verify` to-do surface. Non-fatal unless `--strict`.
-- The run also reports how many cards are still **condensed** (substantive
-  fields only); the full-template shipping fields (`version`, `status`,
-  `references`, `test_fixture`, `inputs`, `cvss_base_vector`) are filled when the
-  KB is materialized to `kb/<class>/*.yaml` at milestone M2.
+  is the `# verify` to-do surface. Non-fatal unless `--strict` (CI uses strict).
 
 ## Resolving a `# verify` / UNRESOLVED id
 
@@ -56,8 +70,17 @@ attack.mitre.org, atlas.mitre.org), then either add it to the confirmed set in
 resolve (`AML.T0053` and `AML.T0057` were confirmed against ATLAS v4.9.0 and
 added to the reference), so `make validate-strict` passes.
 
-## M2 note
+## Derived fields (materialized cards)
 
-When cards are materialized to `kb/<class>/*.yaml`, extend `validate_kb.py` with
-a block-style loader (the condensed blocks here are flow-style); the check logic
-is unchanged.
+`materialize_kb.py` fills the full-template fields the condensed blocks omit.
+Three are honest defaults rather than hand-authored precision:
+
+- `cvss_base_vector` - a CVSS v4 vector derived from the severity band and class
+  (availability-weighted for the DOS class, `AV:L` for mobile). It is a starting
+  point the report pipeline refines per finding (HC-FIND-01), not a per-card
+  hand-scored vector.
+- `references` - the canonical catalog URLs for the card's taxonomy ids.
+- `test_fixture` - `seed/<class-dir>/<id>-vuln` and `-patched` by convention.
+
+To change any of these, edit the generator and re-materialize, so the whole tree
+stays consistent.

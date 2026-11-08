@@ -1,0 +1,17 @@
+id: KB-SUPPLY-PLUGIN-UNTRUSTED-001
+title: Plugin loaded from an untrusted control sphere
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1195}, cwe: [CWE-829] }
+applicability: [ 'asset.type == "plugin_host"' ]
+preconditions: [ reachable ]
+yields_on_success: [ plugin_exec ]
+blast_tier: 2
+cleanup: snapshot-restore
+probe_steps:
+  - { tool: custom.supply_probe, intent: load_canary_plugin, args: { collaborator: range-oob } }
+success_signal: { type: oob_callback, evaluator: deterministic, assert: "oob_received(collaborator=range-oob, from=plugin_host) on plugin load", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/supply-chain/kb-supply-plugin-untrusted-001-vuln, does_not_fire: seed/supply-chain/kb-supply-plugin-untrusted-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/829.html", "https://attack.mitre.org/techniques/T1195/" ]

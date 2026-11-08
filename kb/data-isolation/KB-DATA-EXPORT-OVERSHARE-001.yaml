@@ -1,0 +1,17 @@
+id: KB-DATA-EXPORT-OVERSHARE-001
+title: Export or report returns forbidden fields or foreign rows
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { owasp: [API3:2023], cwe: [CWE-213] }
+applicability: [ 'asset.type == "http_endpoint"', 'asset.has_export == true' ]
+preconditions: [ reachable, authenticated_session ]
+yields_on_success: [ data_exposure ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.data_probe, intent: request_export_and_inspect_fields }
+success_signal: { type: content_match, evaluator: deterministic, assert: "an export includes a forbidden field or foreign row carrying the export_canary", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/data-isolation/kb-data-export-overshare-001-vuln, does_not_fire: seed/data-isolation/kb-data-export-overshare-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/213.html", "https://owasp.org/API-Security/editions/2023/en/0x11-t10/" ]

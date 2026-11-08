@@ -1,0 +1,18 @@
+id: KB-WEB-INJ-XSS-002
+title: Stored cross-site scripting
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1190}, owasp: [WSTG-INPV-02], cwe: [CWE-79] }
+applicability: [ 'asset.type == "http_endpoint"', 'asset.persists_input == true' ]
+preconditions: [ reachable ]
+yields_on_success: [ client_exec ]
+blast_tier: 2
+cleanup: snapshot-restore
+probe_steps:
+  - { tool: custom.xss_probe,   intent: store_marker }
+  - { tool: browser.playwright, intent: observe_execution_on_render }
+success_signal: { type: content_match, evaluator: "laya:success_signal", assert: "stored marker executes when the sink page is rendered", confidence_floor: 0.7 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/web-protocol-auth/kb-web-inj-xss-002-vuln, does_not_fire: seed/web-protocol-auth/kb-web-inj-xss-002-patched }
+references: [ "https://cwe.mitre.org/data/definitions/79.html", "https://attack.mitre.org/techniques/T1190/", "https://owasp.org/www-project-web-security-testing-guide/" ]

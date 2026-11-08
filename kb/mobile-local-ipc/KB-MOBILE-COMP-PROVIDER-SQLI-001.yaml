@@ -1,0 +1,17 @@
+id: KB-MOBILE-COMP-PROVIDER-SQLI-001
+title: Content-provider SQL injection
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { owasp: [M4:2024], cwe: [CWE-89] }
+applicability: [ 'asset.type == "mobile_app"', 'exists(asset.exported_components)' ]
+preconditions: [ reachable, mobile_app, exported_component ]
+yields_on_success: [ db_read ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.mobile_probe, intent: provider_injection, args: { oracle: true } }
+success_signal: { type: content_match, evaluator: deterministic, assert: "db_error_fingerprint(resp) OR boolean_oracle_divergence(baseline, resp) via the provider", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:L/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/mobile-local-ipc/kb-mobile-comp-provider-sqli-001-vuln, does_not_fire: seed/mobile-local-ipc/kb-mobile-comp-provider-sqli-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/89.html", "https://owasp.org/www-project-mobile-top-10/" ]

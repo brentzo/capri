@@ -1,0 +1,18 @@
+id: KB-BIN-FORMATSTR-001
+title: Format-string information leak
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1203}, cwe: [CWE-134] }
+applicability: [ 'asset.type == "native_service"', 'asset.reflects_user_format == true' ]
+preconditions: [ reachable, native_service ]
+yields_on_success: [ info_leak ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.bin_probe, intent: conversion_specifier_leak }
+success_signal: { type: content_match, evaluator: deterministic, assert: "format specifiers return stack memory containing the mem_canary", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+false_positive_notes: [ "The probe uses read specifiers only; a %n write path would be a separate, higher-tier card." ]
+test_fixture: { fires_on: seed/memory-binary/kb-bin-formatstr-001-vuln, does_not_fire: seed/memory-binary/kb-bin-formatstr-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/134.html", "https://attack.mitre.org/techniques/T1203/" ]

@@ -1,0 +1,17 @@
+id: KB-RPC-METHOD-AUTHZ-001
+title: Missing authorization on an RPC method
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { owasp: [API5:2023], cwe: [CWE-862] }
+applicability: [ 'asset.type == "rpc_endpoint"', 'exists(asset.privileged_methods)' ]
+preconditions: [ reachable, authenticated_session ]
+yields_on_success: [ priv_function_access ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.rpc_probe, intent: low_priv_calls_privileged_method }
+success_signal: { type: status_match, evaluator: deterministic, assert: "a privileged method returns a success status for a low-privilege session", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/rpc-messaging/kb-rpc-method-authz-001-vuln, does_not_fire: seed/rpc-messaging/kb-rpc-method-authz-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/862.html", "https://owasp.org/API-Security/editions/2023/en/0x11-t10/" ]

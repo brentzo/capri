@@ -1,0 +1,17 @@
+id: KB-BIN-UAF-001
+title: Use-after-free
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1203}, cwe: [CWE-416] }
+applicability: [ 'asset.type == "native_service"' ]
+preconditions: [ reachable, native_service ]
+yields_on_success: [ memory_corruption ]
+blast_tier: 2
+cleanup: snapshot-restore
+probe_steps:
+  - { tool: custom.bin_probe, intent: free_then_reuse_sequence }
+success_signal: { type: state_change, evaluator: deterministic, assert: "sanitizer reports heap-use-after-free on the reuse step", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/memory-binary/kb-bin-uaf-001-vuln, does_not_fire: seed/memory-binary/kb-bin-uaf-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/416.html", "https://attack.mitre.org/techniques/T1203/" ]

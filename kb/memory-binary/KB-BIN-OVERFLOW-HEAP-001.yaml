@@ -1,0 +1,17 @@
+id: KB-BIN-OVERFLOW-HEAP-001
+title: Heap buffer overflow
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1203}, cwe: [CWE-122, CWE-787] }
+applicability: [ 'asset.type == "native_service"' ]
+preconditions: [ reachable, native_service ]
+yields_on_success: [ memory_corruption ]
+blast_tier: 2
+cleanup: snapshot-restore
+probe_steps:
+  - { tool: custom.bin_probe, intent: heap_overflow_input }
+success_signal: { type: state_change, evaluator: deterministic, assert: "sanitizer reports heap-buffer-overflow OR the service crashes", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/memory-binary/kb-bin-overflow-heap-001-vuln, does_not_fire: seed/memory-binary/kb-bin-overflow-heap-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/122.html", "https://cwe.mitre.org/data/definitions/787.html", "https://attack.mitre.org/techniques/T1203/" ]

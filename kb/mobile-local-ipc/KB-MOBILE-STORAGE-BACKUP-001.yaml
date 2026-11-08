@@ -1,0 +1,17 @@
+id: KB-MOBILE-STORAGE-BACKUP-001
+title: App data extractable via backup
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { owasp: [M9:2024], cwe: [CWE-530, CWE-312] }
+applicability: [ 'asset.type == "mobile_app"', 'asset.backup_allowed == true' ]
+preconditions: [ reachable, mobile_app ]
+yields_on_success: [ data_exposure ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.mobile_probe, intent: extract_app_backup }
+success_signal: { type: content_match, evaluator: deterministic, assert: "an app backup is extractable and carries the backup_canary", confidence_floor: 0.0 }
+severity_rubric: { base: medium, cvss_base_vector: "CVSS:4.0/AV:L/AC:L/AT:N/PR:L/UI:N/VC:L/VI:L/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/mobile-local-ipc/kb-mobile-storage-backup-001-vuln, does_not_fire: seed/mobile-local-ipc/kb-mobile-storage-backup-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/530.html", "https://cwe.mitre.org/data/definitions/312.html", "https://owasp.org/www-project-mobile-top-10/" ]

@@ -1,0 +1,18 @@
+id: KB-CLOUD-IAM-PRIVESC-001
+title: Over-permissioned role enables privilege escalation
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1098}, cwe: [CWE-269] }
+applicability: [ 'asset.type == "cloud_control_plane"' ]
+preconditions: [ reachable, cloud_credential ]
+yields_on_success: [ cloud_admin ]
+blast_tier: 2
+cleanup: snapshot-restore
+probe_steps:
+  - { tool: custom.cloud_probe, intent: enumerate_permissions }
+  - { tool: custom.cloud_probe, intent: escalate_via_passrole_or_attach, args: { marker: admin_canary }}
+success_signal: { type: state_change, evaluator: deterministic, assert: "an action the role should be denied succeeds and creates admin_canary", confidence_floor: 0.0 }
+severity_rubric: { base: critical, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/cloud-deployment/kb-cloud-iam-privesc-001-vuln, does_not_fire: seed/cloud-deployment/kb-cloud-iam-privesc-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/269.html", "https://attack.mitre.org/techniques/T1098/" ]

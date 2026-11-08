@@ -1,0 +1,17 @@
+id: KB-DATA-TENANT-READ-001
+title: Cross-tenant data read (isolation bypass)
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { owasp: [API1:2023], cwe: [CWE-639, CWE-284] }
+applicability: [ 'asset.type == "http_endpoint"', 'asset.multi_tenant == true' ]
+preconditions: [ reachable, authenticated_session, multi_tenant ]
+yields_on_success: [ cross_object_read ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.data_probe, intent: read_foreign_tenant_record, args: { from: tenant_a, canary: tenant_b_canary } }
+success_signal: { type: content_match, evaluator: deterministic, assert: "tenant A reads the tenant_b_canary record", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/data-isolation/kb-data-tenant-read-001-vuln, does_not_fire: seed/data-isolation/kb-data-tenant-read-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/639.html", "https://cwe.mitre.org/data/definitions/284.html", "https://owasp.org/API-Security/editions/2023/en/0x11-t10/" ]

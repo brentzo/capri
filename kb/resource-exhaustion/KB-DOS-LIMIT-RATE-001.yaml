@@ -1,0 +1,17 @@
+id: KB-DOS-LIMIT-RATE-001
+title: Missing rate limit on an expensive endpoint
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1499.003}, cwe: [CWE-770] }
+applicability: [ 'asset.type == "http_endpoint"', 'asset.is_expensive == true' ]
+preconditions: [ reachable ]
+yields_on_success: [ rate_unbounded ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.dos_probe, intent: bounded_burst, args: { attempts: 50, window_s: 10 } }
+success_signal: { type: differential, evaluator: deterministic, assert: "no throttle, 429, or backoff appears after a bounded burst on an expensive route", confidence_floor: 0.0 }
+severity_rubric: { base: low, raise_if: [ { when: "asset.is_expensive", to: medium } ], cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:L/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/resource-exhaustion/kb-dos-limit-rate-001-vuln, does_not_fire: seed/resource-exhaustion/kb-dos-limit-rate-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/770.html", "https://attack.mitre.org/techniques/T1499/003/" ]

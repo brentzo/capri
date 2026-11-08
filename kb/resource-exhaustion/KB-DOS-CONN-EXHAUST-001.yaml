@@ -1,0 +1,18 @@
+id: KB-DOS-CONN-EXHAUST-001
+title: No connection cap or idle timeout (slow-connection exhaustion)
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1499.001}, cwe: [CWE-400] }
+applicability: [ 'asset.type == "network_service"' ]
+preconditions: [ reachable ]
+yields_on_success: [ resource_exhaustion ]
+blast_tier: 2
+cleanup: snapshot-restore
+probe_steps:
+  - { tool: custom.dos_probe, intent: bounded_slow_connections, args: { cap_conn: 50, cap_s: 20 } }
+success_signal: { type: timing_oracle, evaluator: deterministic, assert: "slow/partial connections are held open past a reasonable idle timeout, within cap_conn", confidence_floor: 0.0 }
+severity_rubric: { base: medium, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:L/SC:N/SI:N/SA:N" }
+false_positive_notes: [ "The probe holds a bounded number of connections for a bounded time; it measures the absence of a timeout, not an outage." ]
+test_fixture: { fires_on: seed/resource-exhaustion/kb-dos-conn-exhaust-001-vuln, does_not_fire: seed/resource-exhaustion/kb-dos-conn-exhaust-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/400.html", "https://attack.mitre.org/techniques/T1499/001/" ]

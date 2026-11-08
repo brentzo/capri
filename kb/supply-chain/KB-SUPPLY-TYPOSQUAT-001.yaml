@@ -1,0 +1,17 @@
+id: KB-SUPPLY-TYPOSQUAT-001
+title: Loose dependency spec resolves a squatted name
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1195.001}, cwe: [CWE-1104] }
+applicability: [ 'asset.type == "build_resolver"' ]
+preconditions: [ reachable, registry_write ]
+yields_on_success: [ dependency_hijack ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.supply_probe, intent: offer_near_miss_name, args: { squat: canary_squat }}
+success_signal: { type: content_match, evaluator: deterministic, assert: "the resolver selects the attacker-named near-miss over the intended package", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/supply-chain/kb-supply-typosquat-001-vuln, does_not_fire: seed/supply-chain/kb-supply-typosquat-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/1104.html", "https://attack.mitre.org/techniques/T1195/001/" ]

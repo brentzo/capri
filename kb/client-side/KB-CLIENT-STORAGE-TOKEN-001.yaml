@@ -1,0 +1,18 @@
+id: KB-CLIENT-STORAGE-TOKEN-001
+title: Sensitive token or PII in web storage reachable by script
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { owasp: [WSTG-CLNT-12], cwe: [CWE-922] }
+applicability: [ 'asset.type == "http_endpoint"', 'asset.uses_web_storage == true' ]
+preconditions: [ reachable, authenticated_session ]
+yields_on_success: [ token_exposure ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: browser.playwright, intent: read_local_and_session_storage }
+success_signal: { type: content_match, evaluator: deterministic, assert: "a session token or PII canary is present in localStorage/sessionStorage", confidence_floor: 0.0 }
+severity_rubric: { base: medium, raise_if: [ { when: "yields.client_exec", to: high } ], cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:L/VI:L/VA:N/SC:N/SI:N/SA:N" }
+false_positive_notes: [ "Severity depends on an execution path to read it; pair with DOM-XSS to demonstrate theft." ]
+test_fixture: { fires_on: seed/client-side/kb-client-storage-token-001-vuln, does_not_fire: seed/client-side/kb-client-storage-token-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/922.html", "https://owasp.org/www-project-web-security-testing-guide/" ]

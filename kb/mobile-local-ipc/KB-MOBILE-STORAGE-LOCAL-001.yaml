@@ -1,0 +1,17 @@
+id: KB-MOBILE-STORAGE-LOCAL-001
+title: Sensitive data in insecure local storage
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { owasp: [M9:2024], cwe: [CWE-312, CWE-922] }
+applicability: [ 'asset.type == "mobile_app"' ]
+preconditions: [ reachable, mobile_app ]
+yields_on_success: [ token_exposure ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.mobile_probe, intent: read_app_local_storage }
+success_signal: { type: content_match, evaluator: deterministic, assert: "a token or PII storage_canary is present unencrypted in app-local storage", confidence_floor: 0.0 }
+severity_rubric: { base: medium, raise_if: [ { when: "yields.traffic_intercept", to: high } ], cvss_base_vector: "CVSS:4.0/AV:L/AC:L/AT:N/PR:L/UI:N/VC:L/VI:L/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/mobile-local-ipc/kb-mobile-storage-local-001-vuln, does_not_fire: seed/mobile-local-ipc/kb-mobile-storage-local-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/312.html", "https://cwe.mitre.org/data/definitions/922.html", "https://owasp.org/www-project-mobile-top-10/" ]

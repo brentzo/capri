@@ -1,0 +1,18 @@
+id: KB-WEB-AUTH-IDOR-001
+title: Insecure direct object reference / broken object-level authorization
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { owasp: [API1:2023], cwe: [CWE-639] }
+applicability: [ 'asset.type == "http_endpoint"', 'matches(asset.params, /id|uuid|account|order/)' ]
+preconditions: [ reachable, authenticated_session ]
+yields_on_success: [ cross_object_read ]
+inputs: { param: "{asset.params[*]}" }
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.authz_probe, intent: swap_object_id, args: { from: session_a, to: object_b } }
+success_signal: { type: differential, evaluator: deterministic, assert: "session_a reads object_b's data (status 200 AND foreign-owner marker)", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/web-protocol-auth/kb-web-auth-idor-001-vuln, does_not_fire: seed/web-protocol-auth/kb-web-auth-idor-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/639.html", "https://owasp.org/API-Security/editions/2023/en/0x11-t10/" ]

@@ -81,4 +81,5 @@ The graph is therefore intentionally not a strict DAG, and those cycles are expe
 
 The HC-KB-01 validation gate is implemented in `../tools/validate_kb.py` (pure standard library), with the bundled taxonomy reference in `../tools/taxonomy.py` and adversarial tests in `../tests/test_validator.py`.
 It runs in CI (`../.github/workflows/validate.yml`) and locally via `make validate` / `make test`; see `../tools/README.md`.
-All 107 authored technique cards pass, including `--strict` (the two ATLAS ids the validator first flagged, `AML.T0053` and `AML.T0057`, were confirmed against ATLAS v4.9.0 and added to the reference).
+The cards are materialized from the specs into `../kb/<class>/*.yaml` (with `../kb/_index/index.md` and `../eval/manifests/`) by `../tools/materialize_kb.py`; the validator checks that full-card tree by default.
+All 107 cards pass `--strict`, including the shipping-field, filename, and manifest-coverage checks (the two ATLAS ids the validator first flagged, `AML.T0053` and `AML.T0057`, were confirmed against ATLAS v4.9.0 and added to the reference).

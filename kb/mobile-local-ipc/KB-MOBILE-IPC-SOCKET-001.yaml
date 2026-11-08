@@ -1,0 +1,17 @@
+id: KB-MOBILE-IPC-SOCKET-001
+title: Unauthenticated local IPC socket
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { owasp: [M8:2024], cwe: [CWE-306, CWE-200] }
+applicability: [ 'asset.type == "local_ipc"' ]
+preconditions: [ reachable, local_ipc ]
+yields_on_success: [ local_ipc_access ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.ipc_probe, intent: connect_local_socket, args: { canary: ipc_canary } }
+success_signal: { type: content_match, evaluator: deterministic, assert: "an unauthenticated local socket (unix/abstract/localhost) returns ipc_canary", confidence_floor: 0.0 }
+severity_rubric: { base: medium, raise_if: [ { when: "yields.db_read", to: high } ], cvss_base_vector: "CVSS:4.0/AV:L/AC:L/AT:N/PR:L/UI:N/VC:L/VI:L/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/mobile-local-ipc/kb-mobile-ipc-socket-001-vuln, does_not_fire: seed/mobile-local-ipc/kb-mobile-ipc-socket-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/306.html", "https://cwe.mitre.org/data/definitions/200.html", "https://owasp.org/www-project-mobile-top-10/" ]

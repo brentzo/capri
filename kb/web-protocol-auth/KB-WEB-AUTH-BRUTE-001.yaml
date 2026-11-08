@@ -1,0 +1,17 @@
+id: KB-WEB-AUTH-BRUTE-001
+title: Missing rate limit on login / credential stuffing
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1110.004}, owasp: [WSTG-ATHN-03], cwe: [CWE-307] }
+applicability: [ 'asset.type == "login_endpoint"' ]
+preconditions: [ reachable, login_endpoint ]
+yields_on_success: [ credential ]
+blast_tier: 2
+cleanup: snapshot-restore
+probe_steps:
+  - { tool: custom.auth_probe, intent: rate_probe, args: { attempts: 50, window_s: 10 } }
+success_signal: { type: differential, evaluator: deterministic, assert: "no lockout/throttle/captcha after N failed attempts", confidence_floor: 0.0 }
+severity_rubric: { base: medium, raise_if: [ { when: "yields.credential", to: high } ], cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:L/VI:L/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/web-protocol-auth/kb-web-auth-brute-001-vuln, does_not_fire: seed/web-protocol-auth/kb-web-auth-brute-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/307.html", "https://attack.mitre.org/techniques/T1110/004/", "https://owasp.org/www-project-web-security-testing-guide/" ]

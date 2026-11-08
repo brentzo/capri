@@ -1,0 +1,17 @@
+id: KB-DATA-TENANT-WRITE-001
+title: Cross-tenant write (isolation bypass on mutation)
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { owasp: [API1:2023], cwe: [CWE-639] }
+applicability: [ 'asset.type == "http_endpoint"', 'asset.multi_tenant == true' ]
+preconditions: [ reachable, authenticated_session, multi_tenant ]
+yields_on_success: [ cross_tenant_write ]
+blast_tier: 2
+cleanup: snapshot-restore
+probe_steps:
+  - { tool: custom.data_probe, intent: write_foreign_tenant_record, args: { from: tenant_a, target: tenant_b, marker: cross_write_canary } }
+success_signal: { type: state_change, evaluator: deterministic, assert: "tenant A sets cross_write_canary on a tenant B record", confidence_floor: 0.0 }
+severity_rubric: { base: critical, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/data-isolation/kb-data-tenant-write-001-vuln, does_not_fire: seed/data-isolation/kb-data-tenant-write-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/639.html", "https://owasp.org/API-Security/editions/2023/en/0x11-t10/" ]

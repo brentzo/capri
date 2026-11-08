@@ -1,0 +1,18 @@
+id: KB-MOBILE-NET-CLEARTEXT-001
+title: Cleartext traffic or missing TLS validation
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { owasp: [M5:2024], cwe: [CWE-319] }
+applicability: [ 'asset.type == "mobile_app"' ]
+preconditions: [ reachable, mobile_app ]
+yields_on_success: [ traffic_intercept ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.mobile_probe, intent: observe_traffic_via_range_proxy, args: { canary: wire_canary } }
+success_signal: { type: content_match, evaluator: deterministic, assert: "a sensitive wire_canary is sent in cleartext or the app accepts a range-proxy certificate", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:L/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+false_positive_notes: [ "Interception happens only through the in-range proxy; there is no internet path, so this never leaves scope." ]
+test_fixture: { fires_on: seed/mobile-local-ipc/kb-mobile-net-cleartext-001-vuln, does_not_fire: seed/mobile-local-ipc/kb-mobile-net-cleartext-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/319.html", "https://owasp.org/www-project-mobile-top-10/" ]

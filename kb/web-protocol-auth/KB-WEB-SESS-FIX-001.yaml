@@ -1,0 +1,17 @@
+id: KB-WEB-SESS-FIX-001
+title: Session fixation (session id not rotated on authentication)
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1539}, owasp: [WSTG-SESS-03], cwe: [CWE-384] }
+applicability: [ 'asset.type == "login_endpoint"', 'exists(asset.session_cookie)' ]
+preconditions: [ reachable, login_endpoint ]
+yields_on_success: [ session_hijack ]
+blast_tier: 2
+cleanup: snapshot-restore
+probe_steps:
+  - { tool: custom.sess_probe, intent: set_preauth_id_then_login }
+success_signal: { type: differential, evaluator: deterministic, assert: "pre-auth session id remains valid and authenticated after login", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/web-protocol-auth/kb-web-sess-fix-001-vuln, does_not_fire: seed/web-protocol-auth/kb-web-sess-fix-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/384.html", "https://attack.mitre.org/techniques/T1539/", "https://owasp.org/www-project-web-security-testing-guide/" ]

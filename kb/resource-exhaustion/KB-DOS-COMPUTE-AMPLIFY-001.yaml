@@ -1,0 +1,17 @@
+id: KB-DOS-COMPUTE-AMPLIFY-001
+title: Asymmetric request amplification (fan-out)
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1499.003}, cwe: [CWE-405] }
+applicability: [ 'asset.type == "http_endpoint"', 'asset.triggers_downstream_work == true' ]
+preconditions: [ reachable ]
+yields_on_success: [ resource_exhaustion ]
+blast_tier: 2
+cleanup: snapshot-restore
+probe_steps:
+  - { tool: custom.dos_probe, intent: single_request_high_fanout, args: { cap_s: 10 } }
+success_signal: { type: timing_oracle, evaluator: deterministic, assert: "one bounded request causes downstream work disproportionate to its size, within cap_s", confidence_floor: 0.0 }
+severity_rubric: { base: medium, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:L/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/resource-exhaustion/kb-dos-compute-amplify-001-vuln, does_not_fire: seed/resource-exhaustion/kb-dos-compute-amplify-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/405.html", "https://attack.mitre.org/techniques/T1499/003/" ]

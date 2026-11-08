@@ -1,0 +1,19 @@
+id: KB-AILLM-OUT-XSS-001
+title: Improper output handling - model output rendered as active content
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { owasp: [LLM05:2025], cwe: [CWE-79] }
+applicability: [ 'asset.type == "llm_endpoint"', 'asset.output_rendered_in_dom == true' ]
+preconditions: [ reachable, llm_output_rendered ]
+yields_on_success: [ client_exec ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.llm_probe,   intent: elicit_script_marker }
+  - { tool: browser.playwright, intent: observe_execution }
+success_signal: { type: content_match, evaluator: "laya:success_signal", assert: "marker executed in DOM, not merely displayed as text", confidence_floor: 0.7 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+false_positive_notes: [ "Model text shown as escaped text is not XSS; confirm execution in a browser context, as in KB-WEB-INJ-XSS-001." ]
+test_fixture: { fires_on: seed/ai-llm/kb-aillm-out-xss-001-vuln, does_not_fire: seed/ai-llm/kb-aillm-out-xss-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/79.html", "https://genai.owasp.org/llm-top-10/" ]

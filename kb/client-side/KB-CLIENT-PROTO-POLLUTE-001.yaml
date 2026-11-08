@@ -1,0 +1,19 @@
+id: KB-CLIENT-PROTO-POLLUTE-001
+title: Client-side prototype pollution via unsafe merge
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { owasp: [WSTG-CLNT-13], cwe: [CWE-1321] }
+applicability: [ 'asset.type == "http_endpoint"', 'asset.renders_html == true' ]
+preconditions: [ reachable ]
+yields_on_success: [ proto_pollution ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.client_probe, intent: pollute_proto_via_query, args: { path: "__proto__.marker", value: polluted } }
+  - { tool: browser.playwright, intent: observe_gadget }
+success_signal: { type: differential, evaluator: deterministic, assert: "Object.prototype.marker is set AND a page gadget observably consumes it", confidence_floor: 0.0 }
+severity_rubric: { base: high, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N" }
+false_positive_notes: [ "Pollution without a reachable gadget is a hardening note; require an observed gadget to call it a finding." ]
+test_fixture: { fires_on: seed/client-side/kb-client-proto-pollute-001-vuln, does_not_fire: seed/client-side/kb-client-proto-pollute-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/1321.html", "https://owasp.org/www-project-web-security-testing-guide/" ]

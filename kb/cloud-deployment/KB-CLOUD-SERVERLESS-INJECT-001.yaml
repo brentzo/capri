@@ -1,0 +1,17 @@
+id: KB-CLOUD-SERVERLESS-INJECT-001
+title: Event-data injection into a serverless function
+version: 1.0.0
+status: active
+supersedes: null
+taxonomy: { attack: {technique: T1059}, cwe: [CWE-74] }
+applicability: [ 'asset.type == "serverless_function"' ]
+preconditions: [ reachable ]
+yields_on_success: [ rce_foothold ]
+blast_tier: 1
+cleanup: none
+probe_steps:
+  - { tool: custom.cloud_probe, intent: inject_event_payload, args: { collaborator: range-oob } }
+success_signal: { type: oob_callback, evaluator: deterministic, assert: "oob_received(collaborator=range-oob, from=function)", confidence_floor: 0.0 }
+severity_rubric: { base: critical, cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:N/SC:N/SI:N/SA:N" }
+test_fixture: { fires_on: seed/cloud-deployment/kb-cloud-serverless-inject-001-vuln, does_not_fire: seed/cloud-deployment/kb-cloud-serverless-inject-001-patched }
+references: [ "https://cwe.mitre.org/data/definitions/74.html", "https://attack.mitre.org/techniques/T1059/" ]
