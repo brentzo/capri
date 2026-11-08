@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS finding (
   verified_by       TEXT,
   impact            TEXT,
   remediation       TEXT,
+  repro             TEXT,                           -- JSON array of reproduction steps (HC-FIND-01 §3)
   blast_tier_used   INTEGER,
   created_at        TEXT NOT NULL,
   resolved_at       TEXT,

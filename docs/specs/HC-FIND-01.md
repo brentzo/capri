@@ -198,6 +198,10 @@ schema.validate(report)                               -> ok | errors[]
 
 A confirm or reject also emits the corresponding `label` to HC-DATA-01 (`source: verifier`, `tier: silver` until audited), which is the self-labeling corpus in action.
 
+The finding record (§3), the verdict transitions, the verifier label, the severity rubric (§5), and the report builder and its ship-gating validator (§7) are implemented as pure-standard-library code: `harness/store/findings.py` (`emit_lead`, `confirm`, `reject`, `mark_inconclusive`, `classify_hardening`, `to_record`, the query helpers), `harness/severity.py` scoring the rubric via the predicate evaluator `harness/predicates.py`, `harness/kb.py` resolving a finding's technique against the materialized card tree, and `harness/report.py` (`build_report`, `validate_report`).
+The verification *mechanics* of §4.2 (the Verifier role driving the repro through `dispatch()`) depend on the model plane and the sandbox and are not in this repo; the finder-is-not-verifier guarantee is enforced regardless, by the HC-DATA-01 database CHECK and re-checked by `validate_report`.
+Adversarial tests in `tests/test_findings_report.py` run in CI.
+
 ## 9. Acceptance criteria
 
 - A finding with `found_by == verified_by` cannot be produced, and the report validator rejects one if constructed by hand.

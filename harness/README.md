@@ -64,6 +64,26 @@ infrastructure (injected), so this is the decision logic, not the tools.
 - `ratelimit.py` - the fourth guard: a per-target token bucket plus a run-action
   budget, both from the contract's `policy.rate`, with an injectable clock.
 
+## What's here (finding/report layer)
+
+The verdict-to-report path of HC-FIND-01, as pure-stdlib code.
+
+- `predicates.py` - the blackboard predicate evaluator (HC-KB-01 §4 DSL:
+  identifiers, == != < > <= >= / in, exists()/matches(), ! && ||) over a facts
+  dict. Evaluates every applicability and severity `when` clause in the KB.
+- `severity.py` - scores a card's `severity_rubric` (base band adjusted by
+  raise_if / lower_if, evaluated with `predicates`) to a band + CVSS vector +
+  representative score. A raise clause only raises, a lower clause only lowers.
+- `kb.py` - loads the materialized card tree into a `(id, version) -> card`
+  index so a finding's technique resolves to a known card.
+- `store/findings.py` - `emit_lead` (severity + cwe from the card), the verdict
+  transitions, `classify_hardening`, the verifier `label` on confirm/reject, and
+  `to_record` building the §3 finding record from the store.
+- `report.py` - `build_report` assembles the §7.1 report from the store;
+  `validate_report` is the ship gate (finder != verifier, confirmed-backed-by-a-
+  verifier-event-and-repro, vuln-has-cvss+cwe / hardening-has-neither, technique
+  resolves, no raw internal error text, passive-only ships nothing confirmed).
+
 ## Run
 
 ```sh
@@ -71,6 +91,7 @@ make test                                                   # harness + KB tests
 python3 tests/test_substrate.py                             # M0 substrate
 python3 tests/test_store.py                                 # M1 store invariants
 python3 tests/test_dispatch.py                              # propose-and-dispose chokepoint
+python3 tests/test_findings_report.py                       # finding/report layer
 python3 -m harness.substrate.contract harness/substrate/examples/engagement.example.yaml
 ```
 
