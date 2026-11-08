@@ -222,6 +222,7 @@ Do not write freeform prose; make each technique a structured card so the agent 
 ### 7.1 Grounding sources (public, authoritative, real-adversary-derived)
 
 - MITRE ATT&CK: the catalog of TTPs actually observed in the wild, the spine for tactics (the why) and techniques (the how).
+- MITRE ATLAS: the adversarial-ML threat matrix, the spine for AI and LLM targets where ATT&CK has no equivalent.
 - OWASP WSTG (web testing), ASVS (verification requirements), Top 10, and LLM Top 10 for AI targets.
 - MITRE CWE: the weakness taxonomy findings are tagged with.
 - CVSS v4: severity scoring.
@@ -507,6 +508,7 @@ These live in harness code, and each has a test:
 - 2026-11-08 (HC-SAFE-01): Defense-in-depth is explicit: scope, finder-is-not-verifier, and egress are each enforced at multiple independent layers so no single bug defeats a guarantee.
 - 2026-11-08 (HC-SAFE-01): Operator-facing failures state what happened, why, and what to do next with a recovery affordance, never a raw internal error; human-rendered timestamps use am/pm.
 - 2026-11-08 (consistency pass): Standardized cross-spec vocabulary - finder-is-not-verifier means disjoint providers everywhere (dropped "or model"), `passive-only` is the single mode token, `cwe` is always an array, and `raise_if`/`lower_if` are always `[{when, to}]` objects; made the spec `depends_on`/`depended_on_by` frontmatter reciprocal, with the HC-AGENT-01/HC-MODEL-01, HC-AGENT-01/HC-FIND-01, and HC-FIND-01/HC-DATA-01 co-design cycles noted as intended.
+- 2026-11-08 (HC-KB-03): Added the AI/LLM technique-card starter set (twelve cards across prompt injection, output handling, disclosure, excessive agency, RAG exfiltration, unbounded consumption, and guardrail bypass), grounded on the OWASP LLM Top 10 and MITRE ATLAS; the design prefers planted-canary, OOB, and tool-observation determinism over judging model text, reaching for laya:success_signal only where compliance is irreducibly fuzzy, and extends the HC-KB-01 taxonomy with an optional atlas field for classes ATT&CK does not model.
 
 ---
 
@@ -521,3 +523,5 @@ These live in harness code, and each has a test:
 - OWASP Web Security Testing Guide: https://owasp.org/www-project-web-security-testing-guide/
 - MITRE CWE: https://cwe.mitre.org
 - NIST SP 800-115: https://csrc.nist.gov/pubs/sp/800/115/final
+- MITRE ATLAS: https://atlas.mitre.org
+- OWASP Top 10 for LLM Applications: https://genai.owasp.org

@@ -4,7 +4,7 @@ title: Technique-card schema and knowledge base structure
 status: draft
 parent: SPEC.md#7
 depends_on: [HC-SUB-01]
-depended_on_by: [HC-KB-02, HC-MODEL-02, HC-ENRICH-01, HC-AGENT-01, HC-FIND-01, HC-DATA-01, HC-EVAL-01]
+depended_on_by: [HC-KB-02, HC-KB-03, HC-MODEL-02, HC-ENRICH-01, HC-AGENT-01, HC-FIND-01, HC-DATA-01, HC-EVAL-01]
 updated: 2026-11-08
 ---
 
@@ -22,7 +22,7 @@ This is also the separation that lets the system grow: new knowledge is a new ca
 
 - Cards are data: the loop evaluates typed fields (applicability, probe steps, success signal), it does not read paragraphs.
 - Deterministic first: a card expresses its success signal so the harness can evaluate it in code, and it reaches for a Laya classifier (HC-MODEL-02) only for a genuinely fuzzy judgment.
-- Grounded: every card maps to public, authoritative, real-adversary catalogs (ATT&CK, OWASP, CWE, CAPEC, CVSS).
+- Grounded: every card maps to public, authoritative, real-adversary catalogs (ATT&CK, ATLAS, OWASP, CWE, CAPEC, CVSS).
 - Composable: a card declares what facts it needs and what it yields, so cards chain explicitly through a shared blackboard rather than through a model's imagination.
 - Safe by construction: a card declares its blast tier (HC-SUB-01) and its cleanup, and the validator refuses an unsafe or incomplete card.
 - Reviewable and versioned: each card carries a semver, and a finding always pins the exact card version that produced it.
@@ -39,7 +39,8 @@ status:     active                      # draft | active | deprecated
 supersedes: null                        # card id this replaces, if any
 
 taxonomy:
-  attack: { tactic: TA0001, technique: T1190 }   # MITRE ATT&CK
+  attack: { tactic: TA0001, technique: T1190 }   # MITRE ATT&CK (web and infra classes)
+  atlas:  [AML.T0051]                              # MITRE ATLAS; AI/LLM classes where ATT&CK has no equivalent (optional)
   owasp:  [WSTG-INPV-05]                           # OWASP WSTG / ASVS / Top 10 / LLM Top 10
   cwe:    [CWE-89]                                 # MITRE CWE
   capec:  [CAPEC-66]                               # optional
@@ -164,7 +165,7 @@ A zero-dependency validator, runnable in CI, gates every card; an `active` card 
 It checks:
 
 - schema conformance and required fields present;
-- taxonomy references resolve to valid ATT&CK, CWE, and (if present) CAPEC identifiers;
+- taxonomy references resolve to valid ATT&CK, ATLAS, CWE, and (if present) CAPEC identifiers;
 - the applicability predicate and every `when` clause parse under the section-4 DSL;
 - `success_signal.evaluator` is a known deterministic evaluator or a declared Laya decision point;
 - `blast_tier` is present, and `cleanup` is non-empty when the tier is >= 2;
@@ -184,6 +185,7 @@ Recap of the HC-AGENT-01 contract, for completeness:
 ## 11. Grounding sources
 
 - MITRE ATT&CK: tactics and techniques observed in the wild.
+- MITRE ATLAS: the adversarial-ML threat matrix, grounding the AI and LLM classes where ATT&CK has no equivalent.
 - OWASP WSTG, ASVS, Top 10, and LLM Top 10.
 - MITRE CWE: the weakness taxonomy for findings.
 - MITRE CAPEC: optional attack-pattern cross-reference.
