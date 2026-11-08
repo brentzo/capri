@@ -21,6 +21,10 @@ jobs:
       - name: kb/ tree is in sync with the specs
         run: |
           python3 tools/materialize_kb.py
-          git diff --exit-status kb eval
+          if [ -n "$(git status --porcelain -- kb eval)" ]; then
+            echo "::error::kb/ tree is out of sync with the specs; run 'make materialize' and commit."
+            git status --porcelain -- kb eval
+            exit 1
+          fi
       - name: Validator self-tests (HC-KB-01 §12)
         run: python3 tests/test_validator.py
