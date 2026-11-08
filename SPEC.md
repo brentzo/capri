@@ -482,6 +482,9 @@ These live in harness code, and each has a test:
 - 2026-11-08 (HC-FIND-01): rejected and inconclusive are distinct verdicts; only active disproof or a known false positive is rejected, while an unestablished verdict is inconclusive and never ships as confirmed.
 - 2026-11-08 (HC-FIND-01): The harness, not the Verifier model, renders the final deterministic verdict; the Verifier role exists to drive and adapt repro, so a model cannot talk itself into a confirmation.
 - 2026-11-08 (HC-FIND-01): Hardening notes carry no CVSS and are reported separately from vulnerabilities, keeping severity tied to demonstrated impact.
+- 2026-11-08 (HC-DATA-01): finder-is-not-verifier is enforced at the database layer (a check constraint), not only in application code.
+- 2026-11-08 (HC-DATA-01): Laya's own predictions are never written as training labels; only Verifier verdicts (silver) and audits (gold) become corpus labels, which prevents a self-training feedback loop.
+- 2026-11-08 (HC-DATA-01): The evidence store is self-hosted inside the trust boundary (Postgres + MinIO, no external managed service), with content-addressed blobs and per-event content hashes forming an append-only integrity chain.
 
 ---
 
