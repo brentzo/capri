@@ -4,7 +4,7 @@ title: Sandbox, scope guard, and engagement contract
 status: draft
 parent: SPEC.md#3
 depends_on: []
-depended_on_by: [HC-KB-01, HC-KB-02, HC-KB-03, HC-KB-04, HC-KB-05, HC-KB-06, HC-KB-07, HC-KB-08, HC-KB-09, HC-MODEL-01, HC-ENRICH-01, HC-AGENT-01, HC-FIND-01, HC-DATA-01, HC-SAFE-01, HC-EVAL-01]
+depended_on_by: [HC-KB-01, HC-KB-02, HC-KB-03, HC-KB-04, HC-KB-05, HC-KB-06, HC-KB-07, HC-KB-08, HC-KB-09, HC-KB-10, HC-MODEL-01, HC-ENRICH-01, HC-AGENT-01, HC-FIND-01, HC-DATA-01, HC-SAFE-01, HC-EVAL-01]
 updated: 2026-11-08
 ---
 
