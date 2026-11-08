@@ -4,7 +4,7 @@ title: Sandbox, scope guard, and engagement contract
 status: draft
 parent: SPEC.md#3
 depends_on: []
-depended_on_by: [HC-AGENT-01, HC-SAFE-01, HC-DATA-01, HC-EVAL-01]
+depended_on_by: [HC-KB-01, HC-KB-02, HC-MODEL-01, HC-ENRICH-01, HC-AGENT-01, HC-FIND-01, HC-DATA-01, HC-SAFE-01, HC-EVAL-01]
 updated: 2026-11-08
 ---
 
@@ -208,7 +208,8 @@ If the sandbox is not provisioned, or any section-8 proof has not passed in the 
 sandbox.provision(engagement)        -> { range_id, attacker_vm, golden_snapshot_id, pinned_targets }
 sandbox.snapshot()                   -> snapshot_id
 sandbox.restore(snapshot_id)         -> ok
-sandbox.guard_proof()                -> pass | fail(details)
+sandbox.guard_proof()                -> pass | fail(details)   # G1/G2 only (the §8.1 guard proof)
+sandbox.proofs_pass()                -> pass | fail(details)   # aggregate G1-G5; runs the §8.1-8.4 self-tests
 sandbox.kill()                       -> ok
 scope.validate(target, port)         -> allow | deny(reason)
 blast.gate(technique_tier, has_snap) -> allow | deny(reason)
@@ -240,6 +241,6 @@ Tool adapters (HC-AGENT-01) must call `scope.validate` and `blast.gate` before e
 ## 13. Open questions
 
 - Provisioning dependencies: some golden images need package installs that require internet; resolve by building golden images in a separate, pre-lockdown bake step, never during a live engagement.
-- Multi-host and segmented ranges: whether tier-5-style lateral movement across sub-segments is in scope for v1, or deferred.
+- Multi-host and segmented ranges: whether lateral movement across sub-segments is in scope for v1, or deferred.
 - IPv6: the scope guard must deny IPv6 egress explicitly, not only IPv4, or disable IPv6 on the range entirely (leaning toward disable for v1).
 - Realistic data: if a target ever mirrors production-like data, decide retention and redaction here in coordination with HC-DATA-01's PII tagging.

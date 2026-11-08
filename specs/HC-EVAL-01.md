@@ -3,7 +3,7 @@ tag: HC-EVAL-01
 title: Evaluation harness and seeded vulnerabilities
 status: draft
 parent: SPEC.md#14
-depends_on: [HC-SUB-01, HC-KB-01, HC-KB-02, HC-FIND-01, HC-DATA-01]
+depends_on: [HC-SUB-01, HC-KB-01, HC-KB-02, HC-FIND-01, HC-DATA-01, HC-AGENT-01]
 depended_on_by: [HC-MODEL-02]
 updated: 2026-11-08
 ---

@@ -3,8 +3,8 @@ tag: HC-AGENT-01
 title: Agent loop and role orchestration
 status: draft
 parent: SPEC.md#4, SPEC.md#6
-depends_on: [HC-SUB-01, HC-MODEL-01, HC-KB-01, HC-FIND-01]
-depended_on_by: [HC-EVAL-01]
+depends_on: [HC-SUB-01, HC-MODEL-01, HC-KB-01, HC-FIND-01, HC-DATA-01, HC-MODEL-02, HC-ENRICH-01]
+depended_on_by: [HC-MODEL-01, HC-FIND-01, HC-SAFE-01, HC-EVAL-01]
 updated: 2026-11-08
 ---
 
@@ -22,7 +22,7 @@ A role emits a structured request; the harness validates it against the HC-SUB-0
 
 - The harness owns control flow; the model never decides what runs, only what to try.
 - Roles are isolated sessions with separate contexts and separate Bifrost virtual keys, so one role cannot see another's reasoning.
-- Finder is not verifier, enforced at the model level: the Verifier runs on a different provider or model than the Operator and sees only repro steps and evidence.
+- Finder is not verifier, enforced at the model level: the Verifier runs on a provider disjoint from the Operator's and sees only repro steps and evidence.
 - Every executed action becomes an append-only `probe_event` (HC-DATA-01), so a run is fully reconstructable and resumable from state, never from chat memory.
 - Untrusted input (target responses, enrichment data) enters a context as delimited data, never as instructions, and cannot widen what the harness will execute.
 
@@ -46,8 +46,8 @@ Role isolation is a hard requirement, not a convenience:
 
 ```
 run(engagement):
-    if not substrate.proofs_pass():            # HC-SUB-01 §8
-        mode = passive_only                    # leads stay needs_validation
+    if not sandbox.proofs_pass():            # HC-SUB-01 §8
+        mode = passive-only                    # leads stay needs_validation
     target_model = phase_recon(engagement)
     candidates   = phase_threat_model(target_model)     # assets -> applicable KB cards
     plan         = planner.plan(target_model, candidates, ledger.summary())
@@ -92,13 +92,15 @@ hunt(pair):
 ```
 verify(lead):
     sandbox.restore(golden_snapshot); fresh = sandbox.snapshot()
-    vctx = verifier.session(vkey=vk-verifier)              # different provider/model
+    vctx = verifier.session(vkey=vk-verifier)              # provider disjoint from Operator
     input = { steps: lead.repro, evidence: lead.evidence }  # ONLY this crosses over
     result = verifier.reproduce(vctx, input)                # proposes via same dispatch()
     if result.signal_reproduced and vctx.id != lead.found_by:
         findings.confirm(lead, verified_by=vctx.id)
+    elif result.actively_disproved or known_false_positive(lead):
+        findings.reject(lead, reason=result.reason)
     else:
-        findings.hold_or_reject(lead, reason=result.reason)
+        findings.mark_inconclusive(lead, reason=result.reason)   # env/time, not a rejection
 ```
 
 ## 5. The propose-and-dispose contract
@@ -150,7 +152,7 @@ All generative traffic goes through Bifrost (HC-MODEL-01); no role holds a provi
 
 | Concern | How it is wired |
 |---------|-----------------|
-| Per-role isolation | One virtual key per role; the Operator and Verifier keys resolve to different providers/models so finder and verifier do not share a failure mode |
+| Per-role isolation | One virtual key per role; the Operator and Verifier keys resolve to disjoint providers so finder and verifier do not share a failure mode |
 | Budget | Hierarchical budgets per vkey; a breach fails closed (the role stops) and can trip the HC-SUB-01 watchdog, never falls through to a direct provider call |
 | Rate | Per-vkey rate limits, independent of the per-target network rate limit in `dispatch()` |
 | Fallback | Bifrost handles provider fallback transparently, except the Verifier, which must not silently fall back onto the Operator's provider (pin it) |
@@ -194,7 +196,7 @@ Consumes:
 Produces:
 
 - HC-DATA-01: one `probe_event` per adapter run, with raw I/O.
-- HC-FIND-01: `lead`, `confirm`, `hold_or_reject`, and the final report.
+- HC-FIND-01: `lead`, `confirm`, `reject` / `mark_inconclusive`, and the final report.
 
 ## 11. Acceptance criteria
 

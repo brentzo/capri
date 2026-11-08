@@ -4,7 +4,7 @@ title: Technique-card schema and knowledge base structure
 status: draft
 parent: SPEC.md#7
 depends_on: [HC-SUB-01]
-depended_on_by: [HC-AGENT-01, HC-KB-02, HC-FIND-01, HC-MODEL-02, HC-EVAL-01]
+depended_on_by: [HC-KB-02, HC-MODEL-02, HC-ENRICH-01, HC-AGENT-01, HC-FIND-01, HC-DATA-01, HC-EVAL-01]
 updated: 2026-11-08
 ---
 
@@ -69,7 +69,8 @@ success_signal:
 
 severity_rubric:
   base: high
-  raise_if: [ { when: "yields.writable", to: critical } ]
+  raise_if: [ { when: "yields.writable", to: critical } ]   # list of {when, to}; evaluated in order
+  lower_if: [ { when: "asset.read_only", to: medium } ]      # symmetric; same {when, to} shape
   cvss_base_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N"
 
 false_positive_notes:

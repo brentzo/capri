@@ -4,7 +4,7 @@ title: Evidence store and self-labeling corpus
 status: draft
 parent: SPEC.md#9
 depends_on: [HC-SUB-01, HC-KB-01, HC-FIND-01]
-depended_on_by: [HC-AGENT-01, HC-FIND-01, HC-MODEL-02, HC-EVAL-01]
+depended_on_by: [HC-MODEL-02, HC-AGENT-01, HC-FIND-01, HC-SAFE-01, HC-EVAL-01]
 updated: 2026-11-08
 ---
 
@@ -214,9 +214,12 @@ evidence.get_raw(probe_event_id)                -> { request, response, pcap }
 evidence.verify_integrity(probe_event_id)       -> ok | mismatch
 labels.emit(probe_event_id, decision_point, value, source, tier, model_version?)  # HC-FIND-01 confirm/reject + audits
 corpus.export(decision_point, split='train')    -> dataset          # HC-MODEL-02
+ledger.done(engagement_id, asset, technique_id)  -> bool             # terminal status already recorded (HC-AGENT-01 §4)
 ledger.mark(engagement_id, asset, technique_id, status)
 ledger.summary(engagement_id)                   -> coverage_summary  # HC-FIND-01 §7.3
 ```
+
+HC-AGENT-01 pseudocode abbreviates `(asset, technique_id)` as `pair`, with `engagement_id` the ambient run; the canonical keys are the full triple above.
 
 ## 11. Acceptance criteria
 

@@ -28,9 +28,10 @@ Each spec file opens with this frontmatter:
 ---
 tag: HC-DATA-01
 title: Evidence store and self-labeling corpus
-status: draft          # draft | review | stable | superseded
+status: draft          # planned | draft | review | stable | superseded
 parent: SPEC.md#9      # the overview section this elaborates
-depends_on: [HC-FIND-01]
+depends_on: [HC-SUB-01, HC-KB-01, HC-FIND-01]
+depended_on_by: [HC-MODEL-02, HC-AGENT-01, HC-FIND-01, HC-SAFE-01, HC-EVAL-01]
 updated: 2026-11-08
 ---
 ```
@@ -60,3 +61,9 @@ updated: 2026-11-08
 - `superseded`: replaced; the frontmatter names its successor.
 
 Keep this registry in sync when a spec is added or changes status, and mirror structural decisions back into the SPEC.md decision log.
+
+## Dependency edges
+
+`depends_on` is the authoritative forward edge; each spec's `depended_on_by` is the exact reverse and is regenerated whenever an edge changes.
+A few specs are mutually dependent by design because they define two halves of one contract: HC-AGENT-01 and HC-MODEL-01, HC-AGENT-01 and HC-FIND-01, and HC-FIND-01 and HC-DATA-01.
+The graph is therefore intentionally not a strict DAG, and those cycles are expected rather than errors.

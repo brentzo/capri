@@ -4,7 +4,7 @@ title: Tavily enrichment service and untrusted-data handling
 status: draft
 parent: SPEC.md#5.3
 depends_on: [HC-SUB-01, HC-MODEL-01, HC-KB-01]
-depended_on_by: [HC-AGENT-01]
+depended_on_by: [HC-AGENT-01, HC-SAFE-01]
 updated: 2026-11-08
 ---
 

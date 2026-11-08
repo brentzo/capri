@@ -27,7 +27,7 @@ Taxonomy IDs marked `# verify` are plausible but must resolve under the HC-KB-01
 | KB-WEB-INJ-SQLI-002 | Injection | CWE-89 | WSTG-INPV-05 | T1190 | 1 | timing_oracle | db_read |
 | KB-WEB-INJ-XSS-001  | Injection | CWE-79 | WSTG-INPV-01 | T1190 | 1 | content_match | client_exec |
 | KB-WEB-INJ-XSS-002  | Injection | CWE-79 | WSTG-INPV-02 | T1190 | 2 | content_match | client_exec |
-| KB-WEB-INJ-CMDI-001 | Injection | CWE-78 | WSTG-INPV-12 | T1190 | 1 | timing_oracle / oob_callback | rce_foothold |
+| KB-WEB-INJ-CMDI-001 | Injection | CWE-78 | WSTG-INPV-12 | T1190 | 1 | timing_oracle | rce_foothold |
 | KB-WEB-INJ-SSTI-001 | Injection | CWE-1336 | WSTG-INPV-18 | T1190 | 1 | differential | rce_foothold |
 | KB-WEB-INJ-PATH-001 | Injection | CWE-22 | WSTG-ATHZ-01 | T1190 | 1 | content_match | file_read |
 | KB-WEB-INJ-SSRF-001 | Injection | CWE-918 | WSTG-INPV-19 | T1190 | 1 | oob_callback | internal_reach |
@@ -59,7 +59,7 @@ probe_steps:
   - { tool: custom.sqli_probe, intent: error_and_boolean }
 success_signal: { type: response_diff, evaluator: deterministic,
                   assert: "db_error_fingerprint(resp) OR boolean_oracle_divergence(baseline, resp)" }
-severity_rubric: { base: high, raise_if: [ { when: "asset.writable", to: critical } ] }
+severity_rubric: { base: high, raise_if: [ { when: "yields.writable", to: critical } ] }
 ```
 
 ```yaml
@@ -151,7 +151,7 @@ severity_rubric: { base: critical }
 id: KB-WEB-INJ-PATH-001
 title: Path traversal / local file read
 taxonomy: { attack: {technique: T1190}, owasp: [WSTG-ATHZ-01], cwe: [CWE-22] }
-applicability: [ 'asset.type == "http_endpoint"', 'asset.params matches /file|path|name|template/' ]
+applicability: [ 'asset.type == "http_endpoint"', 'matches(asset.params, /file|path|name|template/)' ]
 preconditions: [ reachable ]
 yields_on_success: [ file_read ]
 blast_tier: 1
@@ -167,7 +167,7 @@ severity_rubric: { base: high }
 id: KB-WEB-INJ-SSRF-001
 title: Server-side request forgery
 taxonomy: { attack: {technique: T1190}, owasp: [WSTG-INPV-19], cwe: [CWE-918] }
-applicability: [ 'asset.type == "http_endpoint"', 'asset.params matches /url|uri|callback|dest|next/' ]
+applicability: [ 'asset.type == "http_endpoint"', 'matches(asset.params, /url|uri|callback|dest|next/)' ]
 preconditions: [ reachable ]
 yields_on_success: [ internal_reach ]
 blast_tier: 1
@@ -185,7 +185,7 @@ severity_rubric: { base: high, raise_if: [ { when: "yields.internal_reach", to: 
 id: KB-WEB-AUTH-IDOR-001
 title: Insecure direct object reference / broken object-level authorization
 taxonomy: { owasp: [API1:2023], cwe: [CWE-639] }
-applicability: [ 'asset.type == "http_endpoint"', 'asset.params matches /id|uuid|account|order/' ]
+applicability: [ 'asset.type == "http_endpoint"', 'matches(asset.params, /id|uuid|account|order/)' ]
 preconditions: [ reachable, authenticated_session ]     # needs a baseline object to pivot from
 yields_on_success: [ cross_object_read ]
 blast_tier: 1
@@ -251,7 +251,7 @@ severity_rubric: { base: medium, raise_if: [ { when: "yields.credential", to: hi
 id: KB-WEB-SESS-FIX-001
 title: Session fixation (session id not rotated on authentication)
 taxonomy: { attack: {technique: T1539}, owasp: [WSTG-SESS-03], cwe: [CWE-384] }
-applicability: [ 'asset.type == "login_endpoint"', 'asset.session_cookie exists' ]
+applicability: [ 'asset.type == "login_endpoint"', 'exists(asset.session_cookie)' ]
 preconditions: [ reachable, login_endpoint ]
 yields_on_success: [ session_hijack ]
 blast_tier: 2                      # performs an authentication
@@ -332,5 +332,6 @@ The in-sandbox OOB collaborator (`range-oob`) is a DNS/HTTP listener on the rang
 
 - XSS execution confirmation leans on Laya (`laya:success_signal`) plus a real browser; decide the deterministic fallback when Laya is unavailable (likely a headless-DOM execution assertion).
 - Whether IDOR/BFLA need the harness to provision two seeded accounts (A and B) as a standard range fixture; leaning yes, as a reusable fixture.
+- No card yet produces `authenticated_session` from a `credential`; the login step that establishes a session is currently assumed as a range fixture, and a small session-establishment card or fixture should make it explicit when the auth chain is exercised end to end.
 - Cache-poisoning and request-smuggling interact; sequence smuggling (backlog) after this set stabilizes.
 - Confirm the `# verify` taxonomy ids (cache poisoning CWE, several ATT&CK mappings for authz/protocol) during card authoring.

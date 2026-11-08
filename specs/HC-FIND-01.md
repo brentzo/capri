@@ -3,8 +3,8 @@ tag: HC-FIND-01
 title: Findings model and verification protocol
 status: draft
 parent: SPEC.md#8
-depends_on: [HC-KB-01, HC-AGENT-01, HC-SUB-01, HC-DATA-01]
-depended_on_by: [HC-AGENT-01, HC-EVAL-01]
+depends_on: [HC-KB-01, HC-AGENT-01, HC-SUB-01, HC-DATA-01, HC-MODEL-02]
+depended_on_by: [HC-AGENT-01, HC-DATA-01, HC-EVAL-01]
 updated: 2026-11-08
 ---
 
@@ -92,14 +92,14 @@ Only three things:
 - the originating card's `success_signal` definition, so the Verifier knows what "reproduced" means.
 
 The Verifier never receives the Operator's reasoning, observations, or chat context.
-It runs on a different provider/model via `vk-verifier`, which Bifrost must not let fall back onto the Operator's provider (HC-AGENT-01 §6).
+It runs on a provider disjoint from the Operator's via `vk-verifier`, which Bifrost must not let fall back onto the Operator's provider (HC-AGENT-01 §6).
 
 ### 4.2 Protocol
 
 ```
 verify(lead):
     sandbox.restore(golden); fresh = sandbox.snapshot()          # HC-SUB-01
-    vctx  = verifier.session(vk-verifier)                        # different provider/model
+    vctx  = verifier.session(vk-verifier)                        # provider disjoint from Operator
     input = { repro: lead.repro, evidence: lead.evidence, signal: card(lead).success_signal }
     for _ in bounded(attempts, budget):
         obs = run_repro_step(vctx, input, dispatch)              # same propose/dispose chokepoint
@@ -122,7 +122,7 @@ verify(lead):
 ### 4.4 Anti-collusion guarantees
 
 - Fresh golden restore and a new snapshot per verification, so no residual state from the Operator's run leaks in.
-- Different provider/model and no shared memory between finder and verifier.
+- Disjoint providers and no shared memory between finder and verifier.
 - The final deterministic verdict is the harness's, from re-executed probe_events.
 - Stronger-confirmation option (deferred, HC-AGENT-01 open question): allow the Verifier a second, independent technique rather than a replay; a later revision.
 
@@ -148,7 +148,7 @@ verify(lead):
   "engagement_id": "eng-2026-11-08-001",
   "window": { "start": "...", "end": "..." },
   "scope_summary": { "in_scope_hosts": ["..."], "max_blast_tier": 2 },
-  "mode": "sandboxed",                         // sandboxed | passive_only
+  "mode": "sandboxed",                         // sandboxed | passive-only
   "coverage_summary": {                        // from the coverage ledger
     "attempted": 142, "confirmed": 6, "rejected": 11,
     "inconclusive": 3, "not_applicable": 97, "blocked_by_policy": 25
@@ -205,7 +205,7 @@ A confirm or reject also emits the corresponding `label` to HC-DATA-01 (`source:
 - A deterministic confidence-1.0 lead still requires verification before it is `confirmed`.
 - rejected, inconclusive, and hardening_note are never counted as confirmed vulnerabilities in the report.
 - Severity tracks the rubric: toggling a `raise_if` fact changes the CVSS score and band.
-- In passive-only mode, every lead remains `needs_validation` and the report says `mode: passive_only`.
+- In passive-only mode, every lead remains `needs_validation` and the report says `mode: passive-only`.
 
 ## 10. Open questions
 

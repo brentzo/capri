@@ -32,7 +32,7 @@ We borrow its good structural ideas (phased workflow, finder-is-not-verifier, co
 - Finder is never verifier: a finding is a hypothesis until a second, independent agent reproduces its success signal from the repro steps alone, in a fresh snapshot.
 - Coverage is a first-class artifact: track a target-by-technique matrix, because "we did not find SQLi" is meaningless without "we attempted 14 injection techniques across 9 endpoints."
 - Techniques are structured data, not prose: each attacker pattern is a machine-readable card with preconditions, probe steps, and a success signal.
-- Blast radius is tiered and gated: every technique is tagged by destructiveness, and destructive tiers require a snapshot and explicit authorization before they run.
+- Blast radius is tiered and gated: every technique is tagged by destructiveness, state-changing tiers require a snapshot, and destructive tiers additionally require explicit authorization, before they run.
 - Idempotent, resumable, append-only: every run restores from a known snapshot, every action is logged append-only, and a run can be killed and resumed from its ledger.
 - Put non-generative models on untrusted boundaries: a classifier that only emits a typed label cannot be prompt-injected by target output the way an LLM can.
 
@@ -55,7 +55,7 @@ scope:
   in_scope_hosts:  [app.sandbox.local, api.sandbox.local]
   out_of_scope:    [10.13.0.1]        # e.g. the gateway, always excluded
   max_blast_tier:  2                   # 0=passive .. 3=destructive
-  allowed_tactics: [recon, initial-access, discovery, cred-access]
+  allowed_tactics: [recon, initial-access, discovery, credential-access]
   forbidden:       [exfil-to-internet, persistence-survive-reset]
   window:          { start, end }      # time-boxed
   authorized_by:   <name/ticket>
@@ -66,7 +66,7 @@ scope:
 - Disposable, snapshot-restorable VMs or containers (Firecracker microVMs or a dedicated hypervisor pool), cloned per run.
 - Egress-denied by default: the scope guard is an outbound firewall (nftables or eBPF) that allows traffic only to in-scope targets and drops everything else, including internet egress.
 - This single control enforces scope and simultaneously prevents an exploited box from phoning home.
-- Snapshot before each destructive-tier action, and restore on completion or abort.
+- Snapshot before each state-changing action (tier >= 2), and restore on completion or abort.
 - A host-level kill switch the harness can hit to freeze the whole network segment.
 
 ### 3.3 The non-negotiable fallback
@@ -134,7 +134,7 @@ Bifrost is an Apache-2.0 Go AI gateway: one OpenAI-compatible endpoint in front 
 All generative LLM traffic routes through it; no agent role talks to a provider directly.
 
 - One virtual key per role, each with its own budget and rate limit.
-- The Operator can be capped hard, the Reporter can use a cheap model, and the Verifier can be pinned to a different provider or model than the Operator so finder and verifier do not share a failure mode.
+- The Operator can be capped hard, the Reporter can use a cheap model, and the Verifier can be pinned to a different (disjoint) provider than the Operator so finder and verifier do not share a failure mode.
 - Bifrost budgets and rate limiting become the concrete implementation of the section-11 budget guardrail.
 - Bifrost request logging and tracing feed the audit log: which role asked which model what, and when.
 
@@ -203,7 +203,7 @@ Each phase has an entry gate, an exit criterion, and writes to the coverage ledg
 
 1. Check preconditions against current target state; skip if unmet (log `not_applicable`).
 2. If `tier > contract.max_blast_tier`: log `blocked_by_policy` and skip.
-3. If destructive: request a snapshot.
+3. If `tier >= 2` (state-changing or destructive): request a snapshot.
 4. Execute probe steps through tool adapters.
 5. Evaluate the success signal (deterministic where possible, Laya for the fuzzy calls).
 6. Write the outcome to the ledger; if the signal is hit, emit a `lead` to the findings store.
@@ -231,9 +231,9 @@ Do not write freeform prose; make each technique a structured card so the agent 
 ```yaml
 id: KB-WEB-INJ-SQLI-001
 title: Error-based SQL injection in query parameter
-attack:   { tactic: TA0001-initial-access, technique: T1190 }
+attack:   { tactic: TA0001, technique: T1190 }
 owasp:    [WSTG-INPV-05]
-cwe:      CWE-89
+cwe:      [CWE-89]
 applicability:            # predicate over the target model
   - asset.type == http_endpoint
   - asset.params.length > 0
@@ -245,7 +245,7 @@ probe_steps:              # ordered, each a normalized tool-adapter request
 success_signal:
   type: response_diff
   assert: "db_error_fingerprint present OR boolean_oracle divergence"
-severity_rubric: { base: high, raise_if: [writable, authn_bypass] }
+severity_rubric: { base: high, raise_if: [ { when: "yields.writable", to: critical } ] }
 cleanup: none
 references: [owasp-wstg-url, attack-url]
 ```
@@ -265,7 +265,8 @@ That separation (stable harness, evolving KB) is what lets the system grow the w
 
 ### 8.1 Verdict lifecycle
 
-`lead -> needs_validation -> confirmed | rejected`.
+`lead -> needs_validation -> confirmed | rejected | inconclusive`.
+A lead with no demonstrated impact is split off at triage as a `hardening_note`, which is never verified (HC-FIND-01 §2).
 
 ### 8.2 Finding schema
 
@@ -277,7 +278,7 @@ The report does not ship unless it validates.
   "id": "F-2026-0007",
   "technique_id": "KB-WEB-INJ-SQLI-001",
   "asset": "api.sandbox.local/orders?id=",
-  "cwe": "CWE-89",
+  "cwe": ["CWE-89"],
   "cvss": { "vector": "...", "score": 8.1 },
   "verdict": "confirmed",
   "found_by": "operator-session-A",
@@ -329,9 +330,9 @@ probe_event
 ```
 finding
   id, technique_id, asset, cwe, cvss
-  verdict:            lead | needs_validation | confirmed | rejected
+  verdict:            lead | needs_validation | confirmed | rejected | inconclusive
   found_by_event_ids, verified_by_event_ids    # the actual probe_events on both sides
-  found_by_session, verified_by_session         # schema rejects if equal
+  found_by, verified_by                        # session identities; schema rejects if equal
   repro, impact, remediation
 ```
 
@@ -406,7 +407,7 @@ Three hygiene rules make or break this:
 These live in harness code, and each has a test:
 
 - Scope guard: outbound firewall allows only in-scope targets, the DNS resolver refuses out-of-scope names, and there is a pre-flight re-check before every tool call.
-- Blast-tier gate: rejects any action above `contract.max_blast_tier`, and destructive tiers require a live snapshot handle.
+- Blast-tier gate: rejects any action above `contract.max_blast_tier`, and tier >= 2 (state-changing or destructive) requires a live snapshot handle.
 - Rate limiter and budget: caps requests per second per target and total actions and tokens per run (implemented via Bifrost virtual keys and budgets), failing closed so a blown budget stops the agent rather than falling through to a direct provider call.
 - Kill switch: a single call freezes the segment and restores snapshots.
 - Append-only audit log: every requested action, allow/deny decision, and outcome, timestamped (am/pm) with the responsible agent role.
@@ -505,6 +506,7 @@ These live in harness code, and each has a test:
 - 2026-11-08 (HC-SAFE-01): Every guardrail fails closed; under any safety uncertainty the default is to stop, deny, or drop to passive-only, never to proceed.
 - 2026-11-08 (HC-SAFE-01): Defense-in-depth is explicit: scope, finder-is-not-verifier, and egress are each enforced at multiple independent layers so no single bug defeats a guarantee.
 - 2026-11-08 (HC-SAFE-01): Operator-facing failures state what happened, why, and what to do next with a recovery affordance, never a raw internal error; human-rendered timestamps use am/pm.
+- 2026-11-08 (consistency pass): Standardized cross-spec vocabulary - finder-is-not-verifier means disjoint providers everywhere (dropped "or model"), `passive-only` is the single mode token, `cwe` is always an array, and `raise_if`/`lower_if` are always `[{when, to}]` objects; made the spec `depends_on`/`depended_on_by` frontmatter reciprocal, with the HC-AGENT-01/HC-MODEL-01, HC-AGENT-01/HC-FIND-01, and HC-FIND-01/HC-DATA-01 co-design cycles noted as intended.
 
 ---
 
