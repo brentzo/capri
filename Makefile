@@ -23,6 +23,7 @@ test:
 	python3 tests/test_findings_report.py
 	python3 tests/test_loop.py
 	python3 tests/test_planner.py
+	python3 tests/test_roleio.py
 
 ## contract: validate the example engagement contract (HC-SUB-01 §4)
 contract:

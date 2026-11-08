@@ -26,6 +26,7 @@ import uuid
 from harness import kb as kbmod
 from harness import predicates
 from harness import report as reportmod
+from harness import roleio
 from harness.dispatch import ProbeContext
 from harness.store import evidence, findings, ledger
 
@@ -37,11 +38,16 @@ GOLDEN = "golden"
 # with Bifrost virtual keys (HC-MODEL-01); this slice defines the contract they
 # implement and drives it with deterministic stubs.
 #
+# A role's propose_next returns raw model output (text) or None to give up; the
+# harness, not the role, parses that text into a validated request or rejects the
+# turn (roleio.parse_request, §5.1). The probe-history argument is the harness-owned
+# untrusted-data view (roleio.role_context, §7), not the raw store rows.
+#
 #   planner.plan(target_model, candidates, ledger_summary) -> [Pair]   (ordered)
 #   operator.begin(pair) -> session         (session.id is the Bifrost vkey/session id)
-#   operator.propose_next(session, card, observations) -> request | None
+#   operator.propose_next(session, card, role_context) -> str | None
 #   verifier.begin() -> session             (session.id; disjoint provider from the Operator)
-#   verifier.propose_next(session, vinput, observations) -> request | None
+#   verifier.propose_next(session, vinput, role_context) -> str | None
 #       a Verifier may set session.disproved = True to actively reject (vs inconclusive)
 #   reporter.render(conn, eng, *, mode, kb_version) -> report dict
 
@@ -120,7 +126,7 @@ class Loop:
     def __init__(self, conn, eng, *, kb_index, dispatcher, sandbox,
                  planner, operator, verifier, reporter=None,
                  signal_evaluator=deterministic_signal, budget=16, max_denied=4,
-                 kb_version=None):
+                 max_invalid=3, kb_version=None):
         self.conn = conn
         self.eng = eng
         self.kb_index = kb_index
@@ -133,6 +139,7 @@ class Loop:
         self.signal_evaluator = signal_evaluator
         self.budget = budget
         self.max_denied = max_denied
+        self.max_invalid = max_invalid
         self.kb_version = kb_version
         self.passive_only = False
         self.target_model = {}
@@ -184,16 +191,25 @@ class Loop:
         snap = self.sandbox.snapshot() if tier >= 2 else None    # §4.1 tier>=2 snapshot
         session = self.operator.begin(pair)
         observations, repro, pe_ids = [], [], []
-        denied = 0
+        denied = invalid = 0
         outcome = "attempted"
         try:
             for _ in range(self.budget):
-                req = self.operator.propose_next(session, card, observations)
-                if req is None:                                  # role gives up
+                raw = self.operator.propose_next(session, card,
+                                                 roleio.role_context(observations))
+                if raw is None:                                  # role gives up
                     break
+                turn = roleio.parse_request(raw)                 # harness parses, not the role
+                if turn.rejection is not None:                   # unparseable turn (§5.1)
+                    invalid += 1
+                    observations.append(turn.rejection.as_observation())  # re-prompt (§9)
+                    if invalid >= self.max_invalid:
+                        outcome = "inconclusive"
+                        break
+                    continue
                 obs = self.dispatcher.dispatch(
-                    req, self._ctx(pair, tier, "operator", "hunting",
-                                   snap or GOLDEN, snap is not None))
+                    turn.request, self._ctx(pair, tier, "operator", "hunting",
+                                            snap or GOLDEN, snap is not None))
                 observations.append(obs)
                 if obs.get("disposition") == "deny":             # a denial is data (§5.2)
                     denied += 1
@@ -202,7 +218,7 @@ class Loop:
                         break
                     continue
                 pe_ids.append(obs["probe_event_id"])
-                repro.append(req.get("intent") or req.get("tool"))
+                repro.append(turn.request.get("intent") or turn.request.get("tool"))
                 signals = evidence.get_signals(self.conn, obs["probe_event_id"])
                 if self.signal_evaluator(card, signals):
                     self._emit_lead(pair, card, facts, session.id, repro, pe_ids,
@@ -249,14 +265,22 @@ class Loop:
         vinput = {"steps": json.loads(finding_row["repro"]) if finding_row["repro"] else [],
                   "evidence": self._found_event_ids(fid)}       # ONLY this crosses over
         observations, pe_ids = [], []
-        denied = 0
+        denied = invalid = 0
         reproduced = False
         for _ in range(self.budget):
-            req = self.verifier.propose_next(session, vinput, observations)
-            if req is None:
+            raw = self.verifier.propose_next(session, vinput,
+                                             roleio.role_context(observations))
+            if raw is None:
                 break
+            turn = roleio.parse_request(raw)                     # harness parses, not the role
+            if turn.rejection is not None:                       # unparseable turn (§5.1)
+                invalid += 1
+                observations.append(turn.rejection.as_observation())  # re-prompt (§9)
+                if invalid >= self.max_invalid:
+                    break                                        # falls through to inconclusive
+                continue
             obs = self.dispatcher.dispatch(
-                req, self._ctx(pair, tier, "verifier", "verification", fresh, True))
+                turn.request, self._ctx(pair, tier, "verifier", "verification", fresh, True))
             observations.append(obs)
             if obs.get("disposition") == "deny":
                 denied += 1

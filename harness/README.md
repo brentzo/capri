@@ -116,6 +116,24 @@ the loop's role seam.
   tiebreak so a plan is reproducible. Read-only and model-free; it is the v1
   stand-in the reasoning-model planner swaps behind later, same `plan` interface.
 
+## What's here (the role I/O boundary)
+
+The trust boundary between a model role and the harness (HC-AGENT-01 §5.1, §7,
+§9). A role emits raw text and the harness, never the role, decides what it
+means. This is the emit-time half of the prompt-injection posture; `dispatch()`
+re-validates every request on the dispose side, so the two are defense in depth.
+
+- `roleio.py` - `parse_request` turns a role's raw output into a validated
+  `{tool, intent, target, port, args}` request or rejects the turn: free text, a
+  shell string, surrounding prose, a smuggled extra field, a bad port, or a
+  malformed object are not actionable. The loop re-prompts a rejected turn with
+  the schema for bounded retries, then marks the pair inconclusive. On the other
+  side, `frame_untrusted` wraps target responses and enrichment as a delimited
+  data block whose unguessable per-call nonce a hostile response cannot forge, so
+  an injected close-delimiter cannot break back into the instruction channel, and
+  `role_context` is the harness-owned probe-history view a role sees: untrusted
+  output framed, a denial or a rejected turn rendered as a trusted directive.
+
 ## Run
 
 ```sh
@@ -126,6 +144,7 @@ python3 tests/test_dispatch.py                              # propose-and-dispos
 python3 tests/test_findings_report.py                       # finding/report layer
 python3 tests/test_loop.py                                  # outer control loop + roles
 python3 tests/test_planner.py                               # deterministic planner
+python3 tests/test_roleio.py                                # role I/O boundary (parse-or-reject, framing)
 python3 -m harness.substrate.contract harness/substrate/examples/engagement.example.yaml
 ```
 

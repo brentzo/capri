@@ -40,6 +40,8 @@ jobs:
         run: python3 tests/test_loop.py
       - name: Planner self-tests (HC-AGENT-01 §3)
         run: python3 tests/test_planner.py
+      - name: Role I/O boundary self-tests (HC-AGENT-01 §5.1, §7, §9)
+        run: python3 tests/test_roleio.py
       - name: Example engagement contract parses
         run: python3 -m harness.substrate.contract harness/substrate/examples/engagement.example.yaml
       - name: Business-requirement features are valid and in sync
