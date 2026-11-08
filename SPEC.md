@@ -501,6 +501,10 @@ These live in harness code, and each has a test:
 - 2026-11-08 (HC-ENRICH-01): Enrichment output is advisory and low-trust: provenance-tagged, delivered only to the recon/enrichment role, never as instructions, and never ground truth or corpus labels.
 - 2026-11-08 (HC-ENRICH-01): Enrichment queries carry only public technology identifiers (product and version), never target data, secrets, or the user's identity, and use a generic client name.
 - 2026-11-08 (HC-ENRICH-01): New cards from KB-freshness research are human-reviewed before activation; web intel never autonomously adds an active card or drives a live engagement.
+- 2026-11-08 (HC-SAFE-01): The audit log is append-only and hash-chained (a prev_hash per row), making it tamper-evident, not merely immutable.
+- 2026-11-08 (HC-SAFE-01): Every guardrail fails closed; under any safety uncertainty the default is to stop, deny, or drop to passive-only, never to proceed.
+- 2026-11-08 (HC-SAFE-01): Defense-in-depth is explicit: scope, finder-is-not-verifier, and egress are each enforced at multiple independent layers so no single bug defeats a guarantee.
+- 2026-11-08 (HC-SAFE-01): Operator-facing failures state what happened, why, and what to do next with a recovery affordance, never a raw internal error; human-rendered timestamps use am/pm.
 
 ---
 
