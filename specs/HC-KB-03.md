@@ -17,7 +17,7 @@ It covers the live-testable surface of the OWASP LLM Top 10 against a deployed m
 
 Each card ships as its own YAML file under `kb/ai-llm/` (HC-KB-01 §7).
 The blocks below are condensed to the meaningful fields; the omitted fields (`status: active`, per-card `references`, `inputs` templating, full `cvss_base_vector`) follow the HC-KB-01 template.
-Taxonomy IDs marked `# verify` are plausible but must resolve under the HC-KB-01 validator at authoring time; the MITRE ATLAS ids in particular are carried as placeholders until confirmed.
+Taxonomy IDs marked `# verify` are plausible but must resolve under the HC-KB-01 validator at authoring time; the MITRE ATLAS ids used here (AML.T0051, T0053, T0054, T0057) have since been confirmed against ATLAS v4.9.0 and now pass the validator.
 
 ## 2. The determinism problem, and how this class solves it
 
@@ -38,18 +38,18 @@ Fixture stability follows from the same idea: the seed target runs the model at 
 
 | Card | Family | CWE | OWASP LLM | ATLAS | Tier | Signal | Yields |
 |------|--------|-----|-----------|-------|------|--------|--------|
-| KB-AILLM-INJ-DIRECT-001 | Injection | CWE-1427 | LLM01:2025 | AML.T0051.000 # verify | 1 | content_match | instruction_override |
-| KB-AILLM-INJ-INDIRECT-001 | Injection | CWE-1427 | LLM01:2025 | AML.T0051.001 # verify | 2 | oob_callback | indirect_injection |
+| KB-AILLM-INJ-DIRECT-001 | Injection | CWE-1427 | LLM01:2025 | AML.T0051 | 1 | content_match | instruction_override |
+| KB-AILLM-INJ-INDIRECT-001 | Injection | CWE-1427 | LLM01:2025 | AML.T0051 | 2 | oob_callback | indirect_injection |
 | KB-AILLM-OUT-XSS-001 | Output handling | CWE-79 | LLM05:2025 | - | 1 | content_match | client_exec |
 | KB-AILLM-OUT-SQLI-001 | Output handling | CWE-89 | LLM05:2025 | - | 1 | content_match | db_read |
-| KB-AILLM-DISC-SYSPROMPT-001 | Disclosure | CWE-200 | LLM07:2025 | AML.T0057 # verify | 1 | content_match | system_prompt_disclosed |
-| KB-AILLM-DISC-PII-001 | Disclosure | CWE-200 | LLM02:2025 | AML.T0057 # verify | 1 | content_match | sensitive_disclosure |
-| KB-AILLM-AGENCY-TOOL-001 | Excessive agency | CWE-862 | LLM06:2025 | AML.T0053 # verify | 1 | state_change | unauthorized_tool_use |
-| KB-AILLM-AGENCY-ESCALATE-001 | Excessive agency | CWE-269 # verify | LLM06:2025 | AML.T0053 # verify | 2 | state_change | privilege_escalation |
+| KB-AILLM-DISC-SYSPROMPT-001 | Disclosure | CWE-200 | LLM07:2025 | AML.T0057 | 1 | content_match | system_prompt_disclosed |
+| KB-AILLM-DISC-PII-001 | Disclosure | CWE-200 | LLM02:2025 | AML.T0057 | 1 | content_match | sensitive_disclosure |
+| KB-AILLM-AGENCY-TOOL-001 | Excessive agency | CWE-862 | LLM06:2025 | AML.T0053 | 1 | state_change | unauthorized_tool_use |
+| KB-AILLM-AGENCY-ESCALATE-001 | Excessive agency | CWE-269 | LLM06:2025 | AML.T0053 | 2 | state_change | privilege_escalation |
 | KB-AILLM-AGENCY-SSRF-001 | Excessive agency | CWE-918 | LLM06:2025 | - | 1 | oob_callback | internal_reach |
 | KB-AILLM-RAG-EXFIL-001 | Retrieval | CWE-200 | LLM08:2025 | - | 1 | content_match | cross_object_read |
 | KB-AILLM-DOS-TOKEN-001 | Availability | CWE-770 | LLM10:2025 | - | 2 | timing_oracle | resource_exhaustion |
-| KB-AILLM-GUARD-JAILBREAK-001 | Guardrail | CWE-1427 | LLM01:2025 | AML.T0054 # verify | 1 | content_match | guardrail_bypass |
+| KB-AILLM-GUARD-JAILBREAK-001 | Guardrail | CWE-1427 | LLM01:2025 | AML.T0054 | 1 | content_match | guardrail_bypass |
 
 Tier distribution: nine tier-1 (read-only prompting and observation) and three tier-2 (state-changing, snapshot required before the step): indirect injection (persists a poisoned document into a shared retrieval store), agency escalation (drives a state-changing tool), and token-flood (degrades a shared service, recoverable by restore).
 
@@ -62,7 +62,7 @@ Signal determinism: ten of the twelve cards are deterministic (canary `content_m
 ```yaml
 id: KB-AILLM-INJ-DIRECT-001
 title: Direct prompt injection (instruction override)
-taxonomy: { atlas: [AML.T0051.000], owasp: [LLM01:2025], cwe: [CWE-1427] }
+taxonomy: { atlas: [AML.T0051], owasp: [LLM01:2025], cwe: [CWE-1427] }
 applicability: [ 'asset.type == "llm_endpoint"' ]
 preconditions: [ reachable ]
 yields_on_success: [ instruction_override ]
@@ -80,7 +80,7 @@ false_positive_notes: [ "The canary must be unguessable and never echoed by the 
 ```yaml
 id: KB-AILLM-INJ-INDIRECT-001
 title: Indirect prompt injection via retrieved or tool-returned content
-taxonomy: { atlas: [AML.T0051.001], owasp: [LLM01:2025], cwe: [CWE-1427] }
+taxonomy: { atlas: [AML.T0051], owasp: [LLM01:2025], cwe: [CWE-1427] }
 applicability: [ 'asset.type == "llm_endpoint"', 'asset.ingests_external_content == true' ]
 preconditions: [ reachable, llm_tool_or_rag ]
 yields_on_success: [ indirect_injection, cross_context_exec ]
@@ -314,7 +314,7 @@ New tool adapters this class needs, each a reviewed allowlist entry (HC-AGENT-01
 
 - Canary determinism versus Laya: the set prefers canaries, so decide which decision points stay irreducibly fuzzy (model-compliance judgments with no plantable canary) and must keep `laya:success_signal`.
 - LLM nondeterminism versus stable fixtures: temperature 0 plus a fixed seed plus a mock-LLM for negatives is the v1 plan; settle the K for flaky-card detection on this class specifically.
-- ATLAS taxonomy: confirm the `# verify` `AML.T` ids resolve, now that the HC-KB-01 schema and validator carry an `atlas` field (added alongside this set).
+- ATLAS taxonomy: the `AML.T` ids are confirmed against ATLAS v4.9.0 and the HC-KB-01 schema and validator carry an `atlas` field; revisit if ATLAS introduces prompt-injection sub-techniques worth adopting over the base AML.T0051.
 - Conversation state: v1 cards are single-turn; decide when the harness carries session state across probe steps so multi-turn and crescendo jailbreaks become expressible.
 - Whether the `admin_read` / `admin_write` honeytools and the two-tenant RAG store should be standard reusable range fixtures, the way the two seeded accounts are for the authz cards (HC-KB-02 §8).
 

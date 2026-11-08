@@ -76,3 +76,9 @@ Keep this registry in sync when a spec is added or changes status, and mirror st
 `depends_on` is the authoritative forward edge; each spec's `depended_on_by` is the exact reverse and is regenerated whenever an edge changes.
 A few specs are mutually dependent by design because they define two halves of one contract: HC-AGENT-01 and HC-MODEL-01, HC-AGENT-01 and HC-FIND-01, and HC-FIND-01 and HC-DATA-01.
 The graph is therefore intentionally not a strict DAG, and those cycles are expected rather than errors.
+
+## Tooling
+
+The HC-KB-01 validation gate is implemented in `../tools/validate_kb.py` (pure standard library), with the bundled taxonomy reference in `../tools/taxonomy.py` and adversarial tests in `../tests/test_validator.py`.
+It runs in CI (`../.github/workflows/validate.yml`) and locally via `make validate` / `make test`; see `../tools/README.md`.
+All 107 authored technique cards pass, including `--strict` (the two ATLAS ids the validator first flagged, `AML.T0053` and `AML.T0057`, were confirmed against ATLAS v4.9.0 and added to the reference).

@@ -172,6 +172,9 @@ It checks:
 - any `oob_callback` names an in-sandbox collaborator, never an external host;
 - `references` is non-empty, and `test_fixture.fires_on` and `does_not_fire` are present for active cards.
 
+The reference implementation lives in `tools/validate_kb.py` (pure standard library), with the bundled identifier reference in `tools/taxonomy.py` and adversarial tests in `tests/test_validator.py`, and it runs in CI on every change (`tools/README.md`).
+Taxonomy ids that are well-formed but not yet confirmed against their upstream catalog are reported as UNRESOLVED, which is how a `# verify` marker is discharged: confirm the id and add it to the reference, or correct the card.
+
 ## 10. How the loop consumes a card
 
 Recap of the HC-AGENT-01 contract, for completeness:
