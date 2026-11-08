@@ -4,7 +4,7 @@ title: Technique-card schema and knowledge base structure
 status: draft
 parent: SPEC.md#7
 depends_on: [HC-SUB-01]
-depended_on_by: [HC-KB-02, HC-KB-03, HC-KB-04, HC-KB-05, HC-MODEL-02, HC-ENRICH-01, HC-AGENT-01, HC-FIND-01, HC-DATA-01, HC-EVAL-01]
+depended_on_by: [HC-KB-02, HC-KB-03, HC-KB-04, HC-KB-05, HC-KB-06, HC-MODEL-02, HC-ENRICH-01, HC-AGENT-01, HC-FIND-01, HC-DATA-01, HC-EVAL-01]
 updated: 2026-11-08
 ---
 
