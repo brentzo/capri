@@ -52,6 +52,7 @@ updated: 2026-11-08
 | HC-KB-06   | Supply-chain technique-card starter set               | SPEC.md#7        | draft   |
 | HC-KB-07   | RPC and messaging technique-card starter set          | SPEC.md#7        | draft   |
 | HC-KB-08   | Resource-exhaustion technique-card starter set        | SPEC.md#7        | draft   |
+| HC-KB-09   | Data-isolation technique-card starter set             | SPEC.md#7        | draft   |
 | HC-AGENT-01 | Agent loop and role orchestration                      | SPEC.md#4, #6    | draft   |
 | HC-FIND-01  | Findings model and verification protocol               | SPEC.md#8        | draft   |
 | HC-DATA-01  | Evidence store and self-labeling corpus                | SPEC.md#9        | draft   |
