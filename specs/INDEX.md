@@ -44,9 +44,9 @@ updated: 2026-11-08
 | HC-MODEL-01 | Bifrost topology: roles, keys, budgets, MCP boundary   | SPEC.md#5.1      | draft   |
 | HC-MODEL-02 | Laya decision layer and fine-tuning pipeline           | SPEC.md#5.2, #10 | draft   |
 | HC-ENRICH-01| Tavily enrichment service and untrusted-data handling  | SPEC.md#5.3      | draft   |
-| HC-KB-01    | Technique-card schema and KB structure                 | SPEC.md#7        | draft   |
-| HC-KB-02    | Web and auth technique-card starter set                | SPEC.md#7        | draft   |
-| HC-KB-03    | AI and LLM technique-card starter set                  | SPEC.md#7        | draft   |
+| HC-KB-01   | Technique-card schema and KB structure                 | SPEC.md#7        | draft   |
+| HC-KB-02   | Web and auth technique-card starter set                | SPEC.md#7        | draft   |
+| HC-KB-03   | AI and LLM technique-card starter set                  | SPEC.md#7        | draft   |
 | HC-KB-04   | Client-side technique-card starter set                | SPEC.md#7        | draft   |
 | HC-KB-05   | Cloud and deployment technique-card starter set       | SPEC.md#7        | draft   |
 | HC-KB-06   | Supply-chain technique-card starter set               | SPEC.md#7        | draft   |
@@ -54,6 +54,7 @@ updated: 2026-11-08
 | HC-KB-08   | Resource-exhaustion technique-card starter set        | SPEC.md#7        | draft   |
 | HC-KB-09   | Data-isolation technique-card starter set             | SPEC.md#7        | draft   |
 | HC-KB-10   | Memory and binary technique-card starter set          | SPEC.md#7        | draft   |
+| HC-KB-11   | Mobile and local-IPC technique-card starter set       | SPEC.md#7        | draft   |
 | HC-AGENT-01 | Agent loop and role orchestration                      | SPEC.md#4, #6    | draft   |
 | HC-FIND-01  | Findings model and verification protocol               | SPEC.md#8        | draft   |
 | HC-DATA-01  | Evidence store and self-labeling corpus                | SPEC.md#9        | draft   |
