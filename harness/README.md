@@ -109,6 +109,15 @@ the signal triage the harness owns on top of them.
   sandbox down the loop runs passive-only: every lead is held `needs_validation`
   and the report ships nothing confirmed. The report ships only if
   `validate_report` passes.
+- `loop.py` (objective mode, HC-OBJ-01 §6) - when the contract carries an
+  objective, `run` takes the capability-frontier path instead: it seeds a
+  `Blackboard` from recon, then hunts a pair, verifies it at once on a disjoint
+  session, writes its `yields_on_success` to the board (provisional at lead,
+  confirmed on confirm), and re-evaluates applicability and preconditions over the
+  live confirmed board, so a verified fact opens the next card and cards chain.
+  Only confirmed facts gate a new card, so finder-is-not-verifier holds at every
+  hop. With no objective the loop runs the unchanged coverage path. Objective
+  completion and its deterministic proof are the next slice.
 
 ## What's here (the Planner)
 
@@ -258,6 +267,7 @@ python3 tests/test_enrich.py                                # Tavily enrichment 
 python3 tests/test_bifrost.py                               # live Bifrost transport (mock-server contract)
 python3 tests/test_tavily.py                                # live Tavily transport (mock-server contract)
 python3 tests/test_blackboard.py                            # world-state blackboard (fact tiers, chaining)
+python3 tests/test_frontier.py                              # capability-frontier loop (live card chaining)
 python3 -m harness.substrate.contract harness/substrate/examples/engagement.example.yaml
 ```
 

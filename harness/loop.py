@@ -27,6 +27,7 @@ from harness import kb as kbmod
 from harness import predicates
 from harness import report as reportmod
 from harness import roleio
+from harness.blackboard import CONFIRMED, PROVISIONAL, Blackboard
 from harness.dispatch import ProbeContext
 from harness.store import evidence, findings, ledger
 
@@ -145,6 +146,7 @@ class Loop:
         self.kb_version = kb_version
         self.passive_only = False
         self.target_model = {}
+        self.board = None       # the live blackboard, set only for an objective run (§6)
 
     # --- public entry ---------------------------------------------------
     def run(self, target_model):
@@ -158,43 +160,127 @@ class Loop:
         self.passive_only = not self.sandbox.proofs_pass()     # HC-SUB-01 §8
         mode = "passive-only" if self.passive_only else "sandboxed"
 
-        candidates = phase_threat_model(target_model, self.kb_index)
-        plan = self.planner.plan(target_model, candidates,
-                                 ledger.summary(self.conn, self.eng.id))
-        for pair in plan:
-            if ledger.done(self.conn, self.eng.id, pair.asset, pair.technique_id):
-                continue
-            self._hunt(pair)
-
-        if not self.passive_only:
-            for row in findings.leads(self.conn, self.eng.id):
-                self._verify(row)
+        if self.eng.objective:
+            self._run_objective()                              # HC-OBJ-01 §6 frontier loop
+        else:
+            self._run_coverage()                               # HC-AGENT-01 §4 coverage run
 
         report = self.reporter.render(self.conn, self.eng, mode=mode,
                                       kb_version=self.kb_version)
         status, errs = reportmod.validate_report(report, kbmod.known_pairs(self.kb_index))
         return RunResult(report, mode, status == "ok", errs)
 
+    def _run_coverage(self):
+        """Today's batch run (HC-AGENT-01 §4): hunt every pending pair, then verify
+        every lead. A contract with no objective runs exactly here, unchanged."""
+        candidates = phase_threat_model(self.target_model, self.kb_index)
+        plan = self.planner.plan(self.target_model, candidates,
+                                 ledger.summary(self.conn, self.eng.id))
+        for pair in plan:
+            if ledger.done(self.conn, self.eng.id, pair.asset, pair.technique_id):
+                continue
+            self._hunt(pair)
+        if not self.passive_only:
+            for row in findings.leads(self.conn, self.eng.id):
+                self._verify(row)
+
+    def _run_objective(self):
+        """Capability-frontier loop (HC-OBJ-01 §6): hunt a pair, verify it at once on
+        a disjoint session, write its yields (provisional at lead, confirmed on
+        confirm), then re-evaluate applicability and preconditions over the live
+        board, so a confirmed fact opens the next card. Only confirmed facts gate a
+        new card, so finder-is-not-verifier holds at every hop (§6.2). Objective
+        completion and its deterministic proof are the next slice (§6b); this loop
+        drives the chain and terminates on frontier exhaustion or the step cap."""
+        self.board = Blackboard(seed=self._seed_specs())       # recon as confirmed ground truth
+        cap = len(self.target_model) * max(1, len(self.kb_index)) + 2
+        for _ in range(cap):
+            pending = self._frontier_pending()                 # applicability+preconditions over the board
+            if not pending:
+                break                                          # frontier exhausted (§6.3)
+            plan = self.planner.plan(self.target_model, pending,
+                                     ledger.summary(self.conn, self.eng.id))
+            if not plan:
+                break
+            pair = plan[0]
+            fid = self._hunt(pair)
+            if fid is None:
+                continue                                       # no lead; the pair is marked, move on
+            card = self.kb_index[(pair.technique_id, pair.technique_version)]
+            self._yield(pair, card, PROVISIONAL, fid)          # guides exploration, gates nothing
+            if self.passive_only:
+                continue                                       # no confirm, no escalation (§6.3)
+            self._verify(findings.current(self.conn, fid))
+            if findings.current(self.conn, fid)["verdict"] == "confirmed":
+                self._yield(pair, card, CONFIRMED, fid)        # only now can it open the next card
+
+    # --- frontier helpers (§5, §6) --------------------------------------
+    def _seed_specs(self):
+        """Recon facts seeded into the board as confirmed, host-scoped ground truth."""
+        specs = []
+        for asset in self.target_model:
+            scope = self._scope_of(asset)
+            for name, value in self.target_model[asset].items():
+                specs.append({"name": name, "scope": scope, "value": value})
+        return specs
+
+    def _frontier_pending(self):
+        """Pairs whose applicability and preconditions both hold over the live
+        confirmed board and that the ledger has not processed (§6.1)."""
+        pending = []
+        for asset in sorted(self.target_model):
+            facts = self._facts_for(asset)
+            for (tid, ver) in sorted(self.kb_index):
+                card = self.kb_index[(tid, ver)]
+                if (_applicable(card, facts) and self._preconditions_met(card, facts)
+                        and not ledger.done(self.conn, self.eng.id, asset, tid)):
+                    pending.append(Pair(asset, tid, ver))
+        return pending
+
+    def _facts_for(self, asset):
+        """The fact view a card is evaluated over. On the coverage path this is the
+        recon facts; on the objective path it is the confirmed board at the asset's
+        host, so a confirmed yield from an earlier card is visible to the next."""
+        if self.board is None:
+            return self.target_model.get(asset, {})
+        return self.board.view(self._scope_of(asset), tier=CONFIRMED)
+
+    def _scope_of(self, asset):
+        facts = self.target_model.get(asset, {})
+        return {"host": facts.get("host", asset)}
+
+    def _yield(self, pair, card, tier, fid):
+        """Write a card's `yields_on_success` facts to the board at `tier`, scoped to
+        the pair's host and tagged with the finding that produced them (§5.3)."""
+        names = card.get("yields_on_success") or []
+        if names:
+            self.board.put_many(
+                [{"name": n, "scope": self._scope_of(pair.asset)} for n in names],
+                tier=tier, produced_by=fid, event_ids=self._found_event_ids(fid))
+
     # --- operator inner loop (§4.1) -------------------------------------
     def _hunt(self, pair):
+        """Run the Operator inner loop on one pair; return the lead's finding id or
+        None. Marks the pair's outcome in the ledger either way."""
         card = self.kb_index.get((pair.technique_id, pair.technique_version))
         if card is None:
             self._mark(pair, "not_applicable")
-            return
-        facts = self.target_model.get(pair.asset, {})
+            return None
+        facts = self._facts_for(pair.asset)
         if not self._preconditions_met(card, facts):
             self._mark(pair, "not_applicable")
-            return
+            return None
         tier = int(card.get("blast_tier", 0))
         if tier > self.eng.max_blast_tier:
             self._mark(pair, "blocked_by_policy")                # HC-SUB-01 §7 cap
-            return
+            return None
 
         snap = self.sandbox.snapshot() if tier >= 2 else None    # §4.1 tier>=2 snapshot
-        session = self.operator.begin(pair, facts)               # recon facts scope the hunt
+        session = self.operator.begin(pair, facts)               # facts scope the hunt
         observations, repro, pe_ids = [], [], []
         denied = invalid = 0
         outcome = "attempted"
+        lead_fid = None
         try:
             for _ in range(self.budget):
                 raw = self.operator.propose_next(session, card,
@@ -223,14 +309,15 @@ class Loop:
                 repro.append(turn.request)                       # the full request, so a Verifier can reproduce
                 signals = evidence.get_signals(self.conn, obs["probe_event_id"])
                 if self.signal_evaluator(card, signals):
-                    self._emit_lead(pair, card, facts, session.id, repro, pe_ids,
-                                    signals.get("confidence"), tier)
+                    lead_fid = self._emit_lead(pair, card, facts, session.id, repro,
+                                               pe_ids, signals.get("confidence"), tier)
                     outcome = "lead"
                     break
         finally:
             if snap is not None:
                 self.sandbox.restore(snap)                       # §4.1 restore after tier>=2
         self._mark(pair, outcome)
+        return lead_fid
 
     def _emit_lead(self, pair, card, facts, found_by, repro, pe_ids, confidence, tier):
         fid = "F-" + uuid.uuid4().hex[:12]
@@ -242,6 +329,7 @@ class Loop:
             # sandbox down: found but unverifiable, held for independent validation
             findings.transition(self.conn, fid, "needs_validation", by=found_by,
                                 reason="passive-only: sandbox guard proofs did not pass")
+        return fid
 
     # --- verification (§4.2) --------------------------------------------
     def _verify(self, finding_row):

@@ -30,6 +30,7 @@ test:
 	python3 tests/test_bifrost.py
 	python3 tests/test_tavily.py
 	python3 tests/test_blackboard.py
+	python3 tests/test_frontier.py
 
 ## contract: validate the example engagement contract (HC-SUB-01 §4)
 contract:

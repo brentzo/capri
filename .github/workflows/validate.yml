@@ -54,6 +54,8 @@ jobs:
         run: python3 tests/test_tavily.py
       - name: Blackboard self-tests (HC-OBJ-01 §5)
         run: python3 tests/test_blackboard.py
+      - name: Capability-frontier self-tests (HC-OBJ-01 §6)
+        run: python3 tests/test_frontier.py
       - name: Example engagement contract parses
         run: python3 -m harness.substrate.contract harness/substrate/examples/engagement.example.yaml
       - name: Business-requirement features are valid and in sync

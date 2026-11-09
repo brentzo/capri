@@ -183,6 +183,15 @@ The loop ends on the first of: the objective predicate holding on confirmed fact
 With no objective, termination is frontier exhaustion, which reproduces today's coverage run.
 In passive-only mode nothing is confirmed, so no fact reaches `confirmed`, no chain escalates, and an objective is reported `not_achieved` with its provisional progress, consistent with HC-SUB-01 §9.
 
+### 6.4 Status
+
+The capability-frontier loop is implemented in `harness/loop.py`.
+`run` branches on the objective: with none it runs `_run_coverage`, the unchanged HC-AGENT-01 §4 batch run, so every existing contract and test behaves exactly as before (§3); with an objective it runs `_run_objective`, the frontier loop.
+The frontier loop seeds a `Blackboard` (§5) from recon as confirmed ground truth, then repeatedly computes the pending set (`_frontier_pending`: cards whose applicability and preconditions both hold over the confirmed board at the asset's host, and that the ledger has not processed), hunts the Planner's first pick, writes its yields provisional, verifies it at once on a disjoint session, and on confirmation writes its yields confirmed, so only a verified fact can open the next card.
+A provisional yield never gates, which carries finder-is-not-verifier into every hop; in passive-only no fact is confirmed, so nothing chains.
+This slice drives the chain and terminates on frontier exhaustion or a step cap; objective completion (the §4.3 success predicate plus the deterministic proof), the `achieved`/`not_achieved` outcome, the `attack_path`, and objective-met termination are the following slice, as is the §8 lateral gate.
+Covered by `tests/test_frontier.py` (a confirmed yield opens the next card, a provisional one does not, passive chains nothing, and the same cards with no objective take the coverage path).
+
 ## 7. Objective-aware planning (delta to the Planner)
 
 The Planner (HC-AGENT-01 §3) gains the objective and the live blackboard and keeps its deterministic, reproducible contract.
