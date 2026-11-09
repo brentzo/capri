@@ -128,6 +128,12 @@ model.assert_provider_diversity()    -> ok | fail       # startup invariant (ope
 
 Budget and rate enforcement are Bifrost's; the orchestrator observes stop signals and reacts per section 10.
 
+The plane is implemented as pure-standard-library policy in `harness/modelplane.py` (`ModelPlane`, `VirtualKey`), with `call(role, messages, metadata)` and `assert_provider_diversity()` as in the sketch above.
+The actual Bifrost HTTP client is infrastructure and is injected as a `transport` (the only holder of provider credentials), the same way tool adapters and the sandbox are injected into `dispatch()` and the loop, so a role names a role and never a provider or a key.
+The plane enforces the §4 diversity invariant and the §8 MCP boundary at construction (fail closed before any run), routes through the role's vkey with the §10 fallback policy (free, within-set, or the Verifier's pin), applies the §5 hierarchical budget and the §6 per-vkey rate as fail-closed `PlaneStop` signals, serves the §7 per-engagement cache only for the prose roles, and writes a §9 audit row for every call and every stop through `harness/store/audit.py`.
+`from_config` builds a plane from the §11 config shape and fails startup on a diversity or MCP violation.
+The stub transport in `tests/test_modelplane.py` drives the §13 criteria in CI; the real Bifrost-backed role sessions that call this plane (assembling prompts from `role_context` and emitting the text `parse_request` reads) remain to be built against it.
+
 ## 13. Acceptance criteria
 
 - No role possesses a provider key; every model call carries a role vkey.

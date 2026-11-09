@@ -134,6 +134,24 @@ re-validates every request on the dispose side, so the two are defense in depth.
   `role_context` is the harness-owned probe-history view a role sees: untrusted
   output framed, a denial or a rejected turn rendered as a trusted directive.
 
+## What's here (the Bifrost model plane)
+
+The policy around every model call (HC-MODEL-01). One virtual key per role and no
+role holds a provider key; the real Bifrost HTTP client is infrastructure and is
+injected as a `transport` (the only holder of credentials), the same pattern as
+the tool adapters and the sandbox.
+
+- `modelplane.py` - `ModelPlane` routes a `call(role, messages, metadata)` through
+  the role's `VirtualKey`. It asserts the operator/verifier provider-diversity
+  invariant and the MCP-tool boundary at construction (fail closed before any
+  run), applies the fallback policy (Planner and Reporter fall back freely, the
+  Operator only within its own set, the Verifier not at all so it never verifies
+  on the Operator's model), enforces the hierarchical per-vkey and engagement
+  budget and the per-vkey rate as fail-closed stops, serves the semantic cache
+  only for the prose roles and only within an engagement, and writes an audit row
+  for every call and every stop. `from_config` builds one from the §11 config
+  shape. The role sessions that run on it are the next slice.
+
 ## Run
 
 ```sh
@@ -145,6 +163,7 @@ python3 tests/test_findings_report.py                       # finding/report lay
 python3 tests/test_loop.py                                  # outer control loop + roles
 python3 tests/test_planner.py                               # deterministic planner
 python3 tests/test_roleio.py                                # role I/O boundary (parse-or-reject, framing)
+python3 tests/test_modelplane.py                            # Bifrost model plane (vkeys, budgets, diversity)
 python3 -m harness.substrate.contract harness/substrate/examples/engagement.example.yaml
 ```
 
