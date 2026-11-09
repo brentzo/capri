@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from urllib.parse import parse_qs, urlparse                              # noqa: E402
 import base64                                                            # noqa: E402
 from harness.sandbox.adapters import (                                   # noqa: E402
-    BflaAdapter, CorsAdapter, HttpRequestAdapter, HttpxAdapter, IdorAdapter,
+    BflaAdapter, CmdiAdapter, CorsAdapter, HttpRequestAdapter, HttpxAdapter, IdorAdapter,
     JwtAdapter, NmapAdapter, PathAdapter, SqliAdapter, SstiAdapter, _RANGE_CANARY,
     _parse_http_full, _parse_http_response, _parse_httpx, _parse_nmap_services)
 from harness.sandbox.base import RunResult                               # noqa: E402
@@ -658,6 +658,54 @@ def test_path_walks_out_of_the_public_dir_against_the_resolved_ip():
     assert url.startswith("http://10.90.0.3:8080/download?")  # resolved IP + endpoint
     assert "t1.sandbox.local" not in url
     assert "..%2F" in url or "../" in url                     # a traversal payload
+
+
+class CmdiRunner:
+    """Simulates the /ping endpoint: it always answers 200. The timing that distinguishes
+    an injectable from a safe server is modelled by the injected clock, not the runner, so
+    the adapter's own delta computation is what the test exercises."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, argv, input=None, timeout=None):
+        self.calls.append(argv)
+        return RunResult(0, "STATUS 200\n---BODY---\npinging 127.0.0.1", "")
+
+
+def _clock(*ticks):
+    return iter(ticks).__next__                               # one value per call, in order
+
+
+def test_cmdi_confirms_injection_when_the_sleep_dominates_the_round_trip():
+    # baseline ~0.01s, injected ~5.01s: the delta clears half the 5s sleep
+    fake = CmdiRunner()
+    res = CmdiAdapter("atk", PINNED, run=fake, clock=_clock(0.0, 0.01, 0.02, 5.03)).run(
+        {"tool": "cmdi", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/ping", "param": "host", "delay_s": 5}})
+    sig = res["deterministic_signals"]
+    assert res["status"] == "ok"
+    assert sig["hit"] is True and sig["cmdi"] is True
+    assert sig["delta_ms"] >= 2500
+
+
+def test_cmdi_no_delay_is_not_a_hit():
+    # both requests return in the same time: a server that does not shell out
+    res = CmdiAdapter("atk", PINNED, run=CmdiRunner(), clock=_clock(0.0, 0.01, 0.02, 0.03)).run(
+        {"tool": "cmdi", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/ping", "param": "host", "delay_s": 5}})
+    assert res["deterministic_signals"]["hit"] is False
+
+
+def test_cmdi_appends_a_sleep_to_the_param_against_the_resolved_ip():
+    fake = CmdiRunner()
+    CmdiAdapter("atk", PINNED, run=fake, clock=_clock(0.0, 0.01, 0.02, 5.03)).run(
+        {"tool": "cmdi", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/ping", "param": "host", "delay_s": 5}})
+    urls = [next(a for a in c if a.startswith("http")) for c in fake.calls]
+    assert len(urls) == 2                                     # baseline, then injected
+    assert all("10.90.0.3" in u for u in urls) and all("t1.sandbox.local" not in u for u in urls)
+    assert "sleep+5" in urls[1] or "sleep%205" in urls[1]     # the appended shell command
 
 
 def test_parse_http_full_splits_status_headers_and_body():

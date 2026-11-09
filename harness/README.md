@@ -396,7 +396,10 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   `PathAdapter` (`path`) requests a file parameter with a traversal ladder and confirms a
   path traversal only when the response carries the range canary marker the target writes
   outside its public dir, proving the read escaped it; the marker never travels in the
-  request, so a contained server never echoes it.
+  request, so a contained server never echoes it. `CmdiAdapter` (`cmdi`) proves OS command
+  injection by a timing oracle: it appends a shell `sleep` to the parameter and fires only
+  when the injected request runs at least the sleep longer than the baseline, which the
+  harness times itself (the clock is injected so tests need no real sleep).
   The attacker container runs the toolchain image (`infra/sandbox/Dockerfile.attacker`,
   built for amd64 and arm64, httpx checksum-pinned) while targets stay the minimal node
   image, and the attacker still holds no `NET_ADMIN`, so the host-owned scope guard
@@ -469,10 +472,10 @@ cards, bridged to the concrete tool adapters.
   available authenticated session from a login probe, and privileged sibling paths from a
   short conventional-path list. `tools/run_engagement.py` loads the KB with `kb.load`,
   projects it with `capabilities.runnable_index`, and drives it; a live model-driven run
-  confirmed seven genuine web-protocol-auth cards (JWT algorithm confusion and server-side
-  template injection at the cards' own critical severity, object- and function-level
-  authorization, boolean-blind SQL injection, path traversal, and CORS misconfiguration),
-  each verified on a disjoint provider.
+  confirmed eight genuine web-protocol-auth cards (JWT algorithm confusion, server-side
+  template injection, and OS command injection at the cards' own critical severity, object-
+  and function-level authorization, boolean-blind SQL injection, path traversal, and CORS
+  misconfiguration), each verified on a disjoint provider.
 
 ## Run
 

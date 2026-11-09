@@ -10,6 +10,8 @@ harness has real web vulnerabilities to find and independently confirm:
                  (broken object-level authorization / IDOR).
   - /download?file= reads a file under a public dir with no containment check, so ../
                  escapes it and reads any file on disk (path traversal / local file read).
+  - /ping?host=  interpolates the host into a shell command, so "; sleep N" runs as a
+                 second command (OS command injection, observable as a timing delay).
 It is seeded into a target container at provision time (not baked into the golden image)
 and is never reachable off the range.
 
@@ -22,6 +24,7 @@ import json
 import os
 import re
 import sqlite3
+import subprocess
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -168,6 +171,19 @@ class Handler(BaseHTTPRequestHandler):
                     self._respond(200, fh.read(65536), "text/plain")
             except OSError:
                 self._respond(404, "not found", "text/plain")
+        elif parts.path == "/ping":
+            host = (query.get("host") or ["127.0.0.1"])[0]
+            # VULNERABLE BY DESIGN: the host is interpolated into a shell command string
+            # with no validation, so "; sleep N" (or any shell metacharacter) runs as a
+            # second command (OS command injection). A timeout caps a runaway sleep so the
+            # fixture cannot hang the range; a correct app would never build a shell string
+            # from user input.
+            try:
+                out = subprocess.run(["sh", "-c", "echo pinging " + host],
+                                     capture_output=True, text=True, timeout=30).stdout
+            except Exception:
+                out = "ping failed"
+            self._respond(200, out, "text/plain")
         elif parts.path == "/greet":
             name = (query.get("name") or ["guest"])[0]
             # VULNERABLE BY DESIGN: the name is rendered through the template engine, so

