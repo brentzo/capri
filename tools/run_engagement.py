@@ -37,8 +37,8 @@ from harness.planner import DeterministicPlanner               # noqa: E402
 from harness.recon import phase_recon                          # noqa: E402
 from harness.roles import ModelOperator, ModelVerifier         # noqa: E402
 from harness.sandbox.adapters import (                         # noqa: E402
-    BflaAdapter, CmdiAdapter, CorsAdapter, HttpRequestAdapter, HttpxAdapter, IdorAdapter,
-    JwtAdapter, NmapAdapter, PathAdapter, SqliAdapter, SstiAdapter)
+    BflaAdapter, CacheAdapter, CmdiAdapter, CorsAdapter, HttpRequestAdapter, HttpxAdapter,
+    IdorAdapter, JwtAdapter, NmapAdapter, PathAdapter, SqliAdapter, SstiAdapter)
 from harness.sandbox.docker import DockerSandbox               # noqa: E402
 from harness.sandbox.probe import DockerProbe                  # noqa: E402
 from harness.store import blobstore, db                        # noqa: E402
@@ -177,7 +177,8 @@ def main():
                         "ssti": SstiAdapter(sb.attacker, eng.pinned),
                         "cors": CorsAdapter(sb.attacker, eng.pinned),
                         "path": PathAdapter(sb.attacker, eng.pinned),
-                        "cmdi": CmdiAdapter(sb.attacker, eng.pinned)}
+                        "cmdi": CmdiAdapter(sb.attacker, eng.pinned),
+                        "cache": CacheAdapter(sb.attacker, eng.pinned)}
             disp = Dispatcher(conn, blobstore.BlobStore(root), eng, adapters,
                               ratelimit.RateLimiter(1000, now=lambda: 0.0))
             res = Loop(conn, eng, kb_index=KB, dispatcher=disp, sandbox=sb,

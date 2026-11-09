@@ -30,6 +30,7 @@ CAPABILITIES = {
     "KB-WEB-PROTO-CORS-001": ("cors", {"path": "/api/data"}),
     "KB-WEB-INJ-PATH-001": ("path", {"path": "/download", "param": "file"}),
     "KB-WEB-INJ-CMDI-001": ("cmdi", {"path": "/ping", "param": "host", "delay_s": 5}),
+    "KB-WEB-CACHE-POISON-001": ("cache", {"path": "/promo"}),
 }
 
 

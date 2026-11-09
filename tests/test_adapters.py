@@ -16,9 +16,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from urllib.parse import parse_qs, urlparse                              # noqa: E402
 import base64                                                            # noqa: E402
 from harness.sandbox.adapters import (                                   # noqa: E402
-    BflaAdapter, CmdiAdapter, CorsAdapter, HttpRequestAdapter, HttpxAdapter, IdorAdapter,
-    JwtAdapter, NmapAdapter, PathAdapter, SqliAdapter, SstiAdapter, _RANGE_CANARY,
-    _parse_http_full, _parse_http_response, _parse_httpx, _parse_nmap_services)
+    BflaAdapter, CacheAdapter, CmdiAdapter, CorsAdapter, HttpRequestAdapter, HttpxAdapter,
+    IdorAdapter, JwtAdapter, NmapAdapter, PathAdapter, SqliAdapter, SstiAdapter,
+    _RANGE_CANARY, _parse_http_full, _parse_http_response, _parse_httpx, _parse_nmap_services)
 from harness.sandbox.base import RunResult                               # noqa: E402
 
 # Real `nmap -sV -Pn -p 8080 -oX -` output (captured live), trimmed to the shape we parse.
@@ -706,6 +706,57 @@ def test_cmdi_appends_a_sleep_to_the_param_against_the_resolved_ip():
     assert len(urls) == 2                                     # baseline, then injected
     assert all("10.90.0.3" in u for u in urls) and all("t1.sandbox.local" not in u for u in urls)
     assert "sleep+5" in urls[1] or "sleep%205" in urls[1]     # the appended shell command
+
+
+class CachePoisonRunner:
+    """Simulates the /promo cache. Vulnerable: it keys the cache on path+query only and
+    reflects X-Forwarded-Host, so a value injected on the miss is served to a later clean
+    request for the same key. Safe (`keyed_on_header`): the header is part of the key, so a
+    clean request is a different key and never gets the poisoned entry."""
+
+    def __init__(self, *, keyed_on_header=False):
+        self.keyed_on_header = keyed_on_header
+        self.store = {}
+        self.calls = []
+
+    def __call__(self, argv, input=None, timeout=None):
+        self.calls.append(argv)
+        url, headers = _call_url_headers(argv)
+        parts = urlparse(url)
+        xfh = headers.get("X-Forwarded-Host", "promo.hc-shop")
+        key = parts.path + "?" + parts.query + (("|" + xfh) if self.keyed_on_header else "")
+        if key not in self.store:
+            self.store[key] = f'<link href="http://{xfh}/promo">'    # miss: reflect + cache
+        return RunResult(0, f"STATUS 200\n---BODY---\n{self.store[key]}", "")
+
+
+def test_cache_confirms_poisoning_when_a_clean_request_is_served_the_injected_marker():
+    res = CacheAdapter("atk", PINNED, run=CachePoisonRunner()).run(
+        {"tool": "cache", "target": "t1.sandbox.local", "port": 8080, "args": {"path": "/promo"}})
+    sig = res["deterministic_signals"]
+    assert res["status"] == "ok"
+    assert sig["hit"] is True and sig["cache_poison"] is True
+    assert sig["reflected"] is True and sig["served_from_cache"] is True
+
+
+def test_cache_header_keyed_cache_is_not_a_hit():
+    res = CacheAdapter("atk", PINNED, run=CachePoisonRunner(keyed_on_header=True)).run(
+        {"tool": "cache", "target": "t1.sandbox.local", "port": 8080, "args": {"path": "/promo"}})
+    sig = res["deterministic_signals"]
+    assert sig["reflected"] is True                          # the miss still reflects
+    assert sig["served_from_cache"] is False                 # but the clean request is a clean key
+    assert sig["hit"] is False
+
+
+def test_cache_injects_an_unkeyed_header_only_on_the_first_request():
+    fake = CachePoisonRunner()
+    CacheAdapter("atk", PINNED, run=fake).run(
+        {"tool": "cache", "target": "t1.sandbox.local", "port": 8080, "args": {"path": "/promo"}})
+    hdrs = [_call_url_headers(c)[1] for c in fake.calls]
+    assert len(hdrs) == 2
+    assert "X-Forwarded-Host" in hdrs[0] and "X-Forwarded-Host" not in hdrs[1]
+    urls = [_call_url_headers(c)[0] for c in fake.calls]
+    assert urls[0] == urls[1] and "10.90.0.3" in urls[0]     # same cache-buster URL, victim's view
 
 
 def test_parse_http_full_splits_status_headers_and_body():

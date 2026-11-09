@@ -10,6 +10,7 @@ proven separately by `tools/sandbox_selftest.py` on a real Docker host.
 
 Zero-dependency: `python3 tests/test_sandbox.py`.
 """
+import json
 import os
 import sys
 from urllib.parse import urlparse
@@ -343,15 +344,19 @@ def _pinned_eng():
     return eng
 
 
-def _recon_runner(*, open_ports=(), http=(), pages=None):
-    open_ports, http, pages = set(open_ports), set(http), (pages or {})
+def _recon_runner(*, open_ports=(), http=(), pages=None, headers=None):
+    open_ports, http = set(open_ports), set(http)
+    pages, headers = (pages or {}), (headers or {})
 
     def run(argv, *, input=None, timeout=30):
         i = argv.index("-c")
         src, rest = argv[i + 1], argv[i + 2:]
-        if "urllib.request" in src:                            # a web-discovery body fetch
+        if "urllib.request" in src:                            # a web-discovery fetch
             path = urlparse(rest[0]).path
             status, body = pages.get(path, (404, ""))
+            if "json.dumps(rh)" in src:                        # the header-returning variant
+                hdr_json = json.dumps(headers.get(path, {}))
+                return RunResult(0, f"STATUS {status}\n{hdr_json}\n---BODY---\n{body}", "")
             return RunResult(0, f"STATUS {status}\n---BODY---\n{body}", "")
         ip, port = rest[0], int(rest[1])
         if "OPEN" in src:                                      # the TCP port probe
@@ -372,6 +377,18 @@ def test_phase_recon_builds_the_target_model_and_discovers_web_facts():
                             "asset.params": ["id", "q"], "asset.auth": "jwt",
                             "asset.login_path": "/login", "authenticated_session": True,
                             "asset.privileged_siblings": ["/admin"]}}
+
+
+def test_phase_recon_detects_a_cacheable_endpoint():
+    from harness.recon import phase_recon
+    pages = {"/": (200, "Try /search?q=..."), "/promo": (200, "<link>")}
+    headers = {"/promo": {"Cache-Control": "public, max-age=60", "X-Cache": "MISS"}}
+    run = _recon_runner(open_ports=[("10.90.0.3", 8080)], http=[("10.90.0.3", 8080)],
+                        pages=pages, headers=headers)
+    facts = phase_recon("hc-range-attacker", _pinned_eng(), run=run)["t1"]
+    assert facts["asset.cacheable"] is True
+    assert facts["cacheable_endpoint"] is True
+    assert facts["asset.cache_path"] == "/promo"
 
 
 def test_phase_recon_marks_an_unreachable_target_and_omits_service_type():

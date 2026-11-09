@@ -28,6 +28,10 @@ _PARAM_RE = re.compile(r"[?&]([A-Za-z_]\w*)=")
 # locations: a login endpoint to read the auth scheme from, and privileged areas.
 _LOGIN_PATHS = ("/login",)
 _ADMIN_PATHS = ("/admin",)
+# Conventional cacheable endpoints, probed for a cache header so the cache-poisoning card
+# has the `asset.cacheable` fact it gates on.
+_CACHE_PATHS = ("/promo",)
+_CACHE_HEADERS = ("cache-control", "x-cache", "age")
 
 
 def _tcp_open(run, attacker, ip, port):
@@ -75,10 +79,21 @@ def _enrich_web(facts, http, ip, port):
     def fetch(path):
         return http._send_http(f"http://{ip}:{port}{path}")   # (status, body)
 
+    def fetch_full(path):
+        return http._send_http_full(f"http://{ip}:{port}{path}")  # (status, headers, body)
+
     _, home = fetch("/")
     params = sorted(set(_PARAM_RE.findall(home or "")))
     if params:
         facts["asset.params"] = params
+    for cpath in _CACHE_PATHS:
+        status, headers, _ = fetch_full(cpath)
+        low = {k.lower(): v for k, v in (headers or {}).items()}
+        if status == 200 and any(h in low for h in _CACHE_HEADERS):
+            facts["asset.cacheable"] = True
+            facts["cacheable_endpoint"] = True
+            facts["asset.cache_path"] = cpath
+            break
     for login in _LOGIN_PATHS:
         status, body = fetch(login + "?user=1")
         if status == 200 and (body or "").strip().count(".") == 2:

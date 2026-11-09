@@ -12,6 +12,9 @@ harness has real web vulnerabilities to find and independently confirm:
                  escapes it and reads any file on disk (path traversal / local file read).
   - /ping?host=  interpolates the host into a shell command, so "; sleep N" runs as a
                  second command (OS command injection, observable as a timing delay).
+  - /promo       caches by path and query but reflects the X-Forwarded-Host header, which
+                 is not part of the cache key, so a value injected on a miss is served to
+                 later clean requests (web cache poisoning via unkeyed input).
 It is seeded into a target container at provision time (not baked into the golden image)
 and is never reachable off the range.
 
@@ -41,6 +44,10 @@ _TMPL_RE = re.compile(r"\{\{(.+?)\}\}")
 _PUBDIR = "/tmp/hcpub"
 _CANARY_PATH = "/tmp/hc_canary.txt"
 _CANARY_MARKER = "HC-RANGE-CANARY-d41d8cd98f00b204"
+
+# A per-process response cache for /promo, keyed by path and query only. It starts empty
+# each time the app is seeded (provision, restore, kill), so a run always begins clean.
+_CACHE = {}
 
 
 def _seed_files():
@@ -184,6 +191,26 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 out = "ping failed"
             self._respond(200, out, "text/plain")
+        elif parts.path == "/promo":
+            key = parts.path + "?" + parts.query          # keyed by path+query, not by header
+            if key in _CACHE:
+                body, xcache = _CACHE[key], "HIT"
+            else:
+                # VULNERABLE BY DESIGN: X-Forwarded-Host is reflected into the response but
+                # is not part of the cache key, so a value injected on this miss is stored
+                # and then served to later clean requests for the same key (cache poisoning).
+                xfh = self.headers.get("X-Forwarded-Host", "promo.hc-shop")
+                body = _PAGE + '<link rel="canonical" href="http://' + xfh + '/promo">'
+                _CACHE[key] = body
+                xcache = "MISS"
+            out = body.encode("utf-8", "replace")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "public, max-age=60")
+            self.send_header("X-Cache", xcache)
+            self.send_header("Content-Length", str(len(out)))
+            self.end_headers()
+            self.wfile.write(out)
         elif parts.path == "/greet":
             name = (query.get("name") or ["guest"])[0]
             # VULNERABLE BY DESIGN: the name is rendered through the template engine, so
