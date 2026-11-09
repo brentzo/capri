@@ -1,6 +1,13 @@
 # HackCulture KB tooling. Pure standard library; no dependencies to install.
 
-.PHONY: materialize validate validate-specs test check
+.PHONY: materialize validate validate-specs test check install
+
+## install: symlink the `capri` command onto your PATH (~/.local/bin)
+install:
+	@mkdir -p $(HOME)/.local/bin
+	@ln -sf $(CURDIR)/capri $(HOME)/.local/bin/capri
+	@echo "linked $(HOME)/.local/bin/capri -> $(CURDIR)/capri"
+	@echo "ensure ~/.local/bin is on your PATH, then run: capri setup"
 
 ## materialize: regenerate kb/<class>/*.yaml, kb/_index, and eval/manifests from the specs
 materialize:
@@ -32,6 +39,7 @@ test:
 	python3 tests/test_blackboard.py
 	python3 tests/test_frontier.py
 	python3 tests/test_sandbox.py
+	python3 tests/test_catalog.py
 	python3 tests/test_modelplane_setup.py
 
 ## contract: validate the example engagement contract (HC-SUB-01 §4)

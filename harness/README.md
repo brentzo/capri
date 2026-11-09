@@ -351,35 +351,42 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   unit-tested with no Docker present (`tests/test_sandbox.py`); the live path is proven
   by `tools/sandbox_selftest.py` (golden image and notes in `infra/sandbox/`).
 
-## What's here (the model-plane gateway bring-up)
+## What's here (the capri CLI and model-plane setup)
 
-HC-MODEL-01: the one-command way to stand up the Bifrost gateway the model plane talks
-to, so a new developer runs two commands instead of ten and needs no cloud account. The
-gateway is infrastructure, the way Docker is for the sandbox; the harness itself stays
-dependency-free and is handed a gateway URL.
+HC-MODEL-01: `capri`, the one command a self-hoster runs, and the terminal UI behind
+`capri setup` that picks the models and starts the gateway on their own machine - no
+cloud account, no browser. The gateway (Bifrost) is infrastructure, the way Docker is
+for the sandbox; the harness itself stays dependency-free and is handed a gateway URL.
 
-- `tools/modelplane.py` - stdlib-only and cross-platform. `up` generates the Bifrost
-  config and an `.env`, mints a per-role virtual key (`sk-bf-...`), seeds a
-  Docker-managed volume with the config over stdin (no host bind mount, so it survives
-  Docker Desktop file sharing and odd `/tmp` setups) and makes it group-0 writable so
-  the gateway can write its stores, runs the container bound to `127.0.0.1` only, and
-  waits for health. `keys` reads the two provider API keys with no echo and restarts;
-  `env` prints the `HC_BIFROST_URL` / `HC_VK_OPERATOR` / `HC_VK_VERIFIER` exports the
-  runner reads; `status` shows health, routes, and whether keys are set; `down` and
-  `destroy` stop or wipe it. The generated config encodes the §4 diversity invariant
-  structurally - operator on DeepSeek, verifier on OpenAI, one provider per virtual key,
-  the two disjoint - and carries only `env.VAR` references, never a literal secret, so
-  it is safe to generate into a file. State (the config and the `.env` holding the keys
-  and virtual keys) lives under `~/.hackculture/modelplane`, outside the repo, so
-  secrets never reach a working tree, and the gateway binds to localhost so the provider
-  keys it holds are never on the network.
-- `tools/run_engagement.py` now builds the model plane from those env vars and runs the
-  Operator on DeepSeek and the Verifier on OpenAI through it, falling back to the
-  deterministic stand-ins when no gateway is configured, so finder-is-not-verifier holds
-  at the model plane as well as at the loop and the DB.
-  The config, `.env`, and virtual-key logic is unit-tested with no Docker present
-  (`tests/test_modelplane_setup.py`); the live bring-up is proven on a real Docker host,
-  and the one step left to the operator is pasting their own provider keys (dev notes in
+- `capri` (repo root) - the entry point: `capri setup`, `capri run`, `capri gateway
+  <status|env|down|destroy|…>`, `capri help` (with a banner). `make install` symlinks it
+  onto the PATH. `capri run` loads the gateway handles into its own env (resolving the
+  invoking user's home under sudo), so there is no manual export step.
+- `tools/catalog.py` - the provider catalog Capri owns: the single-API-key providers
+  Bifrost supports (OpenAI, Anthropic, Gemini, DeepSeek, Mistral, Cohere, Groq, Cerebras,
+  xAI, Perplexity, OpenRouter, Nebius, Hugging Face, Replicate), each with its Bifrost
+  identifier, key env var, and suggested models. One place to edit to add a provider;
+  `validate_pairing` enforces the one rule - operator and verifier on different providers.
+- `tools/setup.py` - the setup TUI (standard-library `curses`, with a plain-prompt
+  fallback where curses is absent or output is not a terminal). It shows the catalog as
+  one list of models grouped by provider, takes a model for each role (the Verifier list
+  excludes the Operator's provider), reads keys with no echo, and calls the gateway
+  bring-up with a live progress display. Esc steps back, q quits.
+- `tools/modelplane.py` - the gateway mechanics the TUI and CLI share. `bring_up`
+  generates the Bifrost config from the chosen pairing, seeds a Docker-managed volume
+  with it over stdin (surviving Docker Desktop file sharing and odd `/tmp` setups) and
+  makes it group-0 writable so the gateway can write its stores, runs the container bound
+  to `127.0.0.1` only, and waits for health. The config carries only `env.VAR` references,
+  never a literal secret, and encodes the diversity invariant (one provider per virtual
+  key, the two disjoint). State (config, the chosen pairing, and the `.env` holding keys
+  and virtual keys) lives under `~/.hackculture/modelplane`, outside the repo. `runtime_env`
+  hands the runner its handles; `status` / `down` / `destroy` manage the lifecycle.
+- `tools/run_engagement.py` builds the model plane from those handles and runs the two
+  roles on whichever providers were picked, falling back to the deterministic stand-ins
+  when no gateway is configured, so finder-is-not-verifier holds at the model plane too.
+  The catalog and the config / virtual-key logic are unit-tested with no Docker present
+  (`tests/test_catalog.py`, `tests/test_modelplane_setup.py`); the live bring-up and a
+  confirmed finding from real models are proven on a real Docker host (dev notes in
   `infra/modelplane/`).
 
 ## Run
@@ -401,6 +408,7 @@ python3 tests/test_tavily.py                                # live Tavily transp
 python3 tests/test_blackboard.py                            # world-state blackboard (fact tiers, chaining)
 python3 tests/test_frontier.py                              # capability-frontier loop (live card chaining)
 python3 tests/test_sandbox.py                               # sandbox substrate: interface + Docker guard proof
+python3 tests/test_catalog.py                               # the provider catalog we own
 python3 tests/test_modelplane_setup.py                      # model-plane gateway bring-up (config, vkeys, .env)
 python3 -m harness.substrate.contract harness/substrate/examples/engagement.example.yaml
 ```

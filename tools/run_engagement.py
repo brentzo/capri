@@ -120,13 +120,18 @@ def build_roles(conn, eng):
     ver_secret = os.environ.get("HC_VK_VERIFIER")
     if not (op_secret and ver_secret):
         return Operator(), Verifier(), ("deterministic stand-ins "
-                                        "(export HC_VK_OPERATOR/HC_VK_VERIFIER to use Bifrost)")
+                                        "(run tools/setup.py to configure the model plane)")
+    # Routes come from the gateway the user configured (tools/setup.py exports them via
+    # `modelplane.py env`), so whichever providers they picked drive the run; the
+    # defaults keep the deepseek/openai pairing when the env does not set them.
+    op_route = os.environ.get("HC_OPERATOR_ROUTE", OPERATOR_ROUTE)
+    ver_route = os.environ.get("HC_VERIFIER_ROUTE", VERIFIER_ROUTE)
     transport = BifrostTransport(base_url, {"vk-operator": op_secret, "vk-verifier": ver_secret})
-    vkeys = [VirtualKey("operator", [OPERATOR_ROUTE], cache=False, fallback="within_set"),
-             VirtualKey("verifier", [VERIFIER_ROUTE], cache=False, fallback="none")]
+    vkeys = [VirtualKey("operator", [op_route], cache=False, fallback="within_set"),
+             VirtualKey("verifier", [ver_route], cache=False, fallback="none")]
     plane = ModelPlane(vkeys, transport, conn, eng.id)       # diversity asserted here
     return (ModelOperator(plane), ModelVerifier(plane),
-            f"Bifrost at {base_url}  (operator={OPERATOR_ROUTE}, verifier={VERIFIER_ROUTE})")
+            f"Bifrost at {base_url}  (operator={op_route}, verifier={ver_route})")
 
 
 def main():

@@ -126,14 +126,15 @@ The objective is proven by the harness (a canary hash match or an in-sandbox mar
 The harness runs against injected seams, so you supply three things:
 
 1. **An isolated sandbox lab** meeting the five substrate guarantees (scope, no egress, reproducibility, containment, killability). The self-hostable reference backend is Docker plus an nftables scope guard, with no nested virtualization, so it runs on any Linux host or inside Docker Desktop on macOS/Windows; prove all five guarantees on your host with `python3 tools/sandbox_selftest.py` (host notes in [`infra/sandbox/`](infra/sandbox/)). Firecracker microVMs plug in behind the same interface for stronger isolation. See [`docs/specs/HC-SUB-01.md`](docs/specs/HC-SUB-01.md).
-2. **A Bifrost model gateway** with one virtual key per role, the Operator and Verifier on disjoint providers, and no provider credential in any role. One command stands it up, no cloud account:
+2. **A Bifrost model gateway** with one virtual key per role, the Operator and Verifier on disjoint providers, and no provider credential in any role. Set it up on your own machine, no cloud account:
 
    ```bash
-   python3 tools/modelplane.py up      # generate config, mint virtual keys, run the gateway
-   python3 tools/modelplane.py keys    # paste your own provider API keys (hidden input)
+   make install     # once: puts the `capri` command on your PATH
+   capri setup      # a terminal UI: pick your Operator and Verifier models, drop in keys, start the gateway
+   capri run        # run an engagement with the models you chose
    ```
 
-   Then `eval "$(python3 tools/modelplane.py env)"` exports the handles a run reads. Walkthrough in [`infra/modelplane/README.md`](infra/modelplane/README.md); design in [`docs/specs/HC-MODEL-01.md`](docs/specs/HC-MODEL-01.md).
+   `capri setup` offers a catalog of providers (OpenAI, Anthropic, Gemini, DeepSeek, and more) and keeps the two roles on different providers; the gateway (Bifrost) runs on `127.0.0.1` and never appears. Walkthrough in [`infra/modelplane/README.md`](infra/modelplane/README.md); design in [`docs/specs/HC-MODEL-01.md`](docs/specs/HC-MODEL-01.md).
 3. **Tool adapters** behind the allow-listed `dispatch()` interface (nmap, httpx, ffuf, sqlmap, nuclei, a headless browser), optionally with the Tavily enrichment service.
 
 Until the five sandbox self-tests pass, the harness stays in `passive-only`: no active probe runs and every lead is held unverified.
