@@ -37,7 +37,7 @@ from harness.planner import DeterministicPlanner               # noqa: E402
 from harness.recon import phase_recon                          # noqa: E402
 from harness.roles import ModelOperator, ModelVerifier         # noqa: E402
 from harness.sandbox.adapters import (                         # noqa: E402
-    HttpRequestAdapter, HttpxAdapter, NmapAdapter, SqliAdapter)
+    HttpRequestAdapter, HttpxAdapter, IdorAdapter, NmapAdapter, SqliAdapter)
 from harness.sandbox.docker import DockerSandbox               # noqa: E402
 from harness.sandbox.probe import DockerProbe                  # noqa: E402
 from harness.store import blobstore, db                        # noqa: E402
@@ -121,9 +121,23 @@ SQLI_CARD = {
     "probe_steps": [{"tool": "sqli", "intent": "boolean_sqli", "path": "/item",
                      "sqli_param": "id"}],
 }
+# A sixth technique: broken object-level authorization (IDOR/BOLA). The harness logs in as
+# one user, then reads a neighbouring user's object with the same token; a 200 with
+# another user's data confirms the missing ownership check, which the harness owns.
+IDOR_CARD = {
+    "id": "KB-LIVE-IDOR-001", "version": "1.0.0",
+    "applicability": ['asset.type == "web_service"'], "preconditions": ["reachable"],
+    "yields_on_success": [], "blast_tier": 1, "taxonomy": {"cwe": ["CWE-639"]},
+    "severity_rubric": {"base": "high",
+                        "cvss_base_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N"},
+    "success_signal": {"type": "bola", "evaluator": "deterministic",
+                       "assert": "another_users_object_returns_with_our_token"},
+    "probe_steps": [{"tool": "idor", "intent": "bola", "path": "/account",
+                     "id_param": "id", "login_path": "/login", "own_id": "1"}],
+}
 KB = {("KB-LIVE-SVC-001", "1.0.0"): CARD, ("KB-LIVE-SVC-002", "1.0.0"): NMAP_CARD,
       ("KB-LIVE-WEB-001", "1.0.0"): WEB_CARD, ("KB-LIVE-XSS-001", "1.0.0"): XSS_CARD,
-      ("KB-LIVE-SQLI-001", "1.0.0"): SQLI_CARD}
+      ("KB-LIVE-SQLI-001", "1.0.0"): SQLI_CARD, ("KB-LIVE-IDOR-001", "1.0.0"): IDOR_CARD}
 
 # A deliberately vulnerable stand-in app, seeded into the target at provision time so the
 # reflected-XSS technique has a real hole to find; it never leaves the egress-denied range.
@@ -224,7 +238,8 @@ def main():
                         "nmap": NmapAdapter(sb.attacker, eng.pinned),
                         "httpx": HttpxAdapter(sb.attacker, eng.pinned),
                         "http": HttpRequestAdapter(sb.attacker, eng.pinned),
-                        "sqli": SqliAdapter(sb.attacker, eng.pinned)}
+                        "sqli": SqliAdapter(sb.attacker, eng.pinned),
+                        "idor": IdorAdapter(sb.attacker, eng.pinned)}
             disp = Dispatcher(conn, blobstore.BlobStore(root), eng, adapters,
                               ratelimit.RateLimiter(1000, now=lambda: 0.0))
             res = Loop(conn, eng, kb_index=KB, dispatcher=disp, sandbox=sb,

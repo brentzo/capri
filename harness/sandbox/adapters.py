@@ -44,10 +44,14 @@ class _Adapter:
     def _exec(self, *argv, input=None):
         return self._run(["docker", "exec", self.attacker, *argv], input=input)
 
-    def _send_http(self, url, method="GET"):
+    def _send_http(self, url, method="GET", headers=None):
         """Issue one HTTP request from the attacker container and return (status, body).
-        Shared by the crafted-request and SQL-injection adapters."""
-        r = self._exec("python3", "-c", _HTTP_REQUEST, url, method)
+        Shared by the crafted-request, SQL-injection, and authorization adapters; optional
+        request headers (e.g. an Authorization bearer token) ride along as a JSON arg."""
+        argv = ["python3", "-c", _HTTP_REQUEST, url, method]
+        if headers:
+            argv.append(json.dumps(headers))
+        r = self._exec(*argv)
         return _parse_http_response(r.out or "")
 
 
@@ -159,9 +163,10 @@ def _parse_httpx(out_text):
 # Issued inside the attacker container; stdlib only. Prints the status line, a sentinel,
 # then the raw body, so the adapter reads both back from one exec.
 _HTTP_REQUEST = (
-    "import sys,urllib.request,urllib.error\n"
+    "import sys,json,urllib.request,urllib.error\n"
     "url,method=sys.argv[1],sys.argv[2]\n"
-    "req=urllib.request.Request(url,method=method)\n"
+    "hdrs=json.loads(sys.argv[3]) if len(sys.argv)>3 else {}\n"
+    "req=urllib.request.Request(url,method=method,headers=hdrs)\n"
     "try:\n"
     "    r=urllib.request.urlopen(req,timeout=8); code=r.status; body=r.read(65536)\n"
     "except urllib.error.HTTPError as e:\n"
@@ -300,6 +305,59 @@ class SqliAdapter(_Adapter):
                 "sqli": hit,
                 "technique": technique,
                 "status_code": base_status,
+                "confidence": 0.95 if hit else 0.0,
+            },
+        }
+
+
+class IdorAdapter(_Adapter):
+    """Broken object-level authorization (IDOR / BOLA) against a pinned in-scope target.
+    Registered as `idor`.
+
+    The harness authenticates as one identity, then requests that identity's own object
+    and a neighbouring object it should not own, both with the same token. It reports a
+    broken access control only when the neighbour's object comes back 200 with distinct
+    data, which an app that checks ownership would refuse with a 401 or 403. The identity
+    and the neighbour id are chosen by the harness and the Verifier repeats the pair, so
+    the verdict is deterministic and harness-owned, not the model's judgement."""
+
+    def run(self, req):
+        ip = self._resolve(req["target"])
+        port = int(req["port"])
+        args = req.get("args") or {}
+        scheme = args.get("scheme") or ("https" if port in (443, 8443) else "http")
+        path = args.get("path", "/account")
+        id_param = args.get("id_param", "id")
+        login_path = args.get("login_path", "/login")
+        own_id = str(args.get("own_id", "1"))
+        other_id = str(args.get("other_id") or (int(own_id) + 1))
+
+        def get(p, params, headers=None):
+            qs = urllib.parse.urlencode(params)
+            url = f"{scheme}://{ip}:{port}{p}" + (f"?{qs}" if qs else "")
+            return url, self._send_http(url, "GET", headers)
+
+        _, (login_status, token) = get(login_path, {"user": own_id})
+        token = (token or "").strip()
+        authenticated = login_status == 200 and token.count(".") == 2
+        hdr = {"Authorization": f"Bearer {token}"} if authenticated else {}
+        own_url, (s_own, b_own) = get(path, {id_param: own_id}, hdr)
+        _, (s_other, b_other) = get(path, {id_param: other_id}, hdr)
+        hit = (authenticated and s_own == 200 and s_other == 200
+               and b_other.strip() != "" and b_other != b_own)
+        return {
+            "status": "ok" if hit else "error",
+            "parsed": {"own_id": own_id, "other_id": other_id,
+                       "own_status": s_own, "other_status": s_other},
+            "request_bytes": f"idor {own_url} as user {own_id} reading {other_id}".encode("utf-8"),
+            "response_bytes": f"own[{s_own}]={b_own}\nother[{s_other}]={b_other}".encode("utf-8", "replace"),
+            "deterministic_signals": {
+                "hit": hit,
+                "idor": hit,
+                "authenticated": authenticated,
+                "own_status": s_own,
+                "other_status": s_other,
+                "other_id": other_id,
                 "confidence": 0.95 if hit else 0.0,
             },
         }

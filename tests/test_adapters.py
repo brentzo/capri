@@ -8,13 +8,14 @@ Docker and no real tool present - the same no-dependency pattern as the sandbox 
 
 Zero-dependency: `python3 tests/test_adapters.py`.
 """
+import json
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from urllib.parse import parse_qs, urlparse                              # noqa: E402
 from harness.sandbox.adapters import (                                   # noqa: E402
-    HttpRequestAdapter, HttpxAdapter, NmapAdapter, SqliAdapter,
+    HttpRequestAdapter, HttpxAdapter, IdorAdapter, NmapAdapter, SqliAdapter,
     _parse_http_response, _parse_httpx, _parse_nmap_services)
 from harness.sandbox.base import RunResult                               # noqa: E402
 
@@ -353,6 +354,91 @@ def test_sqli_without_a_param_probes_once_and_does_not_hit():
         {"tool": "sqli", "target": "10.90.0.3", "port": 8080, "args": {"path": "/item"}})
     assert res["deterministic_signals"]["hit"] is False
     assert len(fake.calls) == 1                           # no param to inject = baseline only
+
+
+def _call_url_headers(argv):
+    url = next((a for a in argv if a.startswith("http")), "")
+    headers = {}
+    if argv and argv[-1].startswith("{"):
+        try:
+            headers = json.loads(argv[-1])
+        except ValueError:
+            pass
+    return url, headers
+
+
+class JwtAppRunner:
+    """Emulates the authenticated target: /login issues a token `h.user<N>.s`, and
+    /account returns the requested account to any valid token. With `ownership_check`,
+    it returns another user's account only to that user's token (the safe behaviour)."""
+
+    def __init__(self, *, ownership_check=False, issue_token=True):
+        self.ownership_check = ownership_check
+        self.issue_token = issue_token
+        self.calls = []
+
+    def __call__(self, argv, input=None, timeout=None):
+        self.calls.append(argv)
+        url, headers = _call_url_headers(argv)
+        parts = urlparse(url)
+        q = parse_qs(parts.query)
+        if parts.path == "/login":
+            uid = (q.get("user") or ["1"])[0]
+            body = f"h.user{uid}.s" if self.issue_token else "login disabled"
+            return RunResult(0, f"STATUS 200\n---BODY---\n{body}", "")
+        if parts.path == "/account":
+            auth = headers.get("Authorization", "")
+            token = auth[7:] if auth.startswith("Bearer ") else ""
+            if not token.startswith("h.user"):
+                return RunResult(0, "STATUS 401\n---BODY---\nunauthorized", "")
+            acct = (q.get("id") or ["1"])[0]
+            if self.ownership_check and acct != token.split(".")[1][4:]:
+                return RunResult(0, "STATUS 403\n---BODY---\nforbidden", "")
+            return RunResult(0, f"STATUS 200\n---BODY---\naccount {acct}: secret-{acct}", "")
+        return RunResult(0, "STATUS 404\n---BODY---\n", "")
+
+
+def test_idor_confirms_broken_object_level_authorization():
+    res = IdorAdapter("atk", PINNED, run=JwtAppRunner()).run(
+        {"tool": "idor", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/account", "id_param": "id", "login_path": "/login", "own_id": "1"}})
+    sig = res["deterministic_signals"]
+    assert res["status"] == "ok"
+    assert sig["hit"] is True and sig["idor"] is True
+    assert sig["authenticated"] is True
+    assert sig["own_status"] == 200 and sig["other_status"] == 200
+
+
+def test_idor_ownership_check_is_not_a_hit():
+    res = IdorAdapter("atk", PINNED, run=JwtAppRunner(ownership_check=True)).run(
+        {"tool": "idor", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/account", "id_param": "id", "login_path": "/login", "own_id": "1"}})
+    sig = res["deterministic_signals"]
+    assert sig["hit"] is False
+    assert sig["other_status"] == 403                    # the neighbour is refused
+
+
+def test_idor_sends_the_login_token_as_a_bearer_header():
+    fake = JwtAppRunner()
+    IdorAdapter("atk", PINNED, run=fake).run(
+        {"tool": "idor", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/account", "id_param": "id", "login_path": "/login", "own_id": "1"}})
+    paths = [urlparse(_call_url_headers(c)[0]).path for c in fake.calls]
+    assert "/login" in paths                             # it authenticates first
+    account_calls = [c for c in fake.calls if urlparse(_call_url_headers(c)[0]).path == "/account"]
+    assert account_calls and all(
+        _call_url_headers(c)[1].get("Authorization") == "Bearer h.user1.s" for c in account_calls)
+    # the neighbour it reads is the next id, which it must resolve to the guarded IP
+    assert any("id=2" in _call_url_headers(c)[0] and "10.90.0.3" in _call_url_headers(c)[0]
+               for c in account_calls)
+
+
+def test_idor_without_a_usable_login_is_not_a_hit():
+    res = IdorAdapter("atk", PINNED, run=JwtAppRunner(issue_token=False)).run(
+        {"tool": "idor", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/account", "id_param": "id", "login_path": "/login", "own_id": "1"}})
+    assert res["deterministic_signals"]["authenticated"] is False
+    assert res["deterministic_signals"]["hit"] is False
 
 
 def main():
