@@ -342,6 +342,37 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   unit-tested with no Docker present (`tests/test_sandbox.py`); the live path is proven
   by `tools/sandbox_selftest.py` (golden image and notes in `infra/sandbox/`).
 
+## What's here (the model-plane gateway bring-up)
+
+HC-MODEL-01: the one-command way to stand up the Bifrost gateway the model plane talks
+to, so a new developer runs two commands instead of ten and needs no cloud account. The
+gateway is infrastructure, the way Docker is for the sandbox; the harness itself stays
+dependency-free and is handed a gateway URL.
+
+- `tools/modelplane.py` - stdlib-only and cross-platform. `up` generates the Bifrost
+  config and an `.env`, mints a per-role virtual key (`sk-bf-...`), seeds a
+  Docker-managed volume with the config over stdin (no host bind mount, so it survives
+  Docker Desktop file sharing and odd `/tmp` setups) and makes it group-0 writable so
+  the gateway can write its stores, runs the container bound to `127.0.0.1` only, and
+  waits for health. `keys` reads the two provider API keys with no echo and restarts;
+  `env` prints the `HC_BIFROST_URL` / `HC_VK_OPERATOR` / `HC_VK_VERIFIER` exports the
+  runner reads; `status` shows health, routes, and whether keys are set; `down` and
+  `destroy` stop or wipe it. The generated config encodes the §4 diversity invariant
+  structurally - operator on DeepSeek, verifier on OpenAI, one provider per virtual key,
+  the two disjoint - and carries only `env.VAR` references, never a literal secret, so
+  it is safe to generate into a file. State (the config and the `.env` holding the keys
+  and virtual keys) lives under `~/.hackculture/modelplane`, outside the repo, so
+  secrets never reach a working tree, and the gateway binds to localhost so the provider
+  keys it holds are never on the network.
+- `tools/run_engagement.py` now builds the model plane from those env vars and runs the
+  Operator on DeepSeek and the Verifier on OpenAI through it, falling back to the
+  deterministic stand-ins when no gateway is configured, so finder-is-not-verifier holds
+  at the model plane as well as at the loop and the DB.
+  The config, `.env`, and virtual-key logic is unit-tested with no Docker present
+  (`tests/test_modelplane_setup.py`); the live bring-up is proven on a real Docker host,
+  and the one step left to the operator is pasting their own provider keys (dev notes in
+  `infra/modelplane/`).
+
 ## Run
 
 ```sh
@@ -361,6 +392,7 @@ python3 tests/test_tavily.py                                # live Tavily transp
 python3 tests/test_blackboard.py                            # world-state blackboard (fact tiers, chaining)
 python3 tests/test_frontier.py                              # capability-frontier loop (live card chaining)
 python3 tests/test_sandbox.py                               # sandbox substrate: interface + Docker guard proof
+python3 tests/test_modelplane_setup.py                      # model-plane gateway bring-up (config, vkeys, .env)
 python3 -m harness.substrate.contract harness/substrate/examples/engagement.example.yaml
 ```
 

@@ -139,6 +139,12 @@ It is the only holder of credentials: the plane passes the role's virtual key na
 The plane owns the provider route and its fallback order (so the Verifier's pin is enforced in the harness, not left to the gateway), and the client maps a provider outage (a 502/503/504 or an unreachable gateway) to `ProviderDown` for fallback, while a 4xx or a malformed body is a hard `BifrostError`.
 `tests/test_bifrost.py` drives it against an in-process stdlib mock Bifrost so the wire contract stays CI-green and zero-dependency; what remains is pointing it at a real gateway with real virtual-key secrets.
 
+The gateway itself is stood up with one command by `tools/modelplane.py`, so a self-hosting developer needs no cloud account and no hand-assembled config.
+`up` generates the Bifrost config and a per-role virtual key, seeds a Docker-managed volume with the config over stdin and makes it group-0 writable so the gateway can write its stores, runs the container bound to localhost only, and waits for health; `keys` reads the provider keys with no echo, `env` prints the handles the runner reads, `status` reports health and whether keys are set, and `down`/`destroy` stop or wipe it.
+The generated config encodes the §4 diversity invariant structurally (operator on DeepSeek, verifier on OpenAI, one provider per virtual key, the two disjoint) and carries only `env.VAR` references, never a literal secret, with the provider keys and virtual keys held in an `.env` outside the repo so no secret reaches a working tree.
+`tools/run_engagement.py` builds the plane from those handles and runs the Operator and Verifier on their disjoint providers through it, falling back to deterministic stand-ins when no gateway is configured.
+The config and virtual-key logic is unit-tested with no Docker present (`tests/test_modelplane_setup.py`); the Docker bring-up is proven on a real host, and the one step left to the operator is pasting their own provider API keys, which are read straight into the gateway's env and never committed, printed, or passed as process arguments.
+
 ## 13. Acceptance criteria
 
 - No role possesses a provider key; every model call carries a role vkey.

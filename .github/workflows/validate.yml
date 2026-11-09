@@ -58,6 +58,8 @@ jobs:
         run: python3 tests/test_frontier.py
       - name: Sandbox substrate self-tests (HC-SUB-01 §8, §10)
         run: python3 tests/test_sandbox.py
+      - name: Model-plane gateway bring-up config (HC-MODEL-01)
+        run: python3 tests/test_modelplane_setup.py
       - name: Example engagement contract parses
         run: python3 -m harness.substrate.contract harness/substrate/examples/engagement.example.yaml
       - name: Business-requirement features are valid and in sync

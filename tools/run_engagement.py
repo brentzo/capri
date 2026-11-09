@@ -4,13 +4,21 @@
 This is the first wiring of the real `DockerSandbox` into the control loop: parse a
 contract, provision a real range, gate on the five-guarantee `proofs_pass`, build the
 target model from the pinned targets, and drive the loop with a real HTTP probe adapter
-that executes on the attacker container. The operator and verifier are deterministic
-stand-ins (the Bifrost model plane is a separate deployment); the point of this runner
-is to prove the substrate, dispatch, probe, and report path works against a real range,
-with the sandbox enforcing scope and the proofs gating active work.
+that executes on the attacker container, with the sandbox enforcing scope and the
+proofs gating active work.
 
-Skips (exit 0) when Docker is unavailable. Run on the range host as root:
-    sudo python3 tools/run_engagement.py
+The Operator and Verifier run on real models through the Bifrost model plane when the
+gateway is configured in the environment: the Operator on DeepSeek, the Verifier on
+OpenAI, kept on disjoint providers so finder-is-not-verifier holds at the model plane
+as well as at the loop and the DB. No role holds a provider key; the per-role virtual
+keys are read from the environment and presented only by the transport. With no gateway
+configured the run falls back to deterministic stand-ins, so the substrate, dispatch,
+probe, and report path can still be exercised on a host without model access.
+
+Skips (exit 0) when Docker is unavailable. Run on the range host as root, with the
+Bifrost virtual keys exported from the gateway's own env (never pasted in):
+    export HC_VK_OPERATOR=... HC_VK_VERIFIER=...   # from the Bifrost .env, on the host
+    sudo -E python3 tools/run_engagement.py
 """
 import os
 import shutil
@@ -21,10 +29,13 @@ import types
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from harness import ratelimit, roleio                          # noqa: E402
+from harness.bifrost import BifrostTransport                   # noqa: E402
 from harness.dispatch import Dispatcher                        # noqa: E402
 from harness.loop import Loop                                  # noqa: E402
+from harness.modelplane import ModelPlane, VirtualKey          # noqa: E402
 from harness.planner import DeterministicPlanner               # noqa: E402
 from harness.recon import phase_recon                          # noqa: E402
+from harness.roles import ModelOperator, ModelVerifier         # noqa: E402
 from harness.sandbox.docker import DockerSandbox               # noqa: E402
 from harness.sandbox.probe import DockerProbe                  # noqa: E402
 from harness.store import blobstore, db                        # noqa: E402
@@ -87,6 +98,37 @@ class Verifier:
                             "port": last.get("port", 8080), "args": last.get("args", {})})
 
 
+# Bifrost model routes, chosen so the operator and verifier sit on disjoint providers
+# (the model-plane diversity invariant). The plane passes these verbatim as the model
+# field; the per-role virtual key governs that each may reach only its own provider.
+OPERATOR_ROUTE = "deepseek/deepseek-chat"
+VERIFIER_ROUTE = "openai/gpt-4o-mini"
+
+
+def build_roles(conn, eng):
+    """The Operator and Verifier for this run, on Bifrost when it is configured.
+
+    When the gateway URL and both per-role virtual-key secrets are present in the
+    environment, the roles run on real models through the model plane (Operator on
+    DeepSeek, Verifier on OpenAI, disjoint providers). The secrets are read from the
+    environment only and presented solely by the transport, so no role holds a
+    provider key. With no gateway configured the deterministic stand-ins run instead,
+    so a host without model access can still exercise the substrate and dispatch path.
+    """
+    base_url = os.environ.get("HC_BIFROST_URL", "http://127.0.0.1:8099")
+    op_secret = os.environ.get("HC_VK_OPERATOR")
+    ver_secret = os.environ.get("HC_VK_VERIFIER")
+    if not (op_secret and ver_secret):
+        return Operator(), Verifier(), ("deterministic stand-ins "
+                                        "(export HC_VK_OPERATOR/HC_VK_VERIFIER to use Bifrost)")
+    transport = BifrostTransport(base_url, {"vk-operator": op_secret, "vk-verifier": ver_secret})
+    vkeys = [VirtualKey("operator", [OPERATOR_ROUTE], cache=False, fallback="within_set"),
+             VirtualKey("verifier", [VERIFIER_ROUTE], cache=False, fallback="none")]
+    plane = ModelPlane(vkeys, transport, conn, eng.id)       # diversity asserted here
+    return (ModelOperator(plane), ModelVerifier(plane),
+            f"Bifrost at {base_url}  (operator={OPERATOR_ROUTE}, verifier={VERIFIER_ROUTE})")
+
+
 def main():
     if shutil.which("docker") is None:
         print("docker not found; skipping live engagement run")
@@ -108,12 +150,14 @@ def main():
         print("recon:", target_model)
         with tempfile.TemporaryDirectory() as root:
             conn = db.connect()
+            operator, verifier, plane_label = build_roles(conn, eng)
+            print("model plane:", plane_label)
             probe = DockerProbe(sb.attacker, eng.pinned)
             disp = Dispatcher(conn, blobstore.BlobStore(root), eng, {"probe": probe},
                               ratelimit.RateLimiter(1000, now=lambda: 0.0))
             res = Loop(conn, eng, kb_index=KB, dispatcher=disp, sandbox=sb,
-                       planner=DeterministicPlanner(KB), operator=Operator(),
-                       verifier=Verifier(), kb_version="live").run(target_model)
+                       planner=DeterministicPlanner(KB), operator=operator,
+                       verifier=verifier, kb_version="live").run(target_model)
         print(f"\nmode: {res.mode}   report valid: {res.valid}")
         print("coverage:", res.report["coverage_summary"])
         for f in res.report["findings"]:
