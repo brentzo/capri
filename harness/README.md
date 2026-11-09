@@ -437,6 +437,32 @@ for the sandbox; the harness itself stays dependency-free and is handed a gatewa
   confirmed finding from real models are proven on a real Docker host (dev notes in
   `infra/modelplane/`).
 
+## What's here (the real KB in the live run)
+
+The live engagement runs the real materialized knowledge base, not hand-written demo
+cards, bridged to the concrete tool adapters.
+
+- `capabilities.py` - the reviewed bridge from a KB technique card to the adapter that
+  runs it. A card names its probe at a conceptual level (`custom.authz_probe`), while the
+  dispatcher runs concrete adapters (`idor`, `sqli`, ...), and one conceptual tool can
+  map to two adapters (object-level vs function-level authz), so the registry is keyed by
+  card id. `runnable_index(kb_index)` projects the KB into just the techniques the harness
+  implements, each with a concrete probe step attached, keeping the genuine card's id,
+  applicability, preconditions, success signal, and real CVSS. A card with no entry (or a
+  model-evaluated `laya:` signal) still loads into the full KB but is not hunted, so the
+  harness degrades rather than proposing a tool the dispatcher would deny. `tests/
+  test_capabilities.py` pins the registry against the real KB: no capability names a
+  missing card, each targets a known adapter, and each maps a deterministically
+  confirmable technique.
+- `recon.py` now does light web discovery (reading state only) so the real cards' facts
+  are there to gate on: the parameters a landing page exposes, a JWT auth scheme and an
+  available authenticated session from a login probe, and privileged sibling paths from a
+  short conventional-path list. `tools/run_engagement.py` loads the KB with `kb.load`,
+  projects it with `capabilities.runnable_index`, and drives it; a live model-driven run
+  confirmed four genuine web-protocol-auth cards (JWT algorithm confusion at the card's
+  own critical severity, object- and function-level authorization, and boolean-blind SQL
+  injection), each verified on a disjoint provider.
+
 ## Run
 
 ```sh
@@ -456,7 +482,8 @@ python3 tests/test_tavily.py                                # live Tavily transp
 python3 tests/test_blackboard.py                            # world-state blackboard (fact tiers, chaining)
 python3 tests/test_frontier.py                              # capability-frontier loop (live card chaining)
 python3 tests/test_sandbox.py                               # sandbox substrate: interface + Docker guard proof
-python3 tests/test_adapters.py                              # live tool adapters (nmap service/version scan)
+python3 tests/test_adapters.py                              # live tool adapters (nmap, httpx, injection, auth)
+python3 tests/test_capabilities.py                          # KB technique -> adapter capability registry
 python3 tests/test_catalog.py                               # the provider catalog we own
 python3 tests/test_modelplane_setup.py                      # model-plane gateway bring-up (config, vkeys, .env)
 python3 -m harness.substrate.contract harness/substrate/examples/engagement.example.yaml

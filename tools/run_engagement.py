@@ -28,7 +28,7 @@ import types
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-from harness import ratelimit, roleio                          # noqa: E402
+from harness import capabilities, kb, ratelimit, roleio        # noqa: E402
 from harness.bifrost import BifrostTransport                   # noqa: E402
 from harness.dispatch import Dispatcher                        # noqa: E402
 from harness.loop import Loop                                  # noqa: E402
@@ -58,116 +58,14 @@ policy:
   rate: { max_rps_per_target: 1000, max_actions_per_run: 10000 }
 """
 
-# A minimal detection: an in-scope HTTP service that responds is an exposed endpoint.
-CARD = {
-    "id": "KB-LIVE-SVC-001", "version": "1.0.0",
-    "applicability": ['asset.type == "web_service"'], "preconditions": ["reachable"],
-    "yields_on_success": [], "blast_tier": 1, "taxonomy": {"cwe": ["CWE-200"]},
-    "severity_rubric": {"base": "medium",
-                        "cvss_base_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:N/VA:N/SC:N/SI:N/SA:N"},
-    "success_signal": {"type": "status_match", "evaluator": "deterministic", "assert": "http_responds"},
-    "probe_steps": [{"tool": "probe", "intent": "http_get"}],
-}
-# A second technique that uses a real tool: nmap -sV discloses the service, its version,
-# and a CPE (which maps to CVE data). The agent proposes `nmap`; dispatch runs the adapter.
-NMAP_CARD = {
-    "id": "KB-LIVE-SVC-002", "version": "1.0.0",
-    "applicability": ['asset.type == "web_service"'], "preconditions": ["reachable"],
-    "yields_on_success": [], "blast_tier": 1, "taxonomy": {"cwe": ["CWE-200"]},
-    "severity_rubric": {"base": "low",
-                        "cvss_base_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:N/VA:N/SC:N/SI:N/SA:N"},
-    "success_signal": {"type": "service_detected", "evaluator": "deterministic",
-                       "assert": "service_identified"},
-    "probe_steps": [{"tool": "nmap", "intent": "service_scan"}],
-}
-# A third technique using a real tool: httpx fingerprints the web surface (server,
-# technology, title, response headers) and flags which security headers are missing,
-# which is what makes the web-protocol-auth and client-side cards applicable.
-WEB_CARD = {
-    "id": "KB-LIVE-WEB-001", "version": "1.0.0",
-    "applicability": ['asset.type == "web_service"'], "preconditions": ["reachable"],
-    "yields_on_success": [], "blast_tier": 1, "taxonomy": {"cwe": ["CWE-200"]},
-    "severity_rubric": {"base": "low",
-                        "cvss_base_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:N/VA:N/SC:N/SI:N/SA:N"},
-    "success_signal": {"type": "web_fingerprinted", "evaluator": "deterministic",
-                       "assert": "web_service_identified"},
-    "probe_steps": [{"tool": "httpx", "intent": "web_fingerprint"}],
-}
-# A fourth technique using the crafted-HTTP tool: a reflected-XSS probe. The harness
-# injects a random, tag-breaking marker into the `q` parameter and confirms
-# deterministically that it reflects unencoded, so the model proposes the request while
-# the harness owns the truth (the marker is harness-generated, not model-chosen).
-XSS_CARD = {
-    "id": "KB-LIVE-XSS-001", "version": "1.0.0",
-    "applicability": ['asset.type == "web_service"'], "preconditions": ["reachable"],
-    "yields_on_success": [], "blast_tier": 1, "taxonomy": {"cwe": ["CWE-79"]},
-    "severity_rubric": {"base": "medium",
-                        "cvss_base_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:P/VC:L/VI:L/VA:N/SC:N/SI:N/SA:N"},
-    "success_signal": {"type": "reflected_xss", "evaluator": "deterministic",
-                       "assert": "injected_marker_reflects_unencoded"},
-    "probe_steps": [{"tool": "http", "intent": "reflect_xss", "path": "/search",
-                     "reflect_param": "q"}],
-}
-# A fifth technique: boolean-blind SQL injection. The harness appends a true and a false
-# condition to the `id` parameter and confirms injection only when the true one reproduces
-# the baseline response and the false one changes it - deterministic and harness-owned.
-SQLI_CARD = {
-    "id": "KB-LIVE-SQLI-001", "version": "1.0.0",
-    "applicability": ['asset.type == "web_service"'], "preconditions": ["reachable"],
-    "yields_on_success": [], "blast_tier": 1, "taxonomy": {"cwe": ["CWE-89"]},
-    "severity_rubric": {"base": "high",
-                        "cvss_base_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:L/VA:N/SC:N/SI:N/SA:N"},
-    "success_signal": {"type": "boolean_sqli", "evaluator": "deterministic",
-                       "assert": "true_and_false_conditions_split_the_response"},
-    "probe_steps": [{"tool": "sqli", "intent": "boolean_sqli", "path": "/item",
-                     "sqli_param": "id"}],
-}
-# A sixth technique: broken object-level authorization (IDOR/BOLA). The harness logs in as
-# one user, then reads a neighbouring user's object with the same token; a 200 with
-# another user's data confirms the missing ownership check, which the harness owns.
-IDOR_CARD = {
-    "id": "KB-LIVE-IDOR-001", "version": "1.0.0",
-    "applicability": ['asset.type == "web_service"'], "preconditions": ["reachable"],
-    "yields_on_success": [], "blast_tier": 1, "taxonomy": {"cwe": ["CWE-639"]},
-    "severity_rubric": {"base": "high",
-                        "cvss_base_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N"},
-    "success_signal": {"type": "bola", "evaluator": "deterministic",
-                       "assert": "another_users_object_returns_with_our_token"},
-    "probe_steps": [{"tool": "idor", "intent": "bola", "path": "/account",
-                     "id_param": "id", "login_path": "/login", "own_id": "1"}],
-}
-# A seventh technique: broken function-level authorization. The harness calls a privileged
-# function anonymously (refused) and again with an ordinary user's token; a 200 for the
-# ordinary user confirms the missing role check, which the harness owns.
-BFLA_CARD = {
-    "id": "KB-LIVE-BFLA-001", "version": "1.0.0",
-    "applicability": ['asset.type == "web_service"'], "preconditions": ["reachable"],
-    "yields_on_success": [], "blast_tier": 1, "taxonomy": {"cwe": ["CWE-862"]},
-    "severity_rubric": {"base": "high",
-                        "cvss_base_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:H/VI:H/VA:N/SC:N/SI:N/SA:N"},
-    "success_signal": {"type": "bfla", "evaluator": "deterministic",
-                       "assert": "privileged_function_executes_for_an_ordinary_user"},
-    "probe_steps": [{"tool": "bfla", "intent": "forced_browsing", "path": "/admin",
-                     "login_path": "/login", "login_user": "1"}],
-}
-# An eighth technique: JWT algorithm confusion. The harness forges an unsigned (alg:none)
-# token and a bogus-signature one; if the server accepts the unsigned token but rejects
-# the bogus one, it honors alg:none and trusts forged claims, which the harness owns.
-JWT_CARD = {
-    "id": "KB-LIVE-JWT-001", "version": "1.0.0",
-    "applicability": ['asset.type == "web_service"'], "preconditions": ["reachable"],
-    "yields_on_success": [], "blast_tier": 1, "taxonomy": {"cwe": ["CWE-347"]},
-    "severity_rubric": {"base": "high",
-                        "cvss_base_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:N/SC:N/SI:N/SA:N"},
-    "success_signal": {"type": "jwt_alg_confusion", "evaluator": "deterministic",
-                       "assert": "unsigned_token_accepted_while_bogus_signature_rejected"},
-    "probe_steps": [{"tool": "jwt", "intent": "alg_confusion", "path": "/account",
-                     "params": {"id": "1"}}],
-}
-KB = {("KB-LIVE-SVC-001", "1.0.0"): CARD, ("KB-LIVE-SVC-002", "1.0.0"): NMAP_CARD,
-      ("KB-LIVE-WEB-001", "1.0.0"): WEB_CARD, ("KB-LIVE-XSS-001", "1.0.0"): XSS_CARD,
-      ("KB-LIVE-SQLI-001", "1.0.0"): SQLI_CARD, ("KB-LIVE-IDOR-001", "1.0.0"): IDOR_CARD,
-      ("KB-LIVE-BFLA-001", "1.0.0"): BFLA_CARD, ("KB-LIVE-JWT-001", "1.0.0"): JWT_CARD}
+# The live run drives the real materialized knowledge base (HC-KB-01), not hand-written
+# demo cards. `kb.load()` reads every technique card; `capabilities.runnable_index` keeps
+# only the techniques the harness has a concrete adapter for and attaches each one's probe
+# step, so the planner, the deterministic signal rule, and the report validator all see the
+# genuine card while the dispatcher runs a real adapter. Cards with no adapter (or a
+# model-evaluated signal) still load into the full KB but are not hunted here.
+FULL_KB = kb.load()
+KB = capabilities.runnable_index(FULL_KB)
 
 # A deliberately vulnerable stand-in app, seeded into the target at provision time so the
 # reflected-XSS technique has a real hole to find; it never leaves the egress-denied range.
@@ -176,7 +74,9 @@ with open(os.path.join(ROOT, "infra", "sandbox", "vulnweb.py"), encoding="utf-8"
 
 
 class Operator:
-    """Proposes one HTTP probe at the asset's pinned address."""
+    """Deterministic stand-in Operator: proposes the card's own probe step at the asset's
+    pinned address. Used only when no model gateway is configured; with a gateway the
+    Bifrost-backed `ModelOperator` runs instead."""
 
     def begin(self, pair, facts=None):
         return types.SimpleNamespace(step=0, id="live-operator", addr=(facts or {}).get("addr"))
@@ -185,8 +85,10 @@ class Operator:
         if session.step >= 1:
             return None
         session.step += 1
-        return roleio.emit({"tool": "probe", "intent": "http_get", "target": session.addr,
-                            "port": 8080, "args": {"path": "/"}})
+        step = (card.get("probe_steps") or [{}])[0]
+        args = {k: v for k, v in step.items() if k not in ("tool", "intent")}
+        return roleio.emit({"tool": step.get("tool"), "intent": step.get("intent"),
+                            "target": session.addr, "port": 8080, "args": args})
 
 
 class Verifier:
