@@ -321,9 +321,10 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   `http.server` stand-in, or, when `listener_app` is set, a python app seeded in over
   stdin (never baked into the golden image); the live runner seeds `infra/sandbox/vulnweb.py`,
   a deliberately vulnerable app (it reflects one query parameter unencoded, concatenates
-  another into a SQL query, and exposes a toy JWT login whose /account skips the ownership
-  check and whose /admin skips the role check), so the XSS, SQLi, IDOR, and BFLA
-  techniques have a real hole to confirm.
+  another into a SQL query, evaluates a third through a template engine, reflects any
+  Origin with credentials, and exposes a toy JWT login whose verifier honors alg:none,
+  whose /account skips the ownership check, and whose /admin skips the role check), so the
+  XSS, SQLi, SSTI, CORS, IDOR, BFLA, and JWT-confusion techniques have a real hole.
   The scope guard is an nftables
   ruleset the host installs into the attacker's netns - default-deny egress, allowing
   only the pinned in-scope IPs on their allowed ports (`scope.ports_for`). `guard_proof`
@@ -383,7 +384,15 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   `BflaAdapter`, the `bfla` tool, is the function-level counterpart: it calls a privileged
   function with no token and then with an ordinary user's token, reporting broken
   function-level authorization only when the anonymous call is refused but the user's
-  executes - a public endpoint that answers both is not flagged.
+  executes - a public endpoint that answers both is not flagged. `JwtAdapter`, the `jwt`
+  tool, attacks the token: it forges an unsigned (alg:none) token and a bogus-signature
+  one and reports JWT algorithm confusion only when the server accepts the unsigned token
+  but rejects the bogus-signature one, proving it honors alg:none rather than ignoring
+  verification entirely. `SstiAdapter` (`ssti`) injects a fixed template expression and
+  confirms server-side template injection only when the response has the computed value
+  and not the raw expression; `CorsAdapter` (`cors`) sends a crafted Origin and confirms a
+  CORS misconfiguration only when the response reflects that origin with credentials (it
+  reads a response header, so the in-container request grew a header-returning variant).
   The attacker container runs the toolchain image (`infra/sandbox/Dockerfile.attacker`,
   built for amd64 and arm64, httpx checksum-pinned) while targets stay the minimal node
   image, and the attacker still holds no `NET_ADMIN`, so the host-owned scope guard
@@ -391,9 +400,9 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   real tool output (or, for the crafted probes, a runner that simulates the vulnerable
   server) with no Docker and no tool present (`tests/test_adapters.py`); a live
   model-driven run confirmed service-disclosure, web-fingerprint, reflected-XSS,
-  boolean-blind-SQLi, broken-object-level-authorization, and broken-function-level-
-  authorization findings alongside the baseline probe, the Operator proposing each probe
-  and the Verifier reproducing on a disjoint provider.
+  boolean-blind-SQLi, broken-object-level-authorization, broken-function-level-
+  authorization, and JWT-algorithm-confusion findings alongside the baseline probe, the
+  Operator proposing each probe and the Verifier reproducing on a disjoint provider.
 
 ## What's here (the capri CLI and model-plane setup)
 
@@ -434,6 +443,33 @@ for the sandbox; the harness itself stays dependency-free and is handed a gatewa
   confirmed finding from real models are proven on a real Docker host (dev notes in
   `infra/modelplane/`).
 
+## What's here (the real KB in the live run)
+
+The live engagement runs the real materialized knowledge base, not hand-written demo
+cards, bridged to the concrete tool adapters.
+
+- `capabilities.py` - the reviewed bridge from a KB technique card to the adapter that
+  runs it. A card names its probe at a conceptual level (`custom.authz_probe`), while the
+  dispatcher runs concrete adapters (`idor`, `sqli`, ...), and one conceptual tool can
+  map to two adapters (object-level vs function-level authz), so the registry is keyed by
+  card id. `runnable_index(kb_index)` projects the KB into just the techniques the harness
+  implements, each with a concrete probe step attached, keeping the genuine card's id,
+  applicability, preconditions, success signal, and real CVSS. A card with no entry (or a
+  model-evaluated `laya:` signal) still loads into the full KB but is not hunted, so the
+  harness degrades rather than proposing a tool the dispatcher would deny. `tests/
+  test_capabilities.py` pins the registry against the real KB: no capability names a
+  missing card, each targets a known adapter, and each maps a deterministically
+  confirmable technique.
+- `recon.py` now does light web discovery (reading state only) so the real cards' facts
+  are there to gate on: the parameters a landing page exposes, a JWT auth scheme and an
+  available authenticated session from a login probe, and privileged sibling paths from a
+  short conventional-path list. `tools/run_engagement.py` loads the KB with `kb.load`,
+  projects it with `capabilities.runnable_index`, and drives it; a live model-driven run
+  confirmed six genuine web-protocol-auth cards (JWT algorithm confusion and server-side
+  template injection at the cards' own critical severity, object- and function-level
+  authorization, boolean-blind SQL injection, and CORS misconfiguration), each verified on
+  a disjoint provider.
+
 ## Run
 
 ```sh
@@ -453,7 +489,8 @@ python3 tests/test_tavily.py                                # live Tavily transp
 python3 tests/test_blackboard.py                            # world-state blackboard (fact tiers, chaining)
 python3 tests/test_frontier.py                              # capability-frontier loop (live card chaining)
 python3 tests/test_sandbox.py                               # sandbox substrate: interface + Docker guard proof
-python3 tests/test_adapters.py                              # live tool adapters (nmap service/version scan)
+python3 tests/test_adapters.py                              # live tool adapters (nmap, httpx, injection, auth)
+python3 tests/test_capabilities.py                          # KB technique -> adapter capability registry
 python3 tests/test_catalog.py                               # the provider catalog we own
 python3 tests/test_modelplane_setup.py                      # model-plane gateway bring-up (config, vkeys, .env)
 python3 -m harness.substrate.contract harness/substrate/examples/engagement.example.yaml

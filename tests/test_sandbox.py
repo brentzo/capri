@@ -12,6 +12,7 @@ Zero-dependency: `python3 tests/test_sandbox.py`.
 """
 import os
 import sys
+from urllib.parse import urlparse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -342,25 +343,35 @@ def _pinned_eng():
     return eng
 
 
-def _recon_runner(*, open_ports=(), http=()):
-    open_ports, http = set(open_ports), set(http)
+def _recon_runner(*, open_ports=(), http=(), pages=None):
+    open_ports, http, pages = set(open_ports), set(http), (pages or {})
 
     def run(argv, *, input=None, timeout=30):
-        src = argv[argv.index("-c") + 1]
-        ip, port = argv[argv.index("-c") + 2], int(argv[argv.index("-c") + 3])
+        i = argv.index("-c")
+        src, rest = argv[i + 1], argv[i + 2:]
+        if "urllib.request" in src:                            # a web-discovery body fetch
+            path = urlparse(rest[0]).path
+            status, body = pages.get(path, (404, ""))
+            return RunResult(0, f"STATUS {status}\n---BODY---\n{body}", "")
+        ip, port = rest[0], int(rest[1])
         if "OPEN" in src:                                      # the TCP port probe
             return RunResult(0, "OPEN" if (ip, port) in open_ports else "CLOSED", "")
-        return RunResult(0, "STATUS 200" if (ip, port) in http else "ERR", "")  # HTTP probe
+        return RunResult(0, "STATUS 200" if (ip, port) in http else "ERR", "")  # HTTP status probe
     return run
 
 
-def test_phase_recon_builds_the_target_model_from_live_probes():
+def test_phase_recon_builds_the_target_model_and_discovers_web_facts():
     from harness.recon import phase_recon
-    run = _recon_runner(open_ports=[("10.90.0.3", 8080)], http=[("10.90.0.3", 8080)])
+    pages = {"/": (200, "Try /search?q=... and /item?id=..."),
+             "/login": (200, "header.payload.signature"), "/admin": (401, "")}
+    run = _recon_runner(open_ports=[("10.90.0.3", 8080)], http=[("10.90.0.3", 8080)], pages=pages)
     model = phase_recon("hc-range-attacker", _pinned_eng(), run=run)
     assert model == {"t1": {"host": "t1.sandbox.local", "addr": "10.90.0.3",
                             "reachable": True, "open_ports": [8080],
-                            "asset.type": "web_service", "http_status": 200}}
+                            "asset.type": "http_endpoint", "http_status": 200,
+                            "asset.params": ["id", "q"], "asset.auth": "jwt",
+                            "asset.login_path": "/login", "authenticated_session": True,
+                            "asset.privileged_siblings": ["/admin"]}}
 
 
 def test_phase_recon_marks_an_unreachable_target_and_omits_service_type():

@@ -14,9 +14,11 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from urllib.parse import parse_qs, urlparse                              # noqa: E402
+import base64                                                            # noqa: E402
 from harness.sandbox.adapters import (                                   # noqa: E402
-    BflaAdapter, HttpRequestAdapter, HttpxAdapter, IdorAdapter, NmapAdapter, SqliAdapter,
-    _parse_http_response, _parse_httpx, _parse_nmap_services)
+    BflaAdapter, CorsAdapter, HttpRequestAdapter, HttpxAdapter, IdorAdapter,
+    JwtAdapter, NmapAdapter, SqliAdapter, SstiAdapter,
+    _parse_http_full, _parse_http_response, _parse_httpx, _parse_nmap_services)
 from harness.sandbox.base import RunResult                               # noqa: E402
 
 # Real `nmap -sV -Pn -p 8080 -oX -` output (captured live), trimmed to the shape we parse.
@@ -452,6 +454,61 @@ def test_idor_without_a_usable_login_is_not_a_hit():
     assert res["deterministic_signals"]["hit"] is False
 
 
+def _token_alg(token):
+    try:
+        head = token.split(".")[0]
+        return json.loads(base64.urlsafe_b64decode(head + "=" * (-len(head) % 4))).get("alg")
+    except Exception:
+        return None
+
+
+class JwtVerifierRunner:
+    """Simulates a protected endpoint's JWT check: it decodes the presented token's alg.
+    When vulnerable it accepts alg 'none' (no signature); it always rejects a token with a
+    real (here always bogus) HS256 signature, exactly as the live verifier behaves."""
+
+    def __init__(self, *, accept_alg_none=True):
+        self.accept_alg_none = accept_alg_none
+        self.calls = []
+
+    def __call__(self, argv, input=None, timeout=None):
+        self.calls.append(argv)
+        url, headers = _call_url_headers(argv)
+        auth = headers.get("Authorization", "")
+        token = auth[7:] if auth.startswith("Bearer ") else ""
+        acct = (parse_qs(urlparse(url).query).get("id") or ["1"])[0]
+        if _token_alg(token) == "none" and self.accept_alg_none:
+            return RunResult(0, f"STATUS 200\n---BODY---\naccount {acct}: secret-{acct}", "")
+        return RunResult(0, "STATUS 401\n---BODY---\nunauthorized", "")
+
+
+def test_jwt_confusion_accepts_an_unsigned_forged_token():
+    res = JwtAdapter("atk", PINNED, run=JwtVerifierRunner()).run(
+        {"tool": "jwt", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/account", "params": {"id": "1"}}})
+    sig = res["deterministic_signals"]
+    assert res["status"] == "ok"
+    assert sig["hit"] is True and sig["jwt_alg_confusion"] is True
+    assert sig["alg_none_status"] == 200 and sig["bad_sig_status"] == 401
+
+
+def test_jwt_strict_verifier_is_not_a_hit():
+    res = JwtAdapter("atk", PINNED, run=JwtVerifierRunner(accept_alg_none=False)).run(
+        {"tool": "jwt", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/account", "params": {"id": "1"}}})
+    assert res["deterministic_signals"]["hit"] is False
+    assert res["deterministic_signals"]["alg_none_status"] == 401    # alg:none rejected
+
+
+def test_jwt_forges_an_alg_none_and_a_bogus_signature_token():
+    fake = JwtVerifierRunner()
+    JwtAdapter("atk", PINNED, run=fake).run(
+        {"tool": "jwt", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/account", "params": {"id": "1"}}})
+    algs = {_token_alg(_call_url_headers(c)[1].get("Authorization", "")[7:]) for c in fake.calls}
+    assert algs == {"none", "HS256"}                                 # one of each, both harness-forged
+
+
 def test_bfla_confirms_missing_function_level_authorization():
     res = BflaAdapter("atk", PINNED, run=JwtAppRunner()).run(
         {"tool": "bfla", "target": "t1.sandbox.local", "port": 8080,
@@ -477,6 +534,89 @@ def test_bfla_public_endpoint_is_not_a_hit():
     # answers the anonymous call too, so it is public, not a privileged function
     assert res["deterministic_signals"]["anon_status"] == 200
     assert res["deterministic_signals"]["hit"] is False
+
+
+class SstiRunner:
+    """Simulates the endpoint: renders a {{ expression }} the caller injects. With
+    `evaluate`, it computes it (template injection); otherwise it reflects it raw."""
+
+    def __init__(self, *, evaluate=True):
+        self.evaluate = evaluate
+        self.calls = []
+
+    def __call__(self, argv, input=None, timeout=None):
+        self.calls.append(argv)
+        url = next((a for a in argv if a.startswith("http")), "")
+        name = (parse_qs(urlparse(url).query).get("name") or [""])[0]
+        shown = "49" if (self.evaluate and name == "{{7*7}}") else name
+        return RunResult(0, f"STATUS 200\n---BODY---\n<p>Hello {shown}</p>", "")
+
+
+def test_ssti_confirms_template_evaluation():
+    res = SstiAdapter("atk", PINNED, run=SstiRunner()).run(
+        {"tool": "ssti", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/greet", "param": "name"}})
+    sig = res["deterministic_signals"]
+    assert res["status"] == "ok"
+    assert sig["hit"] is True and sig["ssti"] is True
+
+
+def test_ssti_raw_reflection_is_not_a_hit():
+    # a page that echoes the expression without evaluating it is not injection
+    res = SstiAdapter("atk", PINNED, run=SstiRunner(evaluate=False)).run(
+        {"tool": "ssti", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/greet", "param": "name"}})
+    assert res["deterministic_signals"]["hit"] is False
+
+
+class CorsRunner:
+    """Simulates the CORS endpoint. When vulnerable it reflects the request Origin into
+    Access-Control-Allow-Origin and allows credentials; a safe server does neither."""
+
+    def __init__(self, *, reflect=True, credentials=True):
+        self.reflect, self.credentials = reflect, credentials
+        self.calls = []
+
+    def __call__(self, argv, input=None, timeout=None):
+        self.calls.append(argv)
+        _, req_headers = _call_url_headers(argv)
+        origin = req_headers.get("Origin", "")
+        headers = {"Content-Type": "application/json"}
+        if self.reflect and origin:
+            headers["Access-Control-Allow-Origin"] = origin
+            if self.credentials:
+                headers["Access-Control-Allow-Credentials"] = "true"
+        out = "STATUS 200\n" + json.dumps(headers) + '\n---BODY---\n{"data": "ok"}'
+        return RunResult(0, out, "")
+
+
+def test_cors_confirms_reflected_origin_with_credentials():
+    res = CorsAdapter("atk", PINNED, run=CorsRunner()).run(
+        {"tool": "cors", "target": "t1.sandbox.local", "port": 8080, "args": {"path": "/api/data"}})
+    sig = res["deterministic_signals"]
+    assert res["status"] == "ok"
+    assert sig["hit"] is True and sig["reflects_origin"] is True and sig["allows_credentials"] is True
+
+
+def test_cors_reflected_origin_without_credentials_is_not_a_hit():
+    res = CorsAdapter("atk", PINNED, run=CorsRunner(credentials=False)).run(
+        {"tool": "cors", "target": "t1.sandbox.local", "port": 8080, "args": {"path": "/api/data"}})
+    sig = res["deterministic_signals"]
+    assert sig["reflects_origin"] is True and sig["allows_credentials"] is False
+    assert sig["hit"] is False                               # reading it needs credentials too
+
+
+def test_cors_strict_origin_is_not_a_hit():
+    res = CorsAdapter("atk", PINNED, run=CorsRunner(reflect=False)).run(
+        {"tool": "cors", "target": "t1.sandbox.local", "port": 8080, "args": {"path": "/api/data"}})
+    assert res["deterministic_signals"]["hit"] is False
+
+
+def test_parse_http_full_splits_status_headers_and_body():
+    out = 'STATUS 200\n{"Server": "x", "X-A": "b"}\n---BODY---\n<html>hi</html>'
+    code, headers, body = _parse_http_full(out)
+    assert code == 200 and headers["X-A"] == "b" and body == "<html>hi</html>"
+    assert _parse_http_full("ERR Timeout") == (0, {}, "")
 
 
 def main():

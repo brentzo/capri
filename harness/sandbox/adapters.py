@@ -10,6 +10,7 @@ unit-tested with no Docker or real tool present. A new capability is a new revie
 adapter here, never a general exec primitive (§5.3); the baseline HTTP probe lives in
 `harness/sandbox/probe.py`.
 """
+import base64
 import json
 import secrets
 import time
@@ -53,6 +54,15 @@ class _Adapter:
             argv.append(json.dumps(headers))
         r = self._exec(*argv)
         return _parse_http_response(r.out or "")
+
+    def _send_http_full(self, url, method="GET", headers=None):
+        """Like `_send_http`, but also returns the response headers: (status, headers,
+        body). Used where the signal is in a response header (e.g. a CORS allow-origin)."""
+        argv = ["python3", "-c", _HTTP_REQUEST_FULL, url, method]
+        if headers:
+            argv.append(json.dumps(headers))
+        r = self._exec(*argv)
+        return _parse_http_full(r.out or "")
 
 
 class NmapAdapter(_Adapter):
@@ -176,6 +186,41 @@ _HTTP_REQUEST = (
     "sys.stdout.write('STATUS %d\\n---BODY---\\n'%code); sys.stdout.flush()\n"
     "sys.stdout.buffer.write(body)\n"
 )
+
+
+# Like _HTTP_REQUEST, but emits the response headers as a JSON line before the body, so
+# an adapter can read a signal that lives in a header.
+_HTTP_REQUEST_FULL = (
+    "import sys,json,urllib.request,urllib.error\n"
+    "url,method=sys.argv[1],sys.argv[2]\n"
+    "hdrs=json.loads(sys.argv[3]) if len(sys.argv)>3 else {}\n"
+    "req=urllib.request.Request(url,method=method,headers=hdrs)\n"
+    "try:\n"
+    "    r=urllib.request.urlopen(req,timeout=8); code=r.status; rh=dict(r.headers); body=r.read(65536)\n"
+    "except urllib.error.HTTPError as e:\n"
+    "    code=e.code; rh=dict(e.headers); body=e.read(65536)\n"
+    "except Exception as e:\n"
+    "    print('ERR',type(e).__name__); sys.exit(0)\n"
+    "sys.stdout.write('STATUS %d\\n'%code + json.dumps(rh) + '\\n---BODY---\\n'); sys.stdout.flush()\n"
+    "sys.stdout.buffer.write(body)\n"
+)
+
+
+def _parse_http_full(out_text):
+    """Split the full in-container request output into (status_code, headers, body).
+    Tolerant: returns (0, {}, "") when the request errored or printed nothing usable."""
+    text = out_text or ""
+    if not text.startswith("STATUS"):
+        return 0, {}, ""
+    head, _, body = text.partition("\n---BODY---\n")
+    status_line, _, hdr_json = head.partition("\n")
+    parts = status_line.split()
+    code = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+    try:
+        headers = json.loads(hdr_json) if hdr_json else {}
+    except (ValueError, TypeError):
+        headers = {}
+    return code, headers, body
 
 
 class HttpRequestAdapter(_Adapter):
@@ -409,6 +454,146 @@ class BflaAdapter(_Adapter):
                 "anon_status": s_anon,
                 "user_status": s_user,
                 "confidence": 0.95 if hit else 0.0,
+            },
+        }
+
+
+def _b64u(raw):
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+def _forge_jwt(claims, *, alg):
+    """Forge a JWT the harness never had the key to sign. With alg "none" the signature
+    is empty (the algorithm-confusion attack); with "HS256" it carries a bogus signature
+    that no correct verifier accepts (the control that proves the server honors "none"
+    specifically, rather than ignoring the signature on everything)."""
+    head = _b64u(json.dumps({"alg": alg, "typ": "JWT"}).encode())
+    payload = _b64u(json.dumps(claims).encode())
+    sig = "" if alg == "none" else _b64u(b"not-a-valid-signature")
+    return f"{head}.{payload}.{sig}"
+
+
+class JwtAdapter(_Adapter):
+    """JWT algorithm-confusion detection against a pinned in-scope target. Registered as
+    `jwt`.
+
+    The harness forges two tokens it could not legitimately sign and presents each to a
+    protected endpoint: one with alg "none" (no signature) carrying claims it chose, and
+    one with a bogus HS256 signature. It reports the flaw only when the unsigned token is
+    accepted (200) while the bogus-signature token is refused (401 or 403), which proves
+    the server honors alg "none" rather than skipping verification on every token. Both
+    tokens are forged in the adapter, so the signal is deterministic and harness-owned,
+    and the Verifier forges its own pair to reproduce it."""
+
+    def run(self, req):
+        ip = self._resolve(req["target"])
+        port = int(req["port"])
+        args = req.get("args") or {}
+        scheme = args.get("scheme") or ("https" if port in (443, 8443) else "http")
+        path = args.get("path", "/account")
+        params = dict(args.get("params") or {})
+        claims = args.get("claims") or {"sub": "1", "role": "admin"}
+
+        def present(token):
+            qs = urllib.parse.urlencode(params)
+            url = f"{scheme}://{ip}:{port}{path}" + (f"?{qs}" if qs else "")
+            return url, self._send_http(url, "GET", {"Authorization": f"Bearer {token}"})
+
+        forged_none = _forge_jwt(claims, alg="none")
+        forged_bad = _forge_jwt(claims, alg="HS256")
+        url, (s_none, _) = present(forged_none)
+        _, (s_bad, _) = present(forged_bad)
+        hit = s_none == 200 and s_bad in (401, 403)
+        return {
+            "status": "ok" if hit else "error",
+            "parsed": {"alg_none_status": s_none, "bad_sig_status": s_bad},
+            "request_bytes": f"jwt {url} alg=none forged".encode("utf-8"),
+            "response_bytes": f"alg_none[{s_none}] bad_sig[{s_bad}]".encode("utf-8"),
+            "deterministic_signals": {
+                "hit": hit,
+                "jwt_alg_confusion": hit,
+                "alg_none_status": s_none,
+                "bad_sig_status": s_bad,
+                "confidence": 0.95 if hit else 0.0,
+            },
+        }
+
+
+class SstiAdapter(_Adapter):
+    """Server-side template injection detection against a pinned in-scope target.
+    Registered as `ssti`.
+
+    The harness injects a fixed arithmetic template expression into a parameter and reports
+    injection only when the response carries the computed value and not the raw expression,
+    which proves the template engine evaluated harness-supplied input rather than merely
+    reflecting it. The expression is fixed in the adapter, so the signal is deterministic
+    and harness-owned, and the Verifier reruns it."""
+
+    _EXPR, _RESULT = "{{7*7}}", "49"
+
+    def run(self, req):
+        ip = self._resolve(req["target"])
+        port = int(req["port"])
+        args = req.get("args") or {}
+        scheme = args.get("scheme") or ("https" if port in (443, 8443) else "http")
+        path = args.get("path", "/")
+        param = args.get("param", "q")
+        qs = urllib.parse.urlencode({param: self._EXPR})
+        url = f"{scheme}://{ip}:{port}{path}?{qs}"
+        status_code, body = self._send_http(url)
+        evaluated = self._RESULT in body and self._EXPR not in body
+        return {
+            "status": "ok" if evaluated else "error",
+            "parsed": {"status_code": status_code},
+            "request_bytes": f"ssti {url}".encode("utf-8"),
+            "response_bytes": f"STATUS {status_code}\n{body}".encode("utf-8", "replace"),
+            "deterministic_signals": {
+                "hit": evaluated,
+                "ssti": evaluated,
+                "status_code": status_code,
+                "expression": self._EXPR,
+                "confidence": 0.95 if evaluated else 0.0,
+            },
+        }
+
+
+class CorsAdapter(_Adapter):
+    """CORS misconfiguration detection against a pinned in-scope target. Registered as
+    `cors`.
+
+    The harness sends a crafted attacker Origin and reports the flaw only when the response
+    reflects that exact origin in Access-Control-Allow-Origin and allows credentials, the
+    pair that lets a malicious site read an authenticated response. The origin is chosen by
+    the harness, so a server that echoes only a trusted origin, or that does not allow
+    credentials, does not fire; the Verifier repeats it."""
+
+    _ORIGIN = "https://evil.hc-probe.test"
+
+    def run(self, req):
+        ip = self._resolve(req["target"])
+        port = int(req["port"])
+        args = req.get("args") or {}
+        scheme = args.get("scheme") or ("https" if port in (443, 8443) else "http")
+        path = args.get("path", "/")
+        url = f"{scheme}://{ip}:{port}{path}"
+        status_code, headers, _ = self._send_http_full(url, "GET", {"Origin": self._ORIGIN})
+        low = {k.lower(): v for k, v in (headers or {}).items()}
+        reflects = low.get("access-control-allow-origin") == self._ORIGIN
+        credentials = (low.get("access-control-allow-credentials") or "").lower() == "true"
+        hit = reflects and credentials
+        return {
+            "status": "ok" if hit else "error",
+            "parsed": {"status_code": status_code,
+                       "allow_origin": low.get("access-control-allow-origin")},
+            "request_bytes": f"cors {url} Origin={self._ORIGIN}".encode("utf-8"),
+            "response_bytes": json.dumps(low).encode("utf-8"),
+            "deterministic_signals": {
+                "hit": hit,
+                "cors": hit,
+                "reflects_origin": reflects,
+                "allows_credentials": credentials,
+                "status_code": status_code,
+                "confidence": 0.9 if hit else 0.0,
             },
         }
 
