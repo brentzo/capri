@@ -131,6 +131,15 @@ The blackboard makes HC-KB-01 §6 real: the run-local, append-only store of fact
 
 On confirmation of a finding, the harness writes the card's `yields_on_success` facts at `confirmed` tier, then re-evaluates applicability and preconditions for the whole candidate set against the updated blackboard, which may open new candidates (§6).
 
+### 5.4 Status
+
+The blackboard is implemented in `harness/blackboard.py` (`Blackboard`, `Fact`).
+`put` writes a fact and `put_many` writes a card's yields; both append to an immutable log and update a current view only when the new fact does not downgrade a higher-tier predecessor, so a `confirmed` fact supersedes its `provisional` predecessor of the same `(name, scope)` while the superseded fact stays in the log for the attack-path trace (§9).
+`view(context, tier)` returns the flat `{name: value}` the HC-KB-01 §4 predicate evaluator consumes: `tier=confirmed` is the gating view that only confirmed facts enter (§3), and a fact's scope must be satisfied by the query context, so a host-scoped fact is visible only against that host.
+`is_confirmed` and `producer` support the §6 escalation gate and the §9 trace.
+This slice is the store itself; seeding it from recon, writing yields at lead emission and confirmation, and re-evaluating applicability over it are the capability-frontier loop (§6), and durable resume replays the confirmed findings rather than persisting the board.
+Covered by `tests/test_blackboard.py`.
+
 ## 6. The capability-frontier loop (revision to HC-AGENT-01 §4)
 
 Chaining requires that a confirmed fact be available before the next card is planned, so the batch shape of HC-AGENT-01 §4 (hunt all, then verify all) is revised to interleave verification into the hunt.

@@ -224,6 +224,23 @@ Tavily endpoint is out of repo.
   caching the failure. It is contract-tested against an in-process stdlib mock
   Tavily in CI; pointing it at the real API with a key is config.
 
+## What's here (the blackboard)
+
+The run-local world-state store that makes the KB's preconditions and yields live
+(HC-OBJ-01 §5), the first piece of objective-driven chaining.
+
+- `blackboard.py` - `Blackboard` holds facts a card reads as preconditions and the
+  harness writes as yields. Two tiers carry finder-is-not-verifier into every hop:
+  a `provisional` fact (written at lead emission) informs exploration but gates
+  nothing, and a `confirmed` fact (written only when the Verifier confirms the
+  producing finding) is the only tier that satisfies an escalation or
+  lateral-movement precondition or the objective predicate. Facts are immutable
+  and append-only; a confirmed fact supersedes its provisional predecessor of the
+  same `(name, scope)` without losing the log, so the attack path reconstructs.
+  `view(context, tier)` is the flat `{name: value}` the predicate evaluator reads,
+  scoped so a host-scoped fact is visible only against that host. The loop that
+  seeds, writes, and re-evaluates over it is the next slice.
+
 ## Run
 
 ```sh
@@ -240,6 +257,7 @@ python3 tests/test_roles.py                                 # model-backed Opera
 python3 tests/test_enrich.py                                # Tavily enrichment (opsec, provenance, framing)
 python3 tests/test_bifrost.py                               # live Bifrost transport (mock-server contract)
 python3 tests/test_tavily.py                                # live Tavily transport (mock-server contract)
+python3 tests/test_blackboard.py                            # world-state blackboard (fact tiers, chaining)
 python3 -m harness.substrate.contract harness/substrate/examples/engagement.example.yaml
 ```
 
