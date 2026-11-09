@@ -37,7 +37,7 @@ from harness.planner import DeterministicPlanner               # noqa: E402
 from harness.recon import phase_recon                          # noqa: E402
 from harness.roles import ModelOperator, ModelVerifier         # noqa: E402
 from harness.sandbox.adapters import (                         # noqa: E402
-    HttpRequestAdapter, HttpxAdapter, NmapAdapter)
+    HttpRequestAdapter, HttpxAdapter, NmapAdapter, SqliAdapter)
 from harness.sandbox.docker import DockerSandbox               # noqa: E402
 from harness.sandbox.probe import DockerProbe                  # noqa: E402
 from harness.store import blobstore, db                        # noqa: E402
@@ -107,8 +107,23 @@ XSS_CARD = {
     "probe_steps": [{"tool": "http", "intent": "reflect_xss", "path": "/search",
                      "reflect_param": "q"}],
 }
+# A fifth technique: boolean-blind SQL injection. The harness appends a true and a false
+# condition to the `id` parameter and confirms injection only when the true one reproduces
+# the baseline response and the false one changes it - deterministic and harness-owned.
+SQLI_CARD = {
+    "id": "KB-LIVE-SQLI-001", "version": "1.0.0",
+    "applicability": ['asset.type == "web_service"'], "preconditions": ["reachable"],
+    "yields_on_success": [], "blast_tier": 1, "taxonomy": {"cwe": ["CWE-89"]},
+    "severity_rubric": {"base": "high",
+                        "cvss_base_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:L/VA:N/SC:N/SI:N/SA:N"},
+    "success_signal": {"type": "boolean_sqli", "evaluator": "deterministic",
+                       "assert": "true_and_false_conditions_split_the_response"},
+    "probe_steps": [{"tool": "sqli", "intent": "boolean_sqli", "path": "/item",
+                     "sqli_param": "id"}],
+}
 KB = {("KB-LIVE-SVC-001", "1.0.0"): CARD, ("KB-LIVE-SVC-002", "1.0.0"): NMAP_CARD,
-      ("KB-LIVE-WEB-001", "1.0.0"): WEB_CARD, ("KB-LIVE-XSS-001", "1.0.0"): XSS_CARD}
+      ("KB-LIVE-WEB-001", "1.0.0"): WEB_CARD, ("KB-LIVE-XSS-001", "1.0.0"): XSS_CARD,
+      ("KB-LIVE-SQLI-001", "1.0.0"): SQLI_CARD}
 
 # A deliberately vulnerable stand-in app, seeded into the target at provision time so the
 # reflected-XSS technique has a real hole to find; it never leaves the egress-denied range.
@@ -208,7 +223,8 @@ def main():
             adapters = {"probe": DockerProbe(sb.attacker, eng.pinned),
                         "nmap": NmapAdapter(sb.attacker, eng.pinned),
                         "httpx": HttpxAdapter(sb.attacker, eng.pinned),
-                        "http": HttpRequestAdapter(sb.attacker, eng.pinned)}
+                        "http": HttpRequestAdapter(sb.attacker, eng.pinned),
+                        "sqli": SqliAdapter(sb.attacker, eng.pinned)}
             disp = Dispatcher(conn, blobstore.BlobStore(root), eng, adapters,
                               ratelimit.RateLimiter(1000, now=lambda: 0.0))
             res = Loop(conn, eng, kb_index=KB, dispatcher=disp, sandbox=sb,

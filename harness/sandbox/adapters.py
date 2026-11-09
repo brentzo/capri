@@ -44,6 +44,12 @@ class _Adapter:
     def _exec(self, *argv, input=None):
         return self._run(["docker", "exec", self.attacker, *argv], input=input)
 
+    def _send_http(self, url, method="GET"):
+        """Issue one HTTP request from the attacker container and return (status, body).
+        Shared by the crafted-request and SQL-injection adapters."""
+        r = self._exec("python3", "-c", _HTTP_REQUEST, url, method)
+        return _parse_http_response(r.out or "")
+
 
 class NmapAdapter(_Adapter):
     """Service and version detection with `nmap -sV`. Registered as the `nmap` tool.
@@ -195,16 +201,15 @@ class HttpRequestAdapter(_Adapter):
         qs = urllib.parse.urlencode(params)
         url = f"{scheme}://{ip}:{port}{path}" + (f"?{qs}" if qs else "")
         t0 = time.monotonic()
-        r = self._exec("python3", "-c", _HTTP_REQUEST, url, method)
+        status_code, body = self._send_http(url, method)
         elapsed_ms = int((time.monotonic() - t0) * 1000)
-        status_code, body = _parse_http_response(r.out or "")
         reflected = bool(marker) and marker in body
         hit = reflected if reflect_param else status_code > 0
         return {
             "status": "ok" if hit else "error",
             "parsed": {"status_code": status_code, "body_len": len(body)},
             "request_bytes": f"{method} {url}".encode("utf-8"),
-            "response_bytes": (r.out or "").encode("utf-8", "replace"),
+            "response_bytes": f"STATUS {status_code}\n{body}".encode("utf-8", "replace"),
             "deterministic_signals": {
                 "hit": hit,
                 "status_code": status_code,
@@ -228,6 +233,76 @@ def _parse_http_response(out_text):
     code = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
     body = rest.split("---BODY---\n", 1)[1] if "---BODY---\n" in rest else ""
     return code, body
+
+
+# SQL boolean conditions the harness appends to prove injection: a true one the server
+# must answer the same as the baseline, and a false one it must answer differently. The
+# numeric pair suits an unquoted column; the string pair closes a quoted one.
+_SQLI_TEMPLATES = (
+    ("numeric", " AND 1=1", " AND 1=2"),
+    ("string", "' AND '1'='1", "' AND '1'='2"),
+)
+
+
+class SqliAdapter(_Adapter):
+    """Boolean-blind SQL injection detection against a pinned in-scope web target.
+    Registered as `sqli`.
+
+    For the named parameter the harness sends three requests - the baseline value, the
+    value with an appended condition that is always true, and one that is always false -
+    and reports injection only when the true condition reproduces the baseline response
+    while the false one changes it. The conditions are generated here, not by the model,
+    so a model cannot force the verdict; a parameter the query parametrizes safely treats
+    all three as literal data, so its responses never split that way. The signal is
+    deterministic and harness-owned, and the Verifier reruns the same differential, so a
+    confirm is two independent splits."""
+
+    def run(self, req):
+        ip = self._resolve(req["target"])
+        port = int(req["port"])
+        args = req.get("args") or {}
+        scheme = args.get("scheme") or ("https" if port in (443, 8443) else "http")
+        path = args.get("path", "/")
+        params = dict(args.get("params") or {})
+        sqli_param = args.get("sqli_param")
+        base = str(params.get(sqli_param, "1")) if sqli_param else "1"
+
+        def fetch(value):
+            p = dict(params)
+            if sqli_param:
+                p[sqli_param] = value
+            qs = urllib.parse.urlencode(p)
+            url = f"{scheme}://{ip}:{port}{path}" + (f"?{qs}" if qs else "")
+            return url, self._send_http(url)
+
+        base_url, base_resp = fetch(base)
+        base_status = base_resp[0]
+        technique = None
+        probes = [{"label": "baseline", "value": base, "status": base_status,
+                   "len": len(base_resp[1])}]
+        if sqli_param and base_status > 0:
+            for name, t_suffix, f_suffix in _SQLI_TEMPLATES:
+                _, t_resp = fetch(base + t_suffix)
+                _, f_resp = fetch(base + f_suffix)
+                probes.append({"label": name + ":true", "status": t_resp[0], "len": len(t_resp[1])})
+                probes.append({"label": name + ":false", "status": f_resp[0], "len": len(f_resp[1])})
+                if t_resp == base_resp and f_resp != base_resp:
+                    technique = name
+                    break
+        hit = technique is not None
+        return {
+            "status": "ok" if hit else "error",
+            "parsed": {"technique": technique, "probes": probes},
+            "request_bytes": f"sqli {base_url} param={sqli_param}".encode("utf-8"),
+            "response_bytes": repr(probes).encode("utf-8"),
+            "deterministic_signals": {
+                "hit": hit,
+                "sqli": hit,
+                "technique": technique,
+                "status_code": base_status,
+                "confidence": 0.95 if hit else 0.0,
+            },
+        }
 
 
 def _parse_nmap_services(xml_text):

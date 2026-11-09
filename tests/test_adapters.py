@@ -14,7 +14,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from urllib.parse import parse_qs, urlparse                              # noqa: E402
 from harness.sandbox.adapters import (                                   # noqa: E402
-    HttpRequestAdapter, HttpxAdapter, NmapAdapter,
+    HttpRequestAdapter, HttpxAdapter, NmapAdapter, SqliAdapter,
     _parse_http_response, _parse_httpx, _parse_nmap_services)
 from harness.sandbox.base import RunResult                               # noqa: E402
 
@@ -273,6 +273,86 @@ def test_parse_http_response_splits_status_and_body():
     code, body = _parse_http_response("STATUS 200\n---BODY---\n<html>hi</html>")
     assert code == 200 and body == "<html>hi</html>"
     assert _parse_http_response("ERR Timeout") == (0, "")
+
+
+class SqlInjectableRunner:
+    """Emulates the vulnerable endpoint `SELECT name FROM items WHERE id = <id>` (row 1 is
+    'widget'): a true numeric condition returns the row, a false one returns nothing, and a
+    broken quote errors - the exact split a boolean-blind SQLi target shows."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, argv, input=None, timeout=None):
+        self.calls.append(argv)
+        url = next((a for a in argv if a.startswith("http")), "")
+        idv = (parse_qs(urlparse(url).query).get("id") or ["1"])[0]
+        if "'" in idv:
+            inner = "query error"                       # unbalanced quote -> SQL error
+        elif idv in ("1", "1 AND 1=1"):
+            inner = "<li>widget</li>"                    # baseline / true condition
+        else:
+            inner = "no item"                            # false condition selects nothing
+        return RunResult(0, f"STATUS 200\n---BODY---\n<ul>{inner}</ul>", "")
+
+
+class SafeSqlRunner:
+    """A parametrized-safe endpoint: the id is a literal, so an injected condition never
+    acts as SQL - only the exact baseline id returns the row."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, argv, input=None, timeout=None):
+        self.calls.append(argv)
+        url = next((a for a in argv if a.startswith("http")), "")
+        idv = (parse_qs(urlparse(url).query).get("id") or [""])[0]
+        inner = "<li>widget</li>" if idv == "1" else "no item"
+        return RunResult(0, f"STATUS 200\n---BODY---\n<ul>{inner}</ul>", "")
+
+
+def test_sqli_confirms_boolean_blind_injection():
+    res = SqliAdapter("atk", PINNED, run=SqlInjectableRunner()).run(
+        {"tool": "sqli", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/item", "sqli_param": "id"}})
+    sig = res["deterministic_signals"]
+    assert res["status"] == "ok"
+    assert sig["hit"] is True and sig["sqli"] is True
+    assert sig["technique"] == "numeric"                 # the true/false pair split the response
+
+
+def test_sqli_safe_parametrized_endpoint_is_not_a_hit():
+    res = SqliAdapter("atk", PINNED, run=SafeSqlRunner()).run(
+        {"tool": "sqli", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/item", "sqli_param": "id"}})
+    assert res["deterministic_signals"]["hit"] is False
+    assert res["deterministic_signals"]["technique"] is None
+
+
+def test_sqli_sends_a_harness_generated_true_and_false_condition_to_the_resolved_ip():
+    fake = SqlInjectableRunner()
+    SqliAdapter("atk", PINNED, run=fake).run(
+        {"tool": "sqli", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/item", "sqli_param": "id"}})
+    urls = " ".join(a for call in fake.calls for a in call if a.startswith("http"))
+    assert "10.90.0.3" in urls and "t1.sandbox.local" not in urls
+    assert "1%3D1" in urls and "1%3D2" in urls           # the appended AND 1=1 / AND 1=2
+
+
+def test_sqli_stops_at_the_first_splitting_template():
+    fake = SqlInjectableRunner()
+    SqliAdapter("atk", PINNED, run=fake).run(
+        {"tool": "sqli", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/item", "sqli_param": "id"}})
+    assert len(fake.calls) == 3                           # baseline + the numeric true/false
+
+
+def test_sqli_without_a_param_probes_once_and_does_not_hit():
+    fake = SqlInjectableRunner()
+    res = SqliAdapter("atk", PINNED, run=fake).run(
+        {"tool": "sqli", "target": "10.90.0.3", "port": 8080, "args": {"path": "/item"}})
+    assert res["deterministic_signals"]["hit"] is False
+    assert len(fake.calls) == 1                           # no param to inject = baseline only
 
 
 def main():

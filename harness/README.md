@@ -320,7 +320,8 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   agent can neither leave scope nor touch the guard). A target's listener is the plain
   `http.server` stand-in, or, when `listener_app` is set, a python app seeded in over
   stdin (never baked into the golden image); the live runner seeds `infra/sandbox/vulnweb.py`,
-  a deliberately vulnerable app, so the reflected-XSS technique has a real hole to confirm.
+  a deliberately vulnerable app (it reflects one query parameter unencoded and concatenates
+  another into a SQL query), so the XSS and SQLi techniques have a real hole to confirm.
   The scope guard is an nftables
   ruleset the host installs into the attacker's netns - default-deny egress, allowing
   only the pinned in-scope IPs on their allowed ports (`scope.ports_for`). `guard_proof`
@@ -369,15 +370,20 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   random tag-breaking marker into a named parameter and reports whether that exact marker
   reflects unencoded in the body - a deterministic signal the harness owns, since the
   marker is generated here, so a model can neither pre-pick a match nor forge the echo.
+  `SqliAdapter`, the `sqli` tool, is the blind-injection counterpart: it sends a baseline
+  plus a harness-generated true and false condition on a named parameter and confirms
+  boolean-blind SQL injection only when the true one reproduces the baseline response and
+  the false one changes it, so a safely parametrized parameter never splits and the
+  verdict stays harness-owned.
   The attacker container runs the toolchain image (`infra/sandbox/Dockerfile.attacker`,
   built for amd64 and arm64, httpx checksum-pinned) while targets stay the minimal node
   image, and the attacker still holds no `NET_ADMIN`, so the host-owned scope guard
   bounds every request. Each adapter's parse and signal shape are pinned against captured
-  real tool output (or, for the crafted request, a runner that simulates the vulnerable
+  real tool output (or, for the crafted probes, a runner that simulates the vulnerable
   server) with no Docker and no tool present (`tests/test_adapters.py`); a live
-  model-driven run confirmed service-disclosure, web-fingerprint, and reflected-XSS
-  findings alongside the baseline probe, the Operator proposing each probe and the
-  Verifier reproducing on a disjoint provider.
+  model-driven run confirmed service-disclosure, web-fingerprint, reflected-XSS, and
+  boolean-blind-SQLi findings alongside the baseline probe, the Operator proposing each
+  probe and the Verifier reproducing on a disjoint provider.
 
 ## What's here (the capri CLI and model-plane setup)
 

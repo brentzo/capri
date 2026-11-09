@@ -9,11 +9,18 @@ time (not baked into the golden image) and is never reachable off the range.
 
 Never deploy this anywhere reachable. Standard library only, so it runs on the tiny base.
 """
+import sqlite3
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
 
 _PAGE = "<!doctype html><title>hc-shop</title><body><h1>hc-shop</h1>"
+
+# A tiny in-memory catalog, so the SQL-injectable endpoint has real rows to leak.
+_DB = sqlite3.connect(":memory:", check_same_thread=False)
+_DB.executescript(
+    "CREATE TABLE items(id INTEGER, name TEXT);"
+    "INSERT INTO items VALUES (1,'widget'),(2,'gadget'),(3,'gizmo');")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -27,8 +34,18 @@ class Handler(BaseHTTPRequestHandler):
             # VULNERABLE BY DESIGN: q is written into the HTML with no encoding, so an
             # injected "><svg ...> breaks out of the text and reflects as live markup.
             html = _PAGE + "<p>No results for: " + q + "</p>"
+        elif parts.path == "/item":
+            item_id = (parse_qs(parts.query).get("id") or ["1"])[0]
+            # VULNERABLE BY DESIGN: id is concatenated into the query, so a boolean
+            # condition (AND 1=1 vs AND 1=2) changes the result set it returns.
+            try:
+                rows = _DB.execute("SELECT name FROM items WHERE id = " + item_id).fetchall()
+                inner = "".join("<li>" + r[0] + "</li>" for r in rows) if rows else "no item"
+            except Exception:                 # a broken injection errors; stays distinct
+                inner = "query error"
+            html = _PAGE + "<ul>" + inner + "</ul>"
         else:
-            html = _PAGE + "<p>Try /search?q=...</p>"
+            html = _PAGE + "<p>Try /search?q=... or /item?id=...</p>"
         body = html.encode("utf-8", "replace")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
