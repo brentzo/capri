@@ -26,6 +26,13 @@ def _ports_for(eng, ip):
     return eng.allowed_ports.get("default", [])
 
 
+def ports_for(eng, ip):
+    """Public view of the allowed ports for a target IP, so the sandbox builds its
+    scope-guard rules from the same policy the pre-flight check enforces (HC-SUB-01
+    §5)."""
+    return list(_ports_for(eng, ip))
+
+
 def scope_validate(eng, target, port):
     """Return ('allow', None) or ('deny', reason).
 

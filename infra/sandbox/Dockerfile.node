@@ -1,0 +1,8 @@
+# Golden node image for the Docker sandbox range (HC-SUB-01).
+# Used for both the attacker container and the target containers: a tiny base with
+# only python3, which is all the guard-proof probes and the stand-in target listeners
+# need. Deliberately minimal - no nft, no ip tooling - so the agent in the attacker
+# container has nothing to reconfigure the host-installed scope guard with.
+FROM alpine:3.20
+RUN apk add --no-cache python3
+CMD ["sleep", "infinity"]

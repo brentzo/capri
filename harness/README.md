@@ -5,10 +5,9 @@ Python standard library, zero third-party dependencies.
 
 ## What's here (M0 substrate, the buildable slice)
 
-The safety-critical logic of HC-SUB-01, as testable code. The sandbox itself
-(Firecracker microVMs, the nftables/eBPF no-route gateway, snapshot/restore) is
-infrastructure, not in this repo; what lives here is the decision logic the
-harness runs on top of it:
+The safety-critical logic of HC-SUB-01, as testable code. The decision logic the
+harness runs on top of the sandbox (a self-hostable Docker backend now lives in
+`harness/sandbox/`, below):
 
 - `yamlmini.py` - a small, strict YAML-subset loader (block + flow), so the
   contract parser has no third-party dependency.
@@ -296,6 +295,28 @@ contract permits it, and a foothold never widens scope.
   column) and `detail()` reads it back, so a negative result names *why* a pair was
   blocked without multiplying the status vocabulary; `summary` is unchanged.
 
+## What's here (the sandbox substrate backend)
+
+HC-SUB-01 §10: the interface the control loop drives to get an isolated range, plus
+the first self-hostable backend. No nested virtualization needed, so it runs on any
+commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
+
+- `sandbox/base.py` - `Sandbox`, the backend-agnostic interface (`provision /
+  snapshot / restore / guard_proof / proofs_pass / kill`), and `PassiveOnlySandbox`,
+  the safe default whose proofs all fail so a harness with no range stays
+  passive-only. `guard_proof_result` evaluates the four §8.1 assertions.
+- `sandbox/docker.py` - `DockerSandbox`, the Docker backend. `provision` builds one
+  `--internal` network (no egress by construction = G2) with a target container per
+  in-scope host and one attacker container (no `NET_ADMIN`, no network tooling, so the
+  agent can neither leave scope nor touch the guard). The scope guard is an nftables
+  ruleset the host installs into the attacker's netns - default-deny egress, allowing
+  only the pinned in-scope IPs on their allowed ports (`scope.ports_for`). `guard_proof`
+  runs the four §8.1 probes from inside the attacker container; `proofs_pass` stays
+  `False` until the G3/G4/G5 drills land, so this backend alone keeps the harness
+  passive-only. Every docker/nsenter call goes through an injected runner, so the
+  logic is unit-tested with no Docker present (`tests/test_sandbox.py`); the live path
+  is proven by `tools/sandbox_selftest.py` (golden image and notes in `infra/sandbox/`).
+
 ## Run
 
 ```sh
@@ -314,6 +335,7 @@ python3 tests/test_bifrost.py                               # live Bifrost trans
 python3 tests/test_tavily.py                                # live Tavily transport (mock-server contract)
 python3 tests/test_blackboard.py                            # world-state blackboard (fact tiers, chaining)
 python3 tests/test_frontier.py                              # capability-frontier loop (live card chaining)
+python3 tests/test_sandbox.py                               # sandbox substrate: interface + Docker guard proof
 python3 -m harness.substrate.contract harness/substrate/examples/engagement.example.yaml
 ```
 

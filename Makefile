@@ -31,6 +31,7 @@ test:
 	python3 tests/test_tavily.py
 	python3 tests/test_blackboard.py
 	python3 tests/test_frontier.py
+	python3 tests/test_sandbox.py
 
 ## contract: validate the example engagement contract (HC-SUB-01 §4)
 contract:
