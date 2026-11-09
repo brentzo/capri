@@ -116,8 +116,12 @@ the signal triage the harness owns on top of them.
   confirmed on confirm), and re-evaluates applicability and preconditions over the
   live confirmed board, so a verified fact opens the next card and cards chain.
   Only confirmed facts gate a new card, so finder-is-not-verifier holds at every
-  hop. With no objective the loop runs the unchanged coverage path. Objective
-  completion and its deterministic proof are the next slice.
+  hop. With no objective the loop runs the unchanged coverage path. The objective
+  is completed deterministically: the success predicate over the confirmed board
+  plus a proof the harness observes (the retrieved canary's hash matching the
+  contract, or an in-sandbox marker), so a role cannot claim success; the outcome
+  (achieved / not_achieved / not_applicable, with the attack path) is on the run
+  result, `on_success: stop` ends the run, and passive-only is never achieved.
 
 ## What's here (the Planner)
 

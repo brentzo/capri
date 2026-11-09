@@ -146,11 +146,29 @@ class Planner:
         return list(candidates)
 
 
-def _build(root, contract_text, *, proofs=True):
+class CanaryAdapter:
+    """Reports the retrieved canary's hash in the probe signal, as a real capture
+    card's adapter would, so the harness can bind the objective proof to it."""
+
+    def __init__(self, sha256, hits):
+        self.sha256 = sha256
+        self.hits = set(hits)
+
+    def run(self, req):
+        hit = (req["target"], req["args"].get("technique")) in self.hits
+        sig = {"hit": hit, "confidence": 0.9 if hit else 0.0}
+        if hit:
+            sig["canary_sha256"] = self.sha256
+        return {"status": "ok", "parsed": {}, "request_bytes": b"GET /flag.txt HTTP/1.1",
+                "response_bytes": b"HTTP/1.1 200 OK", "deterministic_signals": sig}
+
+
+def _build(root, contract_text, *, proofs=True, adapter=None):
     conn = db.connect()
     eng, errs = contract.parse(contract_text)
     assert not errs, errs
-    disp = Dispatcher(conn, blobstore.BlobStore(root), eng, {"probe": ProbeAdapter(HITS)},
+    disp = Dispatcher(conn, blobstore.BlobStore(root), eng,
+                      {"probe": adapter or ProbeAdapter(HITS)},
                       ratelimit.RateLimiter(1000, now=lambda: 0.0))
     return conn, eng, disp, StubSandbox(proofs)
 
@@ -210,6 +228,93 @@ def test_no_objective_takes_the_unchanged_coverage_path():
         confirmed = {r["technique_id"] for r in findings.confirmed(conn, eng.id)}
         assert confirmed == {"KB-A"}                              # B did not chain
         assert _ledger(conn, eng, "KB-B") == "not_applicable"
+
+
+# --- objective completion (§6b) ------------------------------------------
+_OBJ_CONTINUE = _OBJECTIVE + "  on_success: continue-for-coverage\n"
+
+CANARY_SHA = "a" * 64
+_CANARY_OBJECTIVE = (
+    "objective:\n"
+    "  id: obj-flag\n"
+    '  description: "Read the planted flag."\n'
+    "  type: canary\n"
+    "  target: app.sandbox.local\n"
+    '  success: "exists(flag.captured)"\n'
+    "  proof: { kind: canary, location: /flag.txt, sha256: " + CANARY_SHA + " }\n"
+)
+KB_CANARY = {("KB-CANARY", "1.0.0"): _card("KB-CANARY", ["reachable"], ["flag.captured"])}
+
+C = _card("KB-C", ["reachable"], ["extra"])
+KB3 = {("KB-A", "1.0.0"): A, ("KB-B", "1.0.0"): B, ("KB-C", "1.0.0"): C}
+HITS3 = HITS + [("10.10.0.5", "KB-C")]
+
+
+def _run(conn, eng, disp, sandbox, kb):
+    return Loop(conn, eng, kb_index=kb, dispatcher=disp, sandbox=sandbox, planner=Planner(),
+                operator=Operator(), verifier=Verifier("ver", conn)).run(TM)
+
+
+def test_capability_objective_is_achieved_with_an_attack_path():
+    with tempfile.TemporaryDirectory() as root:
+        conn, eng, disp, sandbox = _build(root, _BASE.format(objective=_OBJECTIVE))
+        res = _run(conn, eng, disp, sandbox, KB)
+        assert res.objective["status"] == "achieved", res.objective
+        assert res.objective["proof"] == {"kind": "capability"}
+        assert {s["technique_id"] for s in res.objective["attack_path"]} == {"KB-A", "KB-B"}
+
+
+def test_canary_objective_requires_the_proof_hash():
+    hits = [("10.10.0.5", "KB-CANARY")]
+    with tempfile.TemporaryDirectory() as root:             # the retrieved hash matches
+        conn, eng, disp, sandbox = _build(root, _BASE.format(objective=_CANARY_OBJECTIVE),
+                                          adapter=CanaryAdapter(CANARY_SHA, hits))
+        res = _run(conn, eng, disp, sandbox, KB_CANARY)
+        assert res.objective["status"] == "achieved"
+        assert res.objective["proof"] == {"kind": "canary", "sha256_matched": True}
+    with tempfile.TemporaryDirectory() as root:             # a different retrieved hash
+        conn, eng, disp, sandbox = _build(root, _BASE.format(objective=_CANARY_OBJECTIVE),
+                                          adapter=CanaryAdapter("b" * 64, hits))
+        res = _run(conn, eng, disp, sandbox, KB_CANARY)
+        assert res.objective["status"] == "not_achieved"    # predicate holds, proof does not
+        assert res.objective["proof"]["sha256_matched"] is False
+        assert findings.confirmed(conn, eng.id)             # the finding still confirmed
+
+
+def test_not_achieved_lists_the_facts_the_chain_reached():
+    with tempfile.TemporaryDirectory() as root:             # only KB-A fires, so db_admin is never reached
+        conn, eng, disp, sandbox = _build(root, _BASE.format(objective=_OBJECTIVE),
+                                          adapter=ProbeAdapter([("10.10.0.5", "KB-A")]))
+        res = _run(conn, eng, disp, sandbox, KB)
+        assert res.objective["status"] == "not_achieved"
+        assert res.objective["reached_facts"] == ["credential@app.sandbox.local"]
+
+
+def test_on_success_stop_halts_the_frontier():
+    with tempfile.TemporaryDirectory() as root:             # stop (default): KB-C never runs
+        conn, eng, disp, sandbox = _build(root, _BASE.format(objective=_OBJECTIVE),
+                                          adapter=ProbeAdapter(HITS3))
+        _run(conn, eng, disp, sandbox, KB3)
+        assert _ledger(conn, eng, "KB-C") is None
+    with tempfile.TemporaryDirectory() as root:             # continue-for-coverage: KB-C runs
+        conn, eng, disp, sandbox = _build(root, _BASE.format(objective=_OBJ_CONTINUE),
+                                          adapter=ProbeAdapter(HITS3))
+        _run(conn, eng, disp, sandbox, KB3)
+        assert _ledger(conn, eng, "KB-C") == "confirmed"
+
+
+def test_passive_objective_is_not_achieved():
+    with tempfile.TemporaryDirectory() as root:
+        conn, eng, disp, sandbox = _build(root, _BASE.format(objective=_OBJECTIVE), proofs=False)
+        res = _run(conn, eng, disp, sandbox, KB)
+        assert res.mode == "passive-only" and res.objective["status"] == "not_achieved"
+
+
+def test_no_objective_outcome_is_not_applicable():
+    with tempfile.TemporaryDirectory() as root:
+        conn, eng, disp, sandbox = _build(root, _BASE.format(objective=""))
+        res = _run(conn, eng, disp, sandbox, KB)
+        assert res.objective["status"] == "not_applicable"
 
 
 def main():

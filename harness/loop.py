@@ -66,13 +66,20 @@ class Pair:
 
 
 class RunResult:
-    __slots__ = ("report", "mode", "valid", "errors")
+    __slots__ = ("report", "mode", "valid", "errors", "objective")
 
-    def __init__(self, report, mode, valid, errors):
+    def __init__(self, report, mode, valid, errors, objective=None):
         self.report = report
         self.mode = mode
         self.valid = valid
         self.errors = errors
+        self.objective = objective      # HC-OBJ-01 §6b outcome, or not_applicable
+
+
+# Proof facts the harness derives from a confirming probe's deterministic signals
+# (HC-OBJ-01 §4.3). They are harness-observed, never model-asserted.
+PROOF_CANARY = "proof.canary_sha256"
+PROOF_OOB = "proof.oob_fired"
 
 
 class DeterministicReporter:
@@ -147,6 +154,7 @@ class Loop:
         self.passive_only = False
         self.target_model = {}
         self.board = None       # the live blackboard, set only for an objective run (§6)
+        self.objective_outcome = None
 
     # --- public entry ---------------------------------------------------
     def run(self, target_model):
@@ -164,11 +172,12 @@ class Loop:
             self._run_objective()                              # HC-OBJ-01 §6 frontier loop
         else:
             self._run_coverage()                               # HC-AGENT-01 §4 coverage run
+            self.objective_outcome = {"id": None, "status": "not_applicable"}
 
         report = self.reporter.render(self.conn, self.eng, mode=mode,
                                       kb_version=self.kb_version)
         status, errs = reportmod.validate_report(report, kbmod.known_pairs(self.kb_index))
-        return RunResult(report, mode, status == "ok", errs)
+        return RunResult(report, mode, status == "ok", errs, objective=self.objective_outcome)
 
     def _run_coverage(self):
         """Today's batch run (HC-AGENT-01 §4): hunt every pending pair, then verify
@@ -211,8 +220,97 @@ class Loop:
             if self.passive_only:
                 continue                                       # no confirm, no escalation (§6.3)
             self._verify(findings.current(self.conn, fid))
-            if findings.current(self.conn, fid)["verdict"] == "confirmed":
-                self._yield(pair, card, CONFIRMED, fid)        # only now can it open the next card
+            if findings.current(self.conn, fid)["verdict"] != "confirmed":
+                continue
+            self._yield(pair, card, CONFIRMED, fid)            # only now can it open the next card
+            self._record_proof(pair, fid)                      # §4.3 proof from the confirming signal
+            if self._objective_met():                          # deterministic, §4.3
+                self._record_outcome("achieved")
+                if (self.eng.objective.get("on_success") or "stop") == "stop":
+                    break                                      # §6.3 termination
+        if self.objective_outcome is None:                     # frontier exhausted, goal not met
+            self._record_outcome("not_achieved")
+
+    # --- objective completion (§4.3, §6b) -------------------------------
+    def _record_proof(self, pair, fid):
+        """Derive proof facts from the confirming finding's recorded signals and write
+        them confirmed. Harness-observed, so a role cannot assert completion (§3)."""
+        scope = self._scope_of(pair.asset)
+        for peid in self._found_event_ids(fid):
+            sig = evidence.get_signals(self.conn, peid)
+            if sig.get("canary_sha256"):
+                self.board.put(PROOF_CANARY, scope, CONFIRMED, value=sig["canary_sha256"],
+                               produced_by=fid, event_ids=[peid])
+            if sig.get("oob_fired"):
+                self.board.put(PROOF_OOB, scope, CONFIRMED, value=True,
+                               produced_by=fid, event_ids=[peid])
+
+    def _objective_met(self):
+        """The objective is met only when the success predicate holds over the
+        confirmed board at the target host AND the deterministic proof holds (§4.3).
+        Never in passive-only, where nothing is confirmed (§9.2)."""
+        if self.passive_only:
+            return False
+        obj = self.eng.objective
+        scope = {"host": obj.get("target")}
+        view = self.board.view(scope, tier=CONFIRMED)
+        try:
+            if not predicates.evaluate(obj.get("success") or "", view):
+                return False
+        except predicates.PredicateError:
+            return False
+        return self._proof_holds(obj, scope)
+
+    def _proof_holds(self, obj, scope):
+        otype = obj.get("type")
+        if otype == "capability":
+            return True                                        # the confirmed fact is the proof (§4.2)
+        proof = obj.get("proof") or {}
+        if proof.get("kind") == "canary":
+            fact = self.board.get(PROOF_CANARY, scope)
+            return (fact is not None and fact.tier == CONFIRMED
+                    and fact.value == proof.get("sha256"))
+        if proof.get("kind") == "oob_marker":
+            return self.board.is_confirmed(PROOF_OOB, scope)
+        return False
+
+    def _record_outcome(self, status):
+        obj = self.eng.objective
+        self.objective_outcome = {
+            "id": obj.get("id"), "status": status,
+            "proof": self._proof_summary(obj),
+            "attack_path": self._attack_path() if status == "achieved" else [],
+            "reached_facts": [] if status == "achieved" else self._reached_facts()}
+
+    def _proof_summary(self, obj):
+        scope = {"host": obj.get("target")}
+        if obj.get("type") == "canary":
+            return {"kind": "canary", "sha256_matched": self._proof_holds(obj, scope)}
+        if obj.get("type") == "reach":
+            return {"kind": "oob_marker", "marker_fired": self._proof_holds(obj, scope)}
+        return {"kind": "capability"}
+
+    def _attack_path(self):
+        """The confirmed findings, in order, each with the facts it yielded. A precise
+        backward trace that prunes off-path findings is the §9 report refinement."""
+        path = []
+        for i, row in enumerate(findings.confirmed(self.conn, self.eng.id), 1):
+            card = self.kb_index.get((row["technique_id"], row["technique_version"]))
+            path.append({"step": i, "finding_id": row["id"],
+                         "technique_id": row["technique_id"],
+                         "yielded": (card or {}).get("yields_on_success") or []})
+        return path
+
+    def _reached_facts(self):
+        """Confirmed capabilities gained (not recon, not internal proof facts), so a
+        not_achieved objective still states how far the chain got (§9.2)."""
+        out = set()
+        for fact in self.board.current():
+            if (fact.tier == CONFIRMED and fact.produced_by not in (None, "recon")
+                    and not fact.name.startswith("proof.")):
+                host = fact.scope.get("host")
+                out.add(f"{fact.name}@{host}" if host else fact.name)
+        return sorted(out)
 
     # --- frontier helpers (§5, §6) --------------------------------------
     def _seed_specs(self):
