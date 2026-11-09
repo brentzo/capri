@@ -74,7 +74,7 @@ Untrusted target output enters a role's context only as delimited data, never as
 Needs Python 3.12, `make`, and `git`. Nothing to install.
 
 ```bash
-git clone <this-repo> capri && cd capri
+git clone git@github.com:brentzo/capri.git && cd capri
 
 make check      # the strict KB validator plus all 17 test suites (what CI runs)
 make contract   # validate the example engagement contract
