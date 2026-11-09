@@ -188,6 +188,21 @@ egresses from the trusted host and is infrastructure, injected as a `transport`.
   loop proceeds on the KB. `research` yields only human-review-required card
   drafts, never an active card.
 
+## What's here (the live Bifrost transport)
+
+The first live transport: the real HTTP client behind the model plane's injected
+seam (HC-MODEL-01). Still pure standard library (`urllib`); the running Bifrost
+gateway is out of repo.
+
+- `bifrost.py` - `BifrostTransport` POSTs a turn to a Bifrost gateway in the
+  OpenAI chat-completions shape. It is the only holder of credentials: the plane
+  hands it the role's virtual key name, and the client resolves it to the Bifrost
+  secret and presents it as the bearer token, so no role holds a provider key. A
+  provider outage (a 502/503/504 or an unreachable gateway) maps to `ProviderDown`
+  so the plane falls back; a 4xx or a malformed body is a hard `BifrostError`. It
+  is exercised against an in-process stdlib mock Bifrost in CI, so the wire
+  contract is tested without a live gateway; pointing it at a real one is config.
+
 ## Run
 
 ```sh
@@ -202,15 +217,18 @@ python3 tests/test_roleio.py                                # role I/O boundary 
 python3 tests/test_modelplane.py                            # Bifrost model plane (vkeys, budgets, diversity)
 python3 tests/test_roles.py                                 # model-backed Operator/Verifier end to end
 python3 tests/test_enrich.py                                # Tavily enrichment (opsec, provenance, framing)
+python3 tests/test_bifrost.py                               # live Bifrost transport (mock-server contract)
 python3 -m harness.substrate.contract harness/substrate/examples/engagement.example.yaml
 ```
 
 ## Not here yet
 
 Provisioning, snapshot/restore, the gateway, the guard-proof self-tests as live
-probes, and the kill switch (infrastructure). On the model plane, the live
-Bifrost HTTP transport behind the plane (the Operator and Verifier sessions run
-on it here, over an injected fake model); a Reporter LLM over the deterministic
-reporter; the reasoning-model planner that would replace the deterministic one;
-and the live `phase_recon` that produces the target model. What is here is the
-policy core and the orchestration those plug into.
+probes, and the kill switch (infrastructure). The Bifrost transport
+(`bifrost.py`) is here and contract-tested against a mock, but pointing it at a
+running gateway with real virtual-key secrets is deployment; the live Tavily
+transport behind the enrichment service is the same shape and not yet written. On
+the model plane, a Reporter LLM over the deterministic reporter and the
+reasoning-model planner that would replace the deterministic one remain, as does
+the live `phase_recon` that produces the target model. What is here is the policy
+core, the orchestration, and the transport clients those plug into.

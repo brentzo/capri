@@ -132,7 +132,12 @@ The plane is implemented as pure-standard-library policy in `harness/modelplane.
 The actual Bifrost HTTP client is infrastructure and is injected as a `transport` (the only holder of provider credentials), the same way tool adapters and the sandbox are injected into `dispatch()` and the loop, so a role names a role and never a provider or a key.
 The plane enforces the §4 diversity invariant and the §8 MCP boundary at construction (fail closed before any run), routes through the role's vkey with the §10 fallback policy (free, within-set, or the Verifier's pin), applies the §5 hierarchical budget and the §6 per-vkey rate as fail-closed `PlaneStop` signals, serves the §7 per-engagement cache only for the prose roles, and writes a §9 audit row for every call and every stop through `harness/store/audit.py`.
 `from_config` builds a plane from the §11 config shape and fails startup on a diversity or MCP violation.
-The stub transport in `tests/test_modelplane.py` drives the §13 criteria in CI; the real Bifrost-backed role sessions that call this plane (assembling prompts from `role_context` and emitting the text `parse_request` reads) remain to be built against it.
+The stub transport in `tests/test_modelplane.py` drives the §13 criteria in CI; the real Bifrost-backed role sessions that call this plane assemble prompts from `role_context` and emit the text `parse_request` reads (`harness/roles.py`).
+
+The live transport behind the injected seam is `harness/bifrost.py:BifrostTransport`, a thin standard-library HTTP client to a running Bifrost gateway (the OpenAI chat-completions shape).
+It is the only holder of credentials: the plane passes the role's virtual key name, and the client resolves it to the Bifrost secret and presents it as the bearer token, so no role holds a provider key.
+The plane owns the provider route and its fallback order (so the Verifier's pin is enforced in the harness, not left to the gateway), and the client maps a provider outage (a 502/503/504 or an unreachable gateway) to `ProviderDown` for fallback, while a 4xx or a malformed body is a hard `BifrostError`.
+`tests/test_bifrost.py` drives it against an in-process stdlib mock Bifrost so the wire contract stays CI-green and zero-dependency; what remains is pointing it at a real gateway with real virtual-key secrets.
 
 ## 13. Acceptance criteria
 

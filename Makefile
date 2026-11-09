@@ -27,6 +27,7 @@ test:
 	python3 tests/test_modelplane.py
 	python3 tests/test_roles.py
 	python3 tests/test_enrich.py
+	python3 tests/test_bifrost.py
 
 ## contract: validate the example engagement contract (HC-SUB-01 §4)
 contract:

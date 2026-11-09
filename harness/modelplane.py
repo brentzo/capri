@@ -183,9 +183,11 @@ class ModelPlane:
 
     def _serve(self, vk, messages, metadata):
         order = (vk.providers[:1] if vk.fallback == "none" else vk.providers)
+        # the transport (the only credential holder) gets the role's vkey to present
+        md = {**metadata, "vkey": vk.vkey}
         for provider in order:
             try:
-                raw = self.transport.complete(provider, messages, metadata)
+                raw = self.transport.complete(provider, messages, md)
             except ProviderDown:
                 continue                            # fallback within the ordered set
             cost = _cost(raw.tokens_in, raw.tokens_out)
