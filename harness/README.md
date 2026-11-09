@@ -350,6 +350,17 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   Every docker/nsenter call goes through an injected runner, so the logic is
   unit-tested with no Docker present (`tests/test_sandbox.py`); the live path is proven
   by `tools/sandbox_selftest.py` (golden image and notes in `infra/sandbox/`).
+- `sandbox/adapters.py` - the live tool adapters that give the §5.3 allowlist real
+  tools beyond the baseline probe. `NmapAdapter`, registered in `dispatch()` as the
+  `nmap` tool, runs `nmap -sV -Pn` on one in-scope port against a pinned target and
+  parses the XML into per-port service, product, version, and CPE signals (the shape
+  version-based cards match on). The attacker container now runs the toolchain image
+  (`infra/sandbox/Dockerfile.attacker`) while targets stay the minimal node image, and
+  the attacker still holds no `NET_ADMIN`, so the host-owned scope guard bounds every
+  scan. The parse and signal shape are pinned against captured real `nmap -sV` output
+  through a fake runner with no Docker and no tool present (`tests/test_adapters.py`);
+  a live model-driven run confirmed a service-disclosure finding (DeepSeek proposed the
+  scan, nmap ran on the attacker container, OpenAI verified on a disjoint provider).
 
 ## What's here (the capri CLI and model-plane setup)
 
@@ -408,6 +419,7 @@ python3 tests/test_tavily.py                                # live Tavily transp
 python3 tests/test_blackboard.py                            # world-state blackboard (fact tiers, chaining)
 python3 tests/test_frontier.py                              # capability-frontier loop (live card chaining)
 python3 tests/test_sandbox.py                               # sandbox substrate: interface + Docker guard proof
+python3 tests/test_adapters.py                              # live tool adapters (nmap service/version scan)
 python3 tests/test_catalog.py                               # the provider catalog we own
 python3 tests/test_modelplane_setup.py                      # model-plane gateway bring-up (config, vkeys, .env)
 python3 -m harness.substrate.contract harness/substrate/examples/engagement.example.yaml

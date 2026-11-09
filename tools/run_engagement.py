@@ -36,6 +36,7 @@ from harness.modelplane import ModelPlane, VirtualKey          # noqa: E402
 from harness.planner import DeterministicPlanner               # noqa: E402
 from harness.recon import phase_recon                          # noqa: E402
 from harness.roles import ModelOperator, ModelVerifier         # noqa: E402
+from harness.sandbox.adapters import NmapAdapter              # noqa: E402
 from harness.sandbox.docker import DockerSandbox               # noqa: E402
 from harness.sandbox.probe import DockerProbe                  # noqa: E402
 from harness.store import blobstore, db                        # noqa: E402
@@ -65,7 +66,19 @@ CARD = {
     "success_signal": {"type": "status_match", "evaluator": "deterministic", "assert": "http_responds"},
     "probe_steps": [{"tool": "probe", "intent": "http_get"}],
 }
-KB = {("KB-LIVE-SVC-001", "1.0.0"): CARD}
+# A second technique that uses a real tool: nmap -sV discloses the service, its version,
+# and a CPE (which maps to CVE data). The agent proposes `nmap`; dispatch runs the adapter.
+NMAP_CARD = {
+    "id": "KB-LIVE-SVC-002", "version": "1.0.0",
+    "applicability": ['asset.type == "web_service"'], "preconditions": ["reachable"],
+    "yields_on_success": [], "blast_tier": 1, "taxonomy": {"cwe": ["CWE-200"]},
+    "severity_rubric": {"base": "low",
+                        "cvss_base_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:N/VA:N/SC:N/SI:N/SA:N"},
+    "success_signal": {"type": "service_detected", "evaluator": "deterministic",
+                       "assert": "service_identified"},
+    "probe_steps": [{"tool": "nmap", "intent": "service_scan"}],
+}
+KB = {("KB-LIVE-SVC-001", "1.0.0"): CARD, ("KB-LIVE-SVC-002", "1.0.0"): NMAP_CARD}
 
 
 class Operator:
@@ -157,8 +170,9 @@ def main():
             conn = db.connect()
             operator, verifier, plane_label = build_roles(conn, eng)
             print("model plane:", plane_label)
-            probe = DockerProbe(sb.attacker, eng.pinned)
-            disp = Dispatcher(conn, blobstore.BlobStore(root), eng, {"probe": probe},
+            adapters = {"probe": DockerProbe(sb.attacker, eng.pinned),
+                        "nmap": NmapAdapter(sb.attacker, eng.pinned)}
+            disp = Dispatcher(conn, blobstore.BlobStore(root), eng, adapters,
                               ratelimit.RateLimiter(1000, now=lambda: 0.0))
             res = Loop(conn, eng, kb_index=KB, dispatcher=disp, sandbox=sb,
                        planner=DeterministicPlanner(KB), operator=operator,

@@ -39,6 +39,7 @@ test:
 	python3 tests/test_blackboard.py
 	python3 tests/test_frontier.py
 	python3 tests/test_sandbox.py
+	python3 tests/test_adapters.py
 	python3 tests/test_catalog.py
 	python3 tests/test_modelplane_setup.py
 

@@ -58,6 +58,8 @@ jobs:
         run: python3 tests/test_frontier.py
       - name: Sandbox substrate self-tests (HC-SUB-01 §8, §10)
         run: python3 tests/test_sandbox.py
+      - name: Live tool adapters (HC-AGENT-01)
+        run: python3 tests/test_adapters.py
       - name: Provider catalog (HC-MODEL-01)
         run: python3 tests/test_catalog.py
       - name: Model-plane gateway bring-up config (HC-MODEL-01)

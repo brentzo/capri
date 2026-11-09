@@ -76,11 +76,16 @@ class DockerSandbox(Sandbox):
     it only shells out to `docker` and `nsenter` through the injected runner."""
 
     def __init__(self, *, run=None, node_image="hc-node:golden", network="hc-range",
+                 attacker_image="hc-attacker:golden",
                  subnet="10.90.0.0/24", internet_canary=("1.1.1.1", 443),
                  public_name="example.com", unrelated_net_ip="172.17.0.1",
                  kill_budget_ms=10000, clock=now):
         self._run = run or default_run
-        self.node_image = node_image
+        self.node_image = node_image              # minimal base for target containers
+        # The attacker container carries the pentest toolchain (nmap, ...); it still has
+        # no NET_ADMIN and no nft/ip tooling, so the agent can run tools within scope but
+        # cannot reach the host-installed scope guard. Targets stay on the minimal image.
+        self.attacker_image = attacker_image
         self.network = network
         self.subnet = ipaddress.ip_network(subnet)
         self.internet_canary = internet_canary
@@ -139,7 +144,7 @@ class DockerSandbox(Sandbox):
         attacker_ip = str(next(hosts))                         # .2
         self._docker("network", "create", "--internal",
                      "--subnet", str(self.subnet), self.network)
-        self._docker(*self._run_args(self.attacker, attacker_ip, self.node_image))
+        self._docker(*self._run_args(self.attacker, attacker_ip, self.attacker_image))
 
         pinned, pinned_ports = {}, []
         for host in engagement.in_scope_hosts:
