@@ -23,7 +23,7 @@ import sys
 import types
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from tools import catalog, modelplane                               # noqa: E402
+from tools import catalog, modelplane, terminal                     # noqa: E402
 
 try:
     import curses
@@ -38,9 +38,6 @@ def _state_dir(args):
 def _launch(args, op, ver, keys, progress):
     """Build the pairing, merge in the keys, and bring the gateway up. `op`/`ver` are
     (provider, model); `keys` is {key_env: value}."""
-    if not modelplane.have_docker():
-        return {"ok": False, "error": "Docker was not found. Install Docker Desktop "
-                "(or set HC_CONTAINER=podman), then run setup again."}
     try:
         plane = modelplane.build_plane(op, ver)
     except ValueError as e:
@@ -48,11 +45,19 @@ def _launch(args, op, ver, keys, progress):
     sd = _state_dir(args)
     env = modelplane.load_env(sd)
     env.update({k: v for k, v in keys.items() if v})
+    missing = modelplane.missing_provider_keys(env, plane)
+    if missing:
+        providers = [catalog.label(s["provider"]) for s in plane.values()
+                     if s["key_env"] in missing]
+        return {"ok": False, "error": "API keys required for: " + ", ".join(providers)}
+    if not modelplane.have_docker():
+        return {"ok": False, "error": "Docker was not found. Install Docker Desktop "
+                "(or set HC_CONTAINER=podman), then run setup again."}
     return modelplane.bring_up(sd, plane, env, port=args.port, progress=progress)
 
 
 def _run_command_hint():
-    return "capri run"
+    return terminal.command("run")
 
 
 # --- full-screen curses UI -------------------------------------------------------
@@ -89,7 +94,8 @@ def _safe(stdscr, y, x, text, attr=0):
 def _header(stdscr, state):
     stdscr.erase()
     w = stdscr.getmaxyx()[1]
-    _safe(stdscr, 0, 0, " Capri · model setup ".ljust(w), _cp(C_TITLE) | curses.A_BOLD)
+    title = f" CAPRI / MODEL SETUP   {state.get('step', '')}"
+    _safe(stdscr, 0, 0, title.ljust(w), _cp(C_TITLE) | curses.A_BOLD)
     _safe(stdscr, 2, 2, "Operator", curses.A_BOLD)
     _safe(stdscr, 2, 12, _role_summary(state, "operator"), _cp(C_DIM))
     _safe(stdscr, 3, 2, "Verifier", curses.A_BOLD)
@@ -100,9 +106,8 @@ def _header(stdscr, state):
 def _role_summary(state, role):
     r = state.get(role) or {}
     if not r.get("provider"):
-        return "—"
-    key = "key ●" if r.get("key") else "key ○"
-    return f"{catalog.label(r['provider'])} / {r.get('model') or '?'}    {key}"
+        return "not selected"
+    return f"{catalog.label(r['provider'])} / {r.get('model') or '?'}"
 
 
 def _row(stdscr, y, w, label, selected):
@@ -289,13 +294,8 @@ def _show_result(stdscr, state, res):
         _safe(stdscr, 6, 2, "✓ Gateway healthy.", _cp(C_OK) | curses.A_BOLD)
         _safe(stdscr, 8, 4, f"Operator  {res['routes']['operator']}", _cp(C_DIM))
         _safe(stdscr, 9, 4, f"Verifier  {res['routes']['verifier']}", _cp(C_DIM))
-        row = 11
-        if res.get("missing_keys"):
-            _safe(stdscr, row, 2, "Note: no key for " + ", ".join(res["missing_keys"]),
-                  _cp(C_WARN))
-            row += 2
-        _safe(stdscr, row, 2, "Run an engagement with:", curses.A_BOLD)
-        _safe(stdscr, row + 1, 4, _run_command_hint(), _cp(C_KEY))
+        _safe(stdscr, 11, 2, "Run an engagement with:", curses.A_BOLD)
+        _safe(stdscr, 12, 4, _run_command_hint(), _cp(C_KEY))
     else:
         _safe(stdscr, 6, 2, "✗ Could not start the gateway.", _cp(C_WARN) | curses.A_BOLD)
         _safe(stdscr, 8, 4, res["error"], _cp(C_DIM))
@@ -313,6 +313,7 @@ def _run_curses(stdscr, args):
     i = 0
     while 0 <= i < len(steps):
         step = steps[i]
+        state["step"] = f"{i + 1}/5  {step.replace('_', ' ').upper()}"
         if step == "op_model":
             action, prov, model = _model_picker(stdscr, state, "operator")
             if action == "ok":
@@ -352,7 +353,9 @@ def _flat_choices(exclude=None):
 def _choose_role_plain(role, *, exclude=None):
     import getpass
     choices = _flat_choices(exclude)
-    print(f"\n{role.title()} model" + (f" (not {catalog.label(exclude)})" if exclude else "") + ":")
+    step = 1 if role == "operator" else 2
+    print(f"\nStep {step}/2 · Choose {role.title()} model" +
+          (f" (provider must differ from {catalog.label(exclude)})" if exclude else ""))
     last = None
     for i, (p, m) in enumerate(choices, 1):
         if p != last:
@@ -372,7 +375,7 @@ def _choose_role_plain(role, *, exclude=None):
 
 
 def _run_plain(args):
-    print("Capri model setup — pick a model for each role (they must be different providers).")
+    terminal.print_banner("MODEL SETUP", "Choose two providers. Operator and Verifier must differ.")
     op = _choose_role_plain("operator")
     ver = _choose_role_plain("verifier", exclude=op["provider"])
     print("\nStarting the gateway …")
@@ -383,8 +386,6 @@ def _run_plain(args):
     if res["ok"]:
         print(f"\n✓ Gateway healthy.  operator={res['routes']['operator']}  "
               f"verifier={res['routes']['verifier']}")
-        if res.get("missing_keys"):
-            print("  note: no key for " + ", ".join(res["missing_keys"]))
         print("Run an engagement with:\n  " + _run_command_hint())
         return res
     print("\n✗ Could not start the gateway:", res["error"])

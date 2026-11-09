@@ -65,7 +65,7 @@ Untrusted target output enters a role's context only as delimited data, never as
 | `kb/` | The 107 technique cards, by target class. Generated. |
 | `eval/` | Ground-truth manifests for the eval harness. Generated. |
 | `tools/` | The KB validator, materializer, and feature generator. |
-| `tests/` | 17 self-test suites, run in CI. |
+| `tests/` | Self-test suites, run in CI. |
 
 `kb/`, `eval/`, and `docs/requirements/features/` are generated from the specs; run `make materialize` / `make features` instead of editing them by hand.
 
@@ -76,7 +76,7 @@ Needs Python 3.12, `make`, and `git`. Nothing to install.
 ```bash
 git clone git@github.com:brentzo/capri.git && cd capri
 
-make check      # the strict KB validator plus all 17 test suites (what CI runs)
+make check      # the strict KB validator plus all self-test suites (what CI runs)
 make contract   # validate the example engagement contract
 make materialize # regenerate the card tree and eval manifests from the specs
 ```
@@ -133,6 +133,9 @@ The harness runs against injected seams, so you supply three things:
    capri setup      # a terminal UI: pick your Operator and Verifier models, drop in keys, start the gateway
    capri run        # run an engagement with the models you chose
    ```
+
+   In Windows PowerShell, from the repository folder, run `python .\capri setup --plain`
+   and `python .\capri run` if `capri` is not installed on your `PATH`.
 
    `capri setup` offers a catalog of providers (OpenAI, Anthropic, Gemini, DeepSeek, and more) and keeps the two roles on different providers; the gateway (Bifrost) runs on `127.0.0.1` and never appears. See the [gateway setup walkthrough](infra/modelplane/README.md) and the [model-plane spec](docs/specs/HC-MODEL-01.md).
 3. **Tool adapters** behind the allow-listed `dispatch()` interface (nmap, httpx, ffuf, sqlmap, nuclei, a headless browser), optionally with the Tavily enrichment service.

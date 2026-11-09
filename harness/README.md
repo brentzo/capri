@@ -415,7 +415,8 @@ for the sandbox; the harness itself stays dependency-free and is handed a gatewa
   fallback where curses is absent or output is not a terminal). It shows the catalog as
   one list of models grouped by provider, takes a model for each role (the Verifier list
   excludes the Operator's provider), reads keys with no echo, and calls the gateway
-  bring-up with a live progress display. Esc steps back, q quits.
+  bring-up with a live progress display. It requires both selected provider keys before
+  starting Docker or writing state. Esc steps back, q quits.
 - `tools/modelplane.py` - the gateway mechanics the TUI and CLI share. `bring_up`
   generates the Bifrost config from the chosen pairing, seeds a Docker-managed volume
   with it over stdin (surviving Docker Desktop file sharing and odd `/tmp` setups) and

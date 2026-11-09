@@ -18,14 +18,7 @@ import sys
 # realpath, so running capri through a PATH symlink still finds the repo it lives in.
 ROOT = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, ROOT)
-
-BANNER = """\
- ██████╗ █████╗ ██████╗ ██████╗ ██╗
-██╔════╝██╔══██╗██╔══██╗██╔══██╗██║
-██║     ███████║██████╔╝██████╔╝██║
-██║     ██╔══██║██╔═══╝ ██╔══██╗██║
-╚██████╗██║  ██║██║     ██║  ██║██║
- ╚═════╝╚═╝  ╚═╝╚═╝     ╚═╝  ╚═╝╚═╝"""
+from tools import terminal                                          # noqa: E402
 
 TAGLINE = "An autonomous penetration-testing agent."
 
@@ -33,27 +26,29 @@ ABOUT = ("An LLM agent recons a disposable sandbox target, decides what to try,\
          "and chains steps toward an objective - with every action gated by the\n"
          "harness, not the model. The agent proposes; the harness disposes.")
 
-COMMANDS = ("Commands\n"
-            "  capri setup          pick your models and start the gateway (a terminal UI)\n"
-            "  capri run            run an engagement against the sandbox range\n"
-            "  capri gateway <cmd>  gateway: status | env | down | destroy | up | keys\n"
-            "  capri help           show this message")
-
-
 def _indent(text, pad="  "):
     return "\n".join(pad + ln if ln else ln for ln in text.split("\n"))
 
 
 def _help():
-    tty = sys.stdout.isatty()
-    cyan = "\033[36m" if tty else ""
-    bold = "\033[1m" if tty else ""
-    dim = "\033[2m" if tty else ""
-    rst = "\033[0m" if tty else ""
-    return (f"\n{cyan}{_indent(BANNER)}{rst}\n\n"
+    color = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+    bold = "\033[1m" if color else ""
+    dim = "\033[2m" if color else ""
+    rst = "\033[0m" if color else ""
+    commands = ("Commands\n"
+                f"  {terminal.command('setup'):<34} choose models and start the gateway\n"
+                f"  {terminal.command('run'):<34} run an engagement\n"
+                f"  {terminal.command('gateway up'):<34} start the saved gateway\n"
+                f"  {terminal.command('gateway status'):<34} show gateway status\n"
+                f"  {terminal.command('gateway keys'):<34} update provider keys\n"
+                f"  {terminal.command('gateway env'):<34} print shell exports\n"
+                f"  {terminal.command('gateway down'):<34} stop the gateway\n"
+                f"  {terminal.command('gateway destroy'):<34} remove gateway data\n"
+                f"  {terminal.command('help'):<34} show this message")
+    return (f"\n{terminal.render_banner(color=color)}\n\n"
             f"  {bold}{TAGLINE}{rst}\n\n"
             f"{dim}{_indent(ABOUT)}{rst}\n\n"
-            f"{_indent(COMMANDS)}\n")
+            f"{_indent(commands)}\n")
 
 
 def _state_dir_for_run():
@@ -75,12 +70,13 @@ def _state_dir_for_run():
 
 def _cmd_run(_rest):
     from tools import modelplane, run_engagement
+    terminal.print_banner("RUN ENGAGEMENT", "The sandbox is validated before active probes.")
     env = modelplane.runtime_env(_state_dir_for_run())
     if env:
         for k, v in env.items():
             os.environ.setdefault(k, v)          # wire the gateway handles in-process
     else:
-        print("note: no model plane configured yet (run `capri setup` first); "
+        print(f"note: no model plane configured yet (run `{terminal.command('setup')}` first); "
               "running with the deterministic stand-ins.\n")
     return run_engagement.main()
 

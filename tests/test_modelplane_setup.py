@@ -80,6 +80,47 @@ def test_missing_provider_keys_flags_only_the_blank_ones():
     assert mp.missing_provider_keys(full) == []
 
 
+def test_bring_up_rejects_missing_keys_before_writing_state_or_running_docker():
+    import tempfile
+    from pathlib import Path
+
+    calls = []
+    original_run = mp._run
+    mp._run = lambda *args, **kwargs: calls.append(args)
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            plane = mp.build_plane(("deepseek", "deepseek-chat"), ("openai", "gpt-4o-mini"))
+            result = mp.bring_up(Path(d) / "modelplane", plane,
+                                 {"DEEPSEEK_API_KEY": "set"}, port=8099)
+            assert result == {"ok": False,
+                              "error": "missing provider API keys: OPENAI_API_KEY"}
+            assert calls == []
+            assert not (Path(d) / "modelplane").exists()
+    finally:
+        mp._run = original_run
+
+
+def test_setup_requests_both_keys_before_checking_docker():
+    import tempfile
+    import types
+    from tools import setup
+
+    original_have_docker = mp.have_docker
+    docker_checks = []
+    mp.have_docker = lambda: docker_checks.append(True) or False
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            args = types.SimpleNamespace(dir=d, port=8099)
+            result = setup._launch(args, ("deepseek", "deepseek-chat"),
+                                   ("openai", "gpt-4o-mini"),
+                                   {"DEEPSEEK_API_KEY": "set"}, lambda _: None)
+            assert result == {"ok": False,
+                              "error": "API keys required for: OpenAI"}
+            assert docker_checks == []
+    finally:
+        mp.have_docker = original_have_docker
+
+
 def test_env_keys_order_is_provider_keys_then_virtual_keys():
     assert mp.env_keys() == ["DEEPSEEK_API_KEY", "OPENAI_API_KEY",
                              "VK_OPERATOR", "VK_VERIFIER"]

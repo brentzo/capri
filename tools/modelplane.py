@@ -35,7 +35,7 @@ import urllib.error
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from tools import catalog                                            # noqa: E402
+from tools import catalog, terminal                                  # noqa: E402
 
 IMAGE = "maximhq/bifrost:latest"
 SEED_IMAGE = "alpine:3.20"           # tiny, root, only used to seed config + perms
@@ -222,7 +222,10 @@ def bring_up(sd, plane, env, *, port, progress=lambda m: None):
     """Generate the gateway config from a pairing, seed it into a Docker-managed volume
     (over stdin, group-0 writable so Bifrost can write its stores), run the container on
     127.0.0.1:port, and wait for health. Headless and result-returning so the setup TUI
-    and the CLI share one path. Returns {ok, routes?, missing_keys?, error?, logs?}."""
+    and the CLI share one path. Returns {ok, routes?, error?, logs?}."""
+    missing = missing_provider_keys(env, plane)
+    if missing:
+        return {"ok": False, "error": "missing provider API keys: " + ", ".join(missing)}
     save_plane(sd, plane)
     for k, v in new_vkeys(plane).items():
         env.setdefault(k, v)                        # mint once; never rotate silently
@@ -256,8 +259,7 @@ def bring_up(sd, plane, env, *, port, progress=lambda m: None):
     if not _wait_healthy(CONTAINER, timeout=60):
         return {"ok": False, "error": "the gateway did not report healthy in time",
                 "logs": _run(["logs", "--tail", "15", CONTAINER]).stdout}
-    return {"ok": True, "routes": plane_routes(plane),
-            "missing_keys": missing_provider_keys(env, plane)}
+    return {"ok": True, "routes": plane_routes(plane)}
 
 
 # --- plain CLI (the TUI in tools/setup.py is the interactive way) ----------------
@@ -276,10 +278,7 @@ def up(args):
     r = res["routes"]
     print(f"gateway healthy on 127.0.0.1:{args.port}  "
           f"(operator={r['operator']}, verifier={r['verifier']}).")
-    if res["missing_keys"]:
-        print(f"next: set your keys with  capri setup   (unset: {', '.join(res['missing_keys'])})")
-    else:
-        print("run an engagement with:  capri run")
+    print("run an engagement with:  " + terminal.command("run"))
 
 
 def keys(args):
@@ -288,7 +287,7 @@ def keys(args):
     sd = state_dir(args)
     plane, env = load_plane(sd), load_env(sd)
     if not env:
-        sys.exit("gateway not set up yet; run: capri setup")
+        sys.exit("gateway not set up yet; run: " + terminal.command("setup"))
     print("Paste each provider API key (input is hidden). Enter to leave one unchanged.")
     for role, s in plane.items():
         shown = "set" if env.get(s["key_env"], "").strip() else "unset"
@@ -317,7 +316,7 @@ def runtime_env(sd, port=None):
 def print_env(args):
     e = runtime_env(state_dir(args), args.port or None)
     if e is None:
-        sys.exit("gateway not set up yet; run: capri setup")
+        sys.exit("gateway not set up yet; run: " + terminal.command("setup"))
     for k, v in e.items():
         print(f"export {k}={v}")
 
@@ -363,6 +362,8 @@ def main(argv=None):
     args = p.parse_args(argv)
     if args.cmd == "up" and not args.port:
         args.port = DEFAULT_PORT
+    if args.cmd != "env":                # keep this output directly shell-usable
+        terminal.print_banner(f"GATEWAY / {args.cmd.upper()}")
     return {"up": up, "keys": keys, "env": print_env, "status": status,
             "down": down, "destroy": destroy}[args.cmd](args)
 
