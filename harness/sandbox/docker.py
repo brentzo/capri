@@ -79,9 +79,13 @@ class DockerSandbox(Sandbox):
                  attacker_image="hc-attacker:golden",
                  subnet="10.90.0.0/24", internet_canary=("1.1.1.1", 443),
                  public_name="example.com", unrelated_net_ip="172.17.0.1",
-                 kill_budget_ms=10000, clock=now):
+                 kill_budget_ms=10000, listener_app=None, clock=now):
         self._run = run or default_run
         self.node_image = node_image              # minimal base for target containers
+        # When set, a python source string seeded into each target and run as its
+        # listener instead of a bare `http.server`, so a range can carry a real app
+        # (e.g. a deliberately vulnerable one) without baking it into the golden image.
+        self.listener_app = listener_app
         # The attacker container carries the pentest toolchain (nmap, ...); it still has
         # no NET_ADMIN and no nft/ip tooling, so the agent can run tools within scope but
         # cannot reach the host-installed scope guard. Targets stay on the minimal image.
@@ -341,8 +345,16 @@ class DockerSandbox(Sandbox):
         return toks[toks.index("src") + 1] if "src" in toks else None
 
     def _start_listeners(self, name, ports):
+        # A custom app (seeded over stdin so it never touches the golden image), or the
+        # plain http.server stand-in. Re-seeded here so restore and kill bring it back.
+        if self.listener_app:
+            self._docker("exec", "-i", name, "sh", "-c", "cat > /tmp/app.py",
+                         input=self.listener_app)
         for port in ports:
-            self._docker("exec", "-d", name, "python3", "-m", "http.server", str(port))
+            if self.listener_app:
+                self._docker("exec", "-d", name, "python3", "/tmp/app.py", str(port))
+            else:
+                self._docker("exec", "-d", name, "python3", "-m", "http.server", str(port))
 
     def _write_file(self, name, path, content):
         self._exec(name, "sh", "-c", f"echo {content} > {path}")

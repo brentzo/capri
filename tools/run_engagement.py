@@ -36,7 +36,8 @@ from harness.modelplane import ModelPlane, VirtualKey          # noqa: E402
 from harness.planner import DeterministicPlanner               # noqa: E402
 from harness.recon import phase_recon                          # noqa: E402
 from harness.roles import ModelOperator, ModelVerifier         # noqa: E402
-from harness.sandbox.adapters import HttpxAdapter, NmapAdapter  # noqa: E402
+from harness.sandbox.adapters import (                         # noqa: E402
+    HttpRequestAdapter, HttpxAdapter, NmapAdapter)
 from harness.sandbox.docker import DockerSandbox               # noqa: E402
 from harness.sandbox.probe import DockerProbe                  # noqa: E402
 from harness.store import blobstore, db                        # noqa: E402
@@ -91,8 +92,28 @@ WEB_CARD = {
                        "assert": "web_service_identified"},
     "probe_steps": [{"tool": "httpx", "intent": "web_fingerprint"}],
 }
+# A fourth technique using the crafted-HTTP tool: a reflected-XSS probe. The harness
+# injects a random, tag-breaking marker into the `q` parameter and confirms
+# deterministically that it reflects unencoded, so the model proposes the request while
+# the harness owns the truth (the marker is harness-generated, not model-chosen).
+XSS_CARD = {
+    "id": "KB-LIVE-XSS-001", "version": "1.0.0",
+    "applicability": ['asset.type == "web_service"'], "preconditions": ["reachable"],
+    "yields_on_success": [], "blast_tier": 1, "taxonomy": {"cwe": ["CWE-79"]},
+    "severity_rubric": {"base": "medium",
+                        "cvss_base_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:P/VC:L/VI:L/VA:N/SC:N/SI:N/SA:N"},
+    "success_signal": {"type": "reflected_xss", "evaluator": "deterministic",
+                       "assert": "injected_marker_reflects_unencoded"},
+    "probe_steps": [{"tool": "http", "intent": "reflect_xss", "path": "/search",
+                     "reflect_param": "q"}],
+}
 KB = {("KB-LIVE-SVC-001", "1.0.0"): CARD, ("KB-LIVE-SVC-002", "1.0.0"): NMAP_CARD,
-      ("KB-LIVE-WEB-001", "1.0.0"): WEB_CARD}
+      ("KB-LIVE-WEB-001", "1.0.0"): WEB_CARD, ("KB-LIVE-XSS-001", "1.0.0"): XSS_CARD}
+
+# A deliberately vulnerable stand-in app, seeded into the target at provision time so the
+# reflected-XSS technique has a real hole to find; it never leaves the egress-denied range.
+with open(os.path.join(ROOT, "infra", "sandbox", "vulnweb.py"), encoding="utf-8") as _f:
+    VULNWEB = _f.read()
 
 
 class Operator:
@@ -169,7 +190,7 @@ def main():
     if errs:
         print("contract invalid:", errs)
         return 1
-    sb = DockerSandbox()
+    sb = DockerSandbox(listener_app=VULNWEB)
     try:
         desc = sb.provision(eng)
         print(f"provisioned {desc['range_id']}  pinned={desc['pinned_targets']}")
@@ -186,7 +207,8 @@ def main():
             print("model plane:", plane_label)
             adapters = {"probe": DockerProbe(sb.attacker, eng.pinned),
                         "nmap": NmapAdapter(sb.attacker, eng.pinned),
-                        "httpx": HttpxAdapter(sb.attacker, eng.pinned)}
+                        "httpx": HttpxAdapter(sb.attacker, eng.pinned),
+                        "http": HttpRequestAdapter(sb.attacker, eng.pinned)}
             disp = Dispatcher(conn, blobstore.BlobStore(root), eng, adapters,
                               ratelimit.RateLimiter(1000, now=lambda: 0.0))
             res = Loop(conn, eng, kb_index=KB, dispatcher=disp, sandbox=sb,

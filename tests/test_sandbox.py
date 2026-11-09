@@ -174,6 +174,16 @@ def test_provision_builds_an_internal_network_and_an_unprivileged_attacker():
     assert eng.pinned["t1.sandbox.local"].compressed == "10.90.0.3"   # .1 oos, .2 attacker, .3 target
 
 
+def test_provision_seeds_and_runs_a_custom_listener_app_when_configured():
+    run = FakeRunner()
+    DockerSandbox(run=run, listener_app="print('vuln app')").provision(_eng())
+    # the app is seeded over stdin (never baked into the golden image) and run as the
+    # target's listener in place of the plain http.server stand-in
+    assert run.ran("exec", "-i", "sh", "-c", "cat > /tmp/app.py")
+    assert run.ran("exec", "-d", "python3", "/tmp/app.py")
+    assert not run.ran("http.server")                            # replaced, not added
+
+
 def test_guard_proof_passes_only_when_the_range_enforces_scope():
     eng = _eng()
     # a correctly enforcing range: only the pinned in-scope target:port connects

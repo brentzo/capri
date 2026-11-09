@@ -317,7 +317,11 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
 - `sandbox/docker.py` - `DockerSandbox`, the Docker backend. `provision` builds one
   `--internal` network (no egress by construction = G2) with a target container per
   in-scope host and one attacker container (no `NET_ADMIN`, no network tooling, so the
-  agent can neither leave scope nor touch the guard). The scope guard is an nftables
+  agent can neither leave scope nor touch the guard). A target's listener is the plain
+  `http.server` stand-in, or, when `listener_app` is set, a python app seeded in over
+  stdin (never baked into the golden image); the live runner seeds `infra/sandbox/vulnweb.py`,
+  a deliberately vulnerable app, so the reflected-XSS technique has a real hole to confirm.
+  The scope guard is an nftables
   ruleset the host installs into the attacker's netns - default-deny egress, allowing
   only the pinned in-scope IPs on their allowed ports (`scope.ports_for`). `guard_proof`
   runs the four §8.1 probes from inside the attacker container. `snapshot`/`restore`
@@ -359,14 +363,21 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   normalized response headers, which of the four baseline security headers are missing,
   any CORS allow-origin, and any redirect target (reported, not followed, since a
   redirect can leave the asset) - the signals the web-protocol-auth and client-side
-  cards become applicable on. The attacker container runs the toolchain image
-  (`infra/sandbox/Dockerfile.attacker`, built for amd64 and arm64, httpx checksum-pinned)
-  while targets stay the minimal node image, and the attacker still holds no `NET_ADMIN`,
-  so the host-owned scope guard bounds every scan. Each adapter's parse and signal shape
-  are pinned against captured real tool output through a fake runner with no Docker and
-  no tool present (`tests/test_adapters.py`); a live model-driven run confirmed a
-  service-disclosure finding and a web-fingerprint finding alongside the baseline probe,
-  the Operator proposing each tool and the Verifier reproducing on a disjoint provider.
+  cards become applicable on. `HttpRequestAdapter`, the `http` tool, is the crafted-HTTP
+  request primitive the web and auth techniques drive: it sends the request a card
+  parametrizes (method, path, query) and, for a reflected-XSS technique, injects a
+  random tag-breaking marker into a named parameter and reports whether that exact marker
+  reflects unencoded in the body - a deterministic signal the harness owns, since the
+  marker is generated here, so a model can neither pre-pick a match nor forge the echo.
+  The attacker container runs the toolchain image (`infra/sandbox/Dockerfile.attacker`,
+  built for amd64 and arm64, httpx checksum-pinned) while targets stay the minimal node
+  image, and the attacker still holds no `NET_ADMIN`, so the host-owned scope guard
+  bounds every request. Each adapter's parse and signal shape are pinned against captured
+  real tool output (or, for the crafted request, a runner that simulates the vulnerable
+  server) with no Docker and no tool present (`tests/test_adapters.py`); a live
+  model-driven run confirmed service-disclosure, web-fingerprint, and reflected-XSS
+  findings alongside the baseline probe, the Operator proposing each probe and the
+  Verifier reproducing on a disjoint provider.
 
 ## What's here (the capri CLI and model-plane setup)
 

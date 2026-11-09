@@ -12,8 +12,10 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from urllib.parse import parse_qs, urlparse                              # noqa: E402
 from harness.sandbox.adapters import (                                   # noqa: E402
-    HttpxAdapter, NmapAdapter, _parse_httpx, _parse_nmap_services)
+    HttpRequestAdapter, HttpxAdapter, NmapAdapter,
+    _parse_http_response, _parse_httpx, _parse_nmap_services)
 from harness.sandbox.base import RunResult                               # noqa: E402
 
 # Real `nmap -sV -Pn -p 8080 -oX -` output (captured live), trimmed to the shape we parse.
@@ -192,6 +194,85 @@ def test_parse_httpx_tolerates_banner_noise_before_the_json_line():
     out = "[INF] Current Version: v1.12.0\n" + HTTPX_JSON_BASE
     obj = _parse_httpx(out)
     assert obj["status_code"] == 200 and obj["webserver"].startswith("SimpleHTTP")
+
+
+class ReflectingRunner:
+    """Simulates the vulnerable target: echoes the request's decoded `q` value into the
+    body, optionally HTML-encoded (a safe server) or not at all, so the adapter's own
+    random marker flows through exactly as a real reflected-XSS target would echo it."""
+
+    def __init__(self, *, encode=False, reflect=True, status=200):
+        self.encode, self.reflect, self.status = encode, reflect, status
+        self.calls = []
+
+    def __call__(self, argv, input=None, timeout=None):
+        self.calls.append(argv)
+        url = next((a for a in argv if a.startswith("http")), "")
+        q = (parse_qs(urlparse(url).query).get("q") or [""])[0]
+        if not self.reflect:
+            q = ""
+        shown = q.replace("<", "&lt;").replace(">", "&gt;") if self.encode else q
+        return RunResult(0, f"STATUS {self.status}\n---BODY---\n<p>No results for: {shown}</p>", "")
+
+
+def test_http_confirms_reflected_xss_when_the_marker_echoes_unencoded():
+    fake = ReflectingRunner()
+    res = HttpRequestAdapter("atk", PINNED, run=fake).run(
+        {"tool": "http", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/search", "reflect_param": "q"}})
+    sig = res["deterministic_signals"]
+    assert res["status"] == "ok"
+    assert sig["hit"] is True and sig["reflected"] is True
+    assert sig["status_code"] == 200
+    assert sig["marker"].startswith('"><svg/onload=')        # tag-breaking payload
+
+
+def test_http_encoded_reflection_is_not_a_hit():
+    res = HttpRequestAdapter("atk", PINNED, run=ReflectingRunner(encode=True)).run(
+        {"tool": "http", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/search", "reflect_param": "q"}})
+    assert res["deterministic_signals"]["reflected"] is False
+    assert res["deterministic_signals"]["hit"] is False       # server encodes = safe
+
+
+def test_http_marker_is_random_per_run_so_a_model_cannot_force_a_match():
+    a = HttpRequestAdapter("atk", PINNED, run=ReflectingRunner())
+    m1 = a.run({"tool": "http", "target": "10.90.0.3", "port": 8080,
+                "args": {"path": "/search", "reflect_param": "q"}})["deterministic_signals"]["marker"]
+    m2 = a.run({"tool": "http", "target": "10.90.0.3", "port": 8080,
+                "args": {"path": "/search", "reflect_param": "q"}})["deterministic_signals"]["marker"]
+    assert m1 != m2                                            # harness-generated nonce
+
+
+def test_http_plain_request_without_reflection_hits_on_a_response():
+    res = HttpRequestAdapter("atk", PINNED, run=ReflectingRunner(reflect=False)).run(
+        {"tool": "http", "target": "10.90.0.3", "port": 8080, "args": {"path": "/"}})
+    sig = res["deterministic_signals"]
+    assert sig["hit"] is True and sig["reflected"] is False and sig["status_code"] == 200
+
+
+def test_http_targets_the_resolved_ip_and_injects_into_the_named_param():
+    fake = ReflectingRunner()
+    HttpRequestAdapter("atk", PINNED, run=fake).run(
+        {"tool": "http", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/search", "reflect_param": "q"}})
+    url = next(a for a in fake.calls[0] if a.startswith("http"))
+    assert url.startswith("http://10.90.0.3:8080/search?")     # resolved IP + path
+    assert "t1.sandbox.local" not in url
+    assert "q=" in url                                          # the injected parameter
+
+
+def test_http_error_output_is_not_a_hit():
+    res = HttpRequestAdapter("atk", PINNED, run=FakeRunner("ERR ConnectionRefusedError")).run(
+        {"tool": "http", "target": "10.90.0.3", "port": 8080, "args": {"path": "/"}})
+    assert res["deterministic_signals"]["hit"] is False
+    assert res["deterministic_signals"]["status_code"] == 0
+
+
+def test_parse_http_response_splits_status_and_body():
+    code, body = _parse_http_response("STATUS 200\n---BODY---\n<html>hi</html>")
+    assert code == 200 and body == "<html>hi</html>"
+    assert _parse_http_response("ERR Timeout") == (0, "")
 
 
 def main():
