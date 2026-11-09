@@ -199,6 +199,33 @@ def test_verifier_provider_down_does_not_confirm():
         assert PROV_OP in {p for (p, _) in model.seen}            # the operator still probed
 
 
+def test_operator_prompt_names_its_tool_and_target():
+    """The Operator must tell the model which tool the harness will run and to aim at
+    the asset's recon address. Without this a real model invents a tool name the
+    dispatcher does not have, and the probe never runs (observed live with DeepSeek)."""
+    captured = {}
+
+    class Capturing:
+        def complete(self, provider, messages, metadata):
+            captured["messages"] = messages
+            return Raw("STOP", provider)
+
+    plane = ModelPlane([VirtualKey("operator", ["p-op"]), VirtualKey("verifier", ["p-ver"])],
+                       Capturing(), db.connect(), "eng-prompt")
+
+    class P:                                            # a minimal pair
+        asset = "t1"
+        technique_id = "KB-X"
+
+    card = {"probe_steps": [{"tool": "probe", "intent": "http_get"}]}
+    session = ModelOperator(plane).begin(P(), {"addr": "10.0.0.9", "host": "t1.sandbox.local"})
+    ModelOperator(plane).propose_next(session, card, "(none yet)")
+    blob = "\n".join(m["content"] for m in captured["messages"])
+    assert '"tool": "probe"' in blob, "the task must name the tool the harness will run"
+    assert "recon.addr" in blob, "the Operator must be told to target the recon address"
+    assert "10.0.0.9" in blob, "the recon address must reach the model"
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

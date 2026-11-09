@@ -173,19 +173,25 @@ the tool adapters and the sandbox.
 
 The Operator and Verifier as model sessions that run on the plane (HC-AGENT-01
 §4.1, §4.2), the first consumers of the plane, the role I/O boundary, and the
-loop together. The actual Bifrost HTTP transport and the prompt bake-off are
-still out of repo; what lives here is the wiring and the propose-only contract.
+loop together. The live Bifrost transport is in repo (`bifrost.py`) and the whole
+path is proven end to end against a real gateway (see below); what lives here is
+the wiring and the propose-only contract, and the prompt bake-off continues.
 
 - `roles.py` - `ModelOperator` / `ModelVerifier` assemble a prompt from the
   harness-owned `role_context` (the framed, untrusted probe history) plus the
   trusted task, call `plane.call` through the role's virtual key, and return the
   model's raw text, which the loop parses or rejects with `roleio`. No role holds
   a provider key, and because the plane keeps the Operator and Verifier on
-  disjoint providers, finder is not verifier at the model plane as well. A plane
-  stop (budget, rate, a down provider) or a stop sentinel makes a role give up,
-  so the loop ends the pair or holds the lead. The prompts here are a starting
-  point; the reasoning-model choice and few-shot are the HC-MODEL-01 bake-off and
-  iterate behind this same seam.
+  disjoint providers, finder is not verifier at the model plane as well. The
+  Operator's task names the tool the harness will run and tells the model to aim
+  at the asset's `recon.addr`, so a real model emits a probe the dispatcher
+  accepts instead of inventing a tool name. A plane stop (budget, rate, a down
+  provider) or a stop sentinel makes a role give up, so the loop ends the pair or
+  holds the lead. The prompts are a starting point; the reasoning-model choice and
+  few-shot are the HC-MODEL-01 bake-off and iterate behind this same seam.
+  Proven live: pointed at a Bifrost gateway with the Operator on DeepSeek and the
+  Verifier on OpenAI, a run confirmed an exposed-service finding end to end, finder
+  and verifier on disjoint providers.
 
 ## What's here (the Tavily enrichment service)
 
