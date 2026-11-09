@@ -87,8 +87,9 @@ class DeterministicReporter:
     cheap prose Reporter role (Bifrost) can wrap this later without changing the
     ship gate, which stays `validate_report`."""
 
-    def render(self, conn, eng, *, mode, kb_version=None):
-        return reportmod.build_report(conn, eng, mode=mode, kb_version=kb_version)
+    def render(self, conn, eng, *, mode, kb_version=None, objective=None):
+        return reportmod.build_report(conn, eng, mode=mode, kb_version=kb_version,
+                                      objective=objective)
 
 
 def deterministic_signal(card, signals):
@@ -175,7 +176,8 @@ class Loop:
             self.objective_outcome = {"id": None, "status": "not_applicable"}
 
         report = self.reporter.render(self.conn, self.eng, mode=mode,
-                                      kb_version=self.kb_version)
+                                      kb_version=self.kb_version,
+                                      objective=self.objective_outcome)
         status, errs = reportmod.validate_report(report, kbmod.known_pairs(self.kb_index))
         return RunResult(report, mode, status == "ok", errs, objective=self.objective_outcome)
 
@@ -291,15 +293,67 @@ class Loop:
         return {"kind": "capability"}
 
     def _attack_path(self):
-        """The confirmed findings, in order, each with the facts it yielded. A precise
-        backward trace that prunes off-path findings is the §9 report refinement."""
+        """The kill chain: the confirmed findings on the path from recon to the
+        objective, in dependency order (recon -> goal), each with the facts it
+        yielded. Off-path confirmed findings are pruned by tracing the objective's
+        required facts back through `yields_on_success <- preconditions` over the
+        confirmed board; the order comes from those same edges, never from the
+        random finding id, so a branch that converges reads in causal order (§9.1)."""
+        chain = self._on_path_chain()
+        rows = {r["id"]: r for r in findings.confirmed(self.conn, self.eng.id)}
         path = []
-        for i, row in enumerate(findings.confirmed(self.conn, self.eng.id), 1):
+        for step, fid in enumerate(chain, 1):
+            row = rows.get(fid)
+            if row is None:
+                continue
             card = self.kb_index.get((row["technique_id"], row["technique_version"]))
-            path.append({"step": i, "finding_id": row["id"],
+            path.append({"step": step, "finding_id": fid,
                          "technique_id": row["technique_id"],
                          "yielded": (card or {}).get("yields_on_success") or []})
         return path
+
+    def _on_path_chain(self):
+        """The on-path confirmed findings in dependency order. Start from the
+        objective's required facts (the success predicate's identifiers, plus the
+        recorded proof facts), follow each confirmed fact to the finding that produced
+        it, add that finding's preconditions to the frontier, and stop at recon. Then
+        order the reached findings by precondition depth, so each comes after the
+        findings that produced its inputs; ties break on finding id for determinism."""
+        producer, consumes = {}, {}            # fact name -> finding, finding -> precondition names
+        for fact in self.board.current():
+            if fact.tier != CONFIRMED or fact.produced_by in (None, "recon"):
+                continue
+            producer[fact.name] = fact.produced_by
+            if fact.produced_by not in consumes:
+                row = findings.current(self.conn, fact.produced_by)
+                card = (self.kb_index.get((row["technique_id"], row["technique_version"]))
+                        if row is not None else None)
+                consumes[fact.produced_by] = list((card or {}).get("preconditions") or [])
+        goals = predicates.identifiers(self.eng.objective.get("success") or "")
+        on_path, frontier = set(), list(goals | {PROOF_CANARY, PROOF_OOB})
+        while frontier:
+            fid = producer.get(frontier.pop())
+            if fid is None or fid in on_path:
+                continue
+            on_path.add(fid)
+            frontier.extend(consumes.get(fid, ()))
+
+        depth, resolving = {}, set()
+
+        def _depth(fid):
+            if fid in depth:
+                return depth[fid]
+            resolving.add(fid)                 # cycle guard; the board edges are a DAG in practice
+            d = 0
+            for pre in consumes.get(fid, ()):
+                pf = producer.get(pre)
+                if pf in on_path and pf not in resolving:
+                    d = max(d, _depth(pf) + 1)
+            resolving.discard(fid)
+            depth[fid] = d
+            return d
+
+        return sorted(on_path, key=lambda f: (_depth(f), f))
 
     def _reached_facts(self):
         """Confirmed capabilities gained (not recon, not internal proof facts), so a

@@ -317,6 +317,29 @@ def test_no_objective_outcome_is_not_applicable():
         assert res.objective["status"] == "not_applicable"
 
 
+def test_attack_path_prunes_off_path_confirmed_findings():
+    # continue-for-coverage keeps hunting past the goal, so KB-C also confirms, but its
+    # `extra` yield is off the chain to db_admin and must not appear in the kill chain.
+    with tempfile.TemporaryDirectory() as root:
+        conn, eng, disp, sandbox = _build(root, _BASE.format(objective=_OBJ_CONTINUE),
+                                          adapter=ProbeAdapter(HITS3))
+        res = _run(conn, eng, disp, sandbox, KB3)
+        assert res.objective["status"] == "achieved"
+        confirmed = {r["technique_id"] for r in findings.confirmed(conn, eng.id)}
+        assert "KB-C" in confirmed                               # it did confirm
+        path = [s["technique_id"] for s in res.objective["attack_path"]]
+        assert path == ["KB-A", "KB-B"], path                    # but it is pruned, in order
+
+
+def test_objective_outcome_is_embedded_in_the_report_and_validates():
+    with tempfile.TemporaryDirectory() as root:
+        conn, eng, disp, sandbox = _build(root, _BASE.format(objective=_OBJECTIVE))
+        res = _run(conn, eng, disp, sandbox, KB)
+        outcome = res.report["objective_outcome"]
+        assert outcome["status"] == "achieved" and outcome["id"] == "obj-dbadmin"
+        assert res.valid, res.errors                             # the shipped report passes §9.2
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

@@ -22,7 +22,8 @@ _LEAKY = re.compile(
     re.IGNORECASE)
 
 
-def build_report(conn, eng, *, mode="sandboxed", kb_version=None, generated_at=None):
+def build_report(conn, eng, *, mode="sandboxed", kb_version=None, generated_at=None,
+                 objective=None):
     vulns = [findings.to_record(conn, r) for r in findings.confirmed(conn, eng.id)]
     hards = [findings.to_record(conn, r) for r in findings.hardening_notes(conn, eng.id)]
     cov = ledger.summary(conn, eng.id)
@@ -35,6 +36,7 @@ def build_report(conn, eng, *, mode="sandboxed", kb_version=None, generated_at=N
         "coverage_summary": cov,
         "findings": vulns,
         "hardening_notes": hards,
+        "objective_outcome": objective or {"id": None, "status": "not_applicable"},
         "method_summary": _method_summary(cov, vulns, hards, kb_version),
         "generated_at": generated_at or now(),
     }
@@ -100,4 +102,38 @@ def validate_report(report, known_pairs):
     if report.get("mode") == "passive-only" and vulns:
         errs.append("passive-only report must not contain confirmed vulnerabilities")
 
+    # 8: the objective outcome is internally consistent (HC-OBJ-01 §9.2)
+    _validate_objective_outcome(report.get("objective_outcome"), report.get("mode"), vulns, errs)
+
     return ("errors", errs) if errs else ("ok", [])
+
+
+def _validate_objective_outcome(outcome, mode, vulns, errs):
+    if outcome is None:
+        return
+    status = outcome.get("status")
+    if status not in ("achieved", "not_achieved", "not_applicable"):
+        errs.append(f"objective_outcome.status {status!r} is not a known status")
+    if status == "achieved":
+        # an objective is proven, never asserted: the chain must be verified findings
+        # resolving to a matched proof, and passive-only can never reach one.
+        if mode == "passive-only":
+            errs.append("objective achieved cannot appear in passive-only mode")
+        proof = outcome.get("proof") or {}
+        if proof.get("kind") == "canary" and not proof.get("sha256_matched"):
+            errs.append("objective achieved by canary requires proof.sha256_matched")
+        if proof.get("kind") == "oob_marker" and not proof.get("marker_fired"):
+            errs.append("objective achieved by reach requires its in-sandbox marker to have fired")
+        path = outcome.get("attack_path") or []
+        if not path:
+            errs.append("objective achieved must list a non-empty attack_path")
+        by_id = {f.get("id"): f for f in vulns}
+        for step in path:
+            sid = step.get("finding_id")
+            f = by_id.get(sid)
+            if f is None:
+                errs.append(f"attack_path step {sid} is not a confirmed finding in the report")
+            elif f.get("verified_by") is None or f.get("verified_by") == f.get("found_by"):
+                errs.append(f"attack_path step {sid} is not independently verified")
+    if status == "not_achieved" and "reached_facts" not in outcome:
+        errs.append("objective not_achieved must list reached_facts")

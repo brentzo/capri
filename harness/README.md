@@ -254,6 +254,28 @@ The run-local world-state store that makes the KB's preconditions and yields liv
   scoped so a host-scoped fact is visible only against that host. The loop that
   seeds, writes, and re-evaluates over it is the next slice.
 
+## What's here (the objective in the report)
+
+The report delta of HC-OBJ-01 §9: a shipped report states whether the declared
+objective was met and by what verified attack path, and the ship gate proves that
+claim rather than trusting it.
+
+- `report.py` - `build_report` now embeds an `objective_outcome` block (id, status,
+  proof summary, kill chain, and the facts the chain reached), defaulting to
+  `not_applicable` so every report carries the field. `validate_report` gains the
+  §9.2 checks: an `achieved` outcome must carry a non-empty `attack_path` whose
+  every step is a confirmed, independently verified finding in the report, a matched
+  canary hash or a fired in-sandbox marker for its proof kind, and never the
+  `passive-only` mode; a `not_achieved` outcome must list `reached_facts`.
+- `loop.py` - `_attack_path` reconstructs the kill chain rather than dumping every
+  confirmed finding: it traces the objective's required facts (the `success`
+  predicate's identifiers, plus the recorded proof facts) back through
+  `yields_on_success <- preconditions` over the confirmed board, keeps only the
+  findings that transitively contributed, and orders them by precondition depth, so
+  the path reads recon-to-goal and an off-path confirmed finding is pruned.
+- `predicates.py` - adds `identifiers(expr)`, the fact names a predicate depends on,
+  which is how the trace learns what the objective requires.
+
 ## Run
 
 ```sh

@@ -87,6 +87,16 @@ def test_predicate_rejects_disallowed_function():
         pass
 
 
+def test_predicate_identifiers_are_the_facts_read():
+    # the facts an objective needs, for the §9 backward trace: keywords, functions,
+    # and literals drop out; `[*]` suffixes and string contents are not facts.
+    assert predicates.identifiers("exists(db_admin)") == {"db_admin"}
+    assert predicates.identifiers('foothold.host == "db" && exists(cred)') == {"foothold.host", "cred"}
+    assert predicates.identifiers('"pii" in tags[*]') == {"tags"}
+    assert predicates.identifiers("") == set()
+    assert predicates.identifiers("((((") == set()               # malformed yields nothing, never raises
+
+
 # --- severity rubric (§5, §207) -----------------------------------------
 def test_severity_base_band():
     s = severity.score(CARD["severity_rubric"], {})
@@ -274,6 +284,78 @@ def test_kb_index_loads_real_tree():
     assert len(index) == 107
     pairs = kb.known_pairs(index)
     assert ("KB-CLOUD-K8S-ANON-001", "1.0.0") in pairs
+
+
+# --- objective_outcome validator (HC-OBJ-01 §9.2) -----------------------
+def _vuln(fid):
+    return {"id": fid, "technique_id": CARD["id"], "technique_version": CARD["version"],
+            "verdict": "confirmed", "found_by": "op-A", "verified_by": "ver-B",
+            "verified_by_event_ids": ["pe_1"], "repro": ["s"],
+            "cvss": {"band": "high"}, "cwe": ["CWE-89"]}
+
+
+def _report_with_outcome(outcome, *, mode="sandboxed", findings_=None):
+    return {"mode": mode, "findings": findings_ if findings_ is not None else [_vuln("F-1")],
+            "hardening_notes": [], "objective_outcome": outcome}
+
+
+def _validate(rep):
+    return report.validate_report(rep, {(CARD["id"], CARD["version"])})
+
+
+def test_achieved_outcome_with_verified_chain_validates():
+    rep = _report_with_outcome(
+        {"id": "obj-1", "status": "achieved", "proof": {"kind": "capability"},
+         "attack_path": [{"step": 1, "finding_id": "F-1"}], "reached_facts": []})
+    verdict, errs = _validate(rep)
+    assert verdict == "ok", errs
+
+
+def test_achieved_cannot_appear_in_passive_only():
+    rep = _report_with_outcome(
+        {"id": "obj-1", "status": "achieved", "proof": {"kind": "capability"},
+         "attack_path": [{"step": 1, "finding_id": "F-1"}]},
+        mode="passive-only", findings_=[])
+    verdict, errs = _validate(rep)
+    assert verdict == "errors" and any("passive-only" in e for e in errs)
+
+
+def test_achieved_canary_needs_matched_hash():
+    rep = _report_with_outcome(
+        {"id": "obj-1", "status": "achieved",
+         "proof": {"kind": "canary", "sha256_matched": False},
+         "attack_path": [{"step": 1, "finding_id": "F-1"}]})
+    verdict, errs = _validate(rep)
+    assert verdict == "errors" and any("sha256_matched" in e for e in errs)
+
+
+def test_achieved_path_step_must_be_a_confirmed_verified_finding():
+    # a step whose finding is not in the confirmed list cannot anchor the kill chain
+    rep = _report_with_outcome(
+        {"id": "obj-1", "status": "achieved", "proof": {"kind": "capability"},
+         "attack_path": [{"step": 1, "finding_id": "F-missing"}]})
+    verdict, errs = _validate(rep)
+    assert verdict == "errors" and any("not a confirmed finding" in e for e in errs)
+
+
+def test_achieved_must_list_a_non_empty_attack_path():
+    rep = _report_with_outcome(
+        {"id": "obj-1", "status": "achieved", "proof": {"kind": "capability"},
+         "attack_path": []})
+    verdict, errs = _validate(rep)
+    assert verdict == "errors" and any("non-empty attack_path" in e for e in errs)
+
+
+def test_not_achieved_must_list_reached_facts():
+    rep = _report_with_outcome({"id": "obj-1", "status": "not_achieved"}, findings_=[])
+    verdict, errs = _validate(rep)
+    assert verdict == "errors" and any("reached_facts" in e for e in errs)
+
+
+def test_not_applicable_outcome_validates():
+    rep = _report_with_outcome({"id": None, "status": "not_applicable"}, findings_=[])
+    verdict, errs = _validate(rep)
+    assert verdict == "ok", errs
 
 
 def main():

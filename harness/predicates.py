@@ -192,3 +192,26 @@ def evaluate(expr, facts=None):
     if not isinstance(expr, str) or not expr.strip():
         raise PredicateError("empty predicate")
     return _Parser(_tokenize(expr), facts or {}).parse()
+
+
+_NON_FACT = {"exists", "matches", "true", "false", "null", "in"}
+
+
+def identifiers(expr):
+    """The dotted fact names a predicate reads, with any `[*]` suffix dropped.
+
+    Literals, numbers, keywords, and the exists/matches function names are left
+    out, so the result is exactly the facts the predicate depends on. Used to
+    trace an objective's required facts back through the blackboard (HC-OBJ-01
+    §9). A malformed expression yields the empty set rather than raising."""
+    if not isinstance(expr, str) or not expr.strip():
+        return set()
+    try:
+        toks = _tokenize(expr)
+    except PredicateError:
+        return set()
+    out = set()
+    for t in toks:
+        if re.match(r"^[A-Za-z_]", t) and t not in _NON_FACT:
+            out.add(t[:-3] if t.endswith("[*]") else t)
+    return out

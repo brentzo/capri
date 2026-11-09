@@ -194,7 +194,7 @@ Objective completion is evaluated deterministically by `_objective_met`: the §4
 The proof is harness-observed, never model-asserted (§3): when a finding confirms, `_record_proof` reads the confirming probe's recorded signals and writes a confirmed proof fact (the retrieved canary's SHA-256, or the fired in-sandbox marker), and `_proof_holds` then compares the canary hash to `proof.sha256` or checks the marker, so a confirmed finding whose predicate holds but whose hash does not match is `not_achieved` and no role can flip it (a `capability` objective's proof is the confirmed fact itself).
 The outcome (`achieved` / `not_achieved` / `not_applicable`, the proof summary, the `attack_path` of confirmed findings, and the `reached_facts` when short) is recorded on the run result; `on_success: stop` ends the frontier on completion, and passive-only is always `not_achieved` (§9.2).
 Covered by `tests/test_frontier.py`: chaining (a confirmed yield opens the next card, a provisional one does not, passive chains nothing, no-objective takes the coverage path) and completion (a capability objective is achieved with its attack path, a canary objective needs its proof hash to match, a short chain lists the facts it reached, `on_success: stop` halts the frontier, and passive is not achieved).
-The precise backward-trace that prunes off-path findings from `attack_path` is the §9 report refinement, and the §8 lateral gate and the §7 planner relevance key remain.
+The precise backward-trace that prunes off-path findings from `attack_path` is built in §9.3, and the §8 lateral gate and the §7 planner relevance key remain.
 
 ## 7. Objective-aware planning (delta to the Planner)
 
@@ -261,6 +261,15 @@ The `attack_path` is reconstructed by tracing the objective's required facts bac
 - `status: achieved` requires `proof.sha256_matched: true` for a canary objective, or a recorded in-sandbox marker for a reach objective.
 - `status: achieved` cannot appear in `mode: passive-only`; an objective in passive-only is `not_achieved`.
 - `not_achieved` must list `reached_facts`, so the report states how far the chain got, which keeps a negative objective result as meaningful as a negative coverage result (HC-FIND-01 §7.3).
+
+### 9.3 Status
+
+The report delta is implemented in `harness/report.py` and `harness/loop.py`.
+`build_report` embeds an `objective_outcome` block (the id, status, proof summary, kill chain, and reached facts), defaulting to `not_applicable` so every report carries the field; `DeterministicReporter.render` and the control loop thread the recorded outcome into it, so a shipped report always states whether the objective was met and by what path.
+The `attack_path` is no longer every confirmed finding in id order: `loop._attack_path` traces the objective's required facts (the `success` predicate's identifiers via the new `predicates.identifiers`, plus the recorded proof facts) back through `yields_on_success <- preconditions` over the confirmed board, keeps only the findings that transitively contributed, and orders them by precondition depth, so a branch that converges reads recon-to-goal and an off-path confirmed finding is pruned rather than listed.
+`validate_report` gains the §9.2 checks: an `achieved` outcome must carry a non-empty `attack_path` whose every step is a confirmed, independently verified finding in the report, a matched canary hash or a fired marker for its proof kind, and never the `passive-only` mode; a `not_achieved` outcome must list `reached_facts`.
+Covered by `tests/test_frontier.py` (the outcome is embedded and the shipped report validates, and an off-path confirmed finding is pruned from the kill chain) and `tests/test_findings_report.py` (the §9.2 validator branches, and `predicates.identifiers` reads exactly the facts a predicate depends on).
+The §8 lateral gate and the §7 planner relevance key remain.
 
 ## 10. Deltas to existing specs and code (applied at implementation time)
 
