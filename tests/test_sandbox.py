@@ -55,11 +55,20 @@ class FakeRunner:
         self.host_ip = host_ip
         self.files = {}       # container -> {path: content}
         self.images = {}      # image tag -> {path: content} (a committed filesystem)
+        self.paused = set()   # frozen containers
 
     def __call__(self, argv, *, input=None, timeout=30):
         self.calls.append(list(argv))
         if argv[:4] == ["docker", "inspect", "-f", "{{.State.Pid}}"]:
             return RunResult(0, str(self.pid), "")
+        if argv[:4] == ["docker", "inspect", "-f", "{{.State.Status}}"]:
+            return RunResult(0, "paused" if argv[4] in self.paused else "running", "")
+        if argv[:2] == ["docker", "pause"]:
+            self.paused.update(argv[2:])
+            return RunResult(0, "", "")
+        if argv[:2] == ["docker", "unpause"]:
+            self.paused.difference_update(argv[2:])
+            return RunResult(0, "", "")
         if argv[:2] == ["docker", "info"]:
             return RunResult(0, self.runtimes, "")
         if argv[:3] == ["ip", "route", "get"]:
@@ -73,18 +82,23 @@ class FakeRunner:
             return RunResult(0, "", "")
         if argv[:3] == ["docker", "rm", "-f"]:
             self.files.pop(argv[3], None)
+            self.paused.discard(argv[3])
             return RunResult(0, "", "")
         if argv[:2] == ["docker", "exec"]:
             i = 2
             while argv[i].startswith("-"):
                 i += 1
             name, rest = argv[i], argv[i + 1:]
-            if rest[:2] == ["sh", "-c"] and ">" in rest[2]:
-                token, path = rest[2].split("echo")[1].split(">")
-                self.files.setdefault(name, {})[path.strip()] = token.strip()
+            if rest[:2] == ["sh", "-c"]:
+                cmd = rest[2]
+                if cmd.startswith("echo "):                    # echo <content> > <path>
+                    token, path = cmd[len("echo "):].split(">", 1)
+                    self.files.setdefault(name, {})[path.strip()] = token.strip()
+                    return RunResult(0, "", "")
+                if cmd.startswith("cat "):                     # cat <path> 2>/dev/null || true
+                    path = cmd[len("cat "):].split()[0]
+                    return RunResult(0, self.files.get(name, {}).get(path, ""), "")
                 return RunResult(0, "", "")
-            if rest[:1] == ["cat"]:
-                return RunResult(0, self.files.get(name, {}).get(rest[1], ""), "")
             if rest[0] == "python3" and "-c" in rest:
                 src = rest[rest.index("-c") + 1]
                 args = rest[rest.index("-c") + 2:]
@@ -110,7 +124,8 @@ def test_passive_only_sandbox_proves_nothing():
             raise AssertionError("passive-only must refuse active-range operations")
         except Exception as e:  # noqa: BLE001
             assert "passive-only" in str(e)
-    assert s.kill() is True
+    assert s.kill()["ok"] is True
+    assert s.teardown() is True
 
 
 # --- the guard-proof assertion model (§8.1) -----------------------------
@@ -250,17 +265,37 @@ def test_provision_uses_gvisor_runtime_when_the_host_offers_it():
     assert "--runtime" not in attacker_run
 
 
-def test_proofs_pass_is_false_until_all_five_guarantees_are_proven():
-    # G1/G2 (guard), G3 (snapshot), and G4 (escape) all pass, but the kill-switch (G5)
-    # drill is unbuilt, so the aggregate stays False and the harness stays passive-only
-    # (§3).
+# --- kill switch (§8.4, G5) and the full aggregate ----------------------
+def test_kill_switch_drill_freezes_within_budget_and_restores_from_golden():
     run = FakeRunner(reachable=[("10.90.0.3", 8080)])
     sb = DockerSandbox(run=run)
     sb.provision(_eng())
-    assert sb.guard_proof()["pass"] is True
-    assert sb.snapshot_round_trip()["pass"] is True
-    assert sb.escape_attempt()["pass"] is True
-    assert sb.proofs_pass() is False
+    res = sb.kill_switch_drill()
+    assert res["pass"] is True, res
+    assert res["frozen_ms"] <= res["budget_ms"]
+    assert run.ran("pause", "hc-range-attacker")               # one action froze the range
+    assert run.ran("commit", "hc-range-attacker")              # frozen state kept for forensics
+    assert run.ran("unpause", "hc-range-attacker")             # revived, so the range stays usable
+
+
+def test_kill_switch_drill_fails_when_the_freeze_misses_its_budget():
+    run = FakeRunner(reachable=[("10.90.0.3", 8080)])
+    sb = DockerSandbox(run=run, kill_budget_ms=-1)             # no freeze can meet it
+    sb.provision(_eng())
+    assert sb.kill_switch_drill()["pass"] is False
+
+
+def test_proofs_pass_is_true_only_when_all_five_guarantees_prove():
+    good = FakeRunner(reachable=[("10.90.0.3", 8080)])
+    sb = DockerSandbox(run=good)
+    sb.provision(_eng())
+    assert sb.proofs_pass() is True                            # G1-G5 all hold: may leave passive-only
+
+    # a range with a live escape path to the host never earns full trust
+    leaky = FakeRunner(reachable=[("10.90.0.3", 8080), ("203.0.113.9", 22)])
+    sb2 = DockerSandbox(run=leaky)
+    sb2.provision(_eng())
+    assert sb2.proofs_pass() is False
 
 
 def main():

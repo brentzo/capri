@@ -320,8 +320,12 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   range, closed only by the guard), and an unrelated network, asserting all
   unreachable; `provision` runs the containers under gVisor's `runsc` runtime when the
   host offers it (auto-detected, no KVM needed), so an escape is contained in a
-  user-space kernel. `proofs_pass` runs the three implemented proofs but stays `False`
-  until the G5 kill-switch drill lands, so this backend alone keeps the harness
+  user-space kernel. `kill` is the kill switch (G5): one action freezes the whole range
+  at once, commits it for forensics, and restores the targets from golden;
+  `kill_switch_drill` proves it per §8.4 (freeze within a budget, target wiped to
+  golden), then revives the range. `kill` is distinct from `teardown`, which destroys
+  the range. `proofs_pass` runs all five drills and returns `True` only when every
+  guarantee holds, so the harness may leave passive-only; any failed proof keeps it
   passive-only.
   Every docker/nsenter call goes through an injected runner, so the logic is
   unit-tested with no Docker present (`tests/test_sandbox.py`); the live path is proven

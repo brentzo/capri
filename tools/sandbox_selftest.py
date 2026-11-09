@@ -59,9 +59,17 @@ def main():
             print(f"  [{'ok ' if a['ok'] else 'FAIL'}] {a['name']}: {a['describes']}")
         print(f"escape attempt (G4): {'PASS' if esc['pass'] else 'FAIL'} "
               f"(runtime: {esc['hardened_runtime']})")
-        return 0 if (guard["pass"] and rt["pass"] and esc["pass"]) else 1
+        kd = sb.kill_switch_drill()
+        print(f"  [{'ok ' if kd['pass'] else 'FAIL'}] froze in {kd['frozen_ms']}ms "
+              f"(budget {kd['budget_ms']}ms) and restored from golden")
+        print("kill-switch drill (G5):", "PASS" if kd["pass"] else "FAIL")
+        all_ok = all(p["pass"] for p in (guard, rt, esc, kd))
+        print("\nALL FIVE GUARANTEES:", "PASS" if all_ok else "FAIL",
+              "- the harness may leave passive-only" if all_ok
+              else "- the harness stays passive-only")
+        return 0 if all_ok else 1
     finally:
-        sb.kill()
+        sb.teardown()
         print("range torn down")
 
 

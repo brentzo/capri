@@ -50,7 +50,13 @@ class Sandbox:
         raise NotImplementedError
 
     def kill(self):
-        """Freeze and tear down the range (§6.4, G5); return True."""
+        """The kill switch (§6.4, G5): freeze the whole range at once, preserve it for
+        forensics, and restore targets from golden. Return a result dict."""
+        raise NotImplementedError
+
+    def teardown(self):
+        """Destroy the range entirely; return True. Separate from the kill switch,
+        which freezes and restores rather than destroying."""
         raise NotImplementedError
 
 
@@ -98,6 +104,9 @@ class PassiveOnlySandbox(Sandbox):
         return False
 
     def kill(self):
+        return {"ok": True, "frozen_ms": 0, "forensics": [], "restored_from_golden": []}
+
+    def teardown(self):
         return True
 
 

@@ -20,6 +20,7 @@ the live path uses the default subprocess runner and must execute on the range h
 as root (nsenter into the attacker netns needs it).
 """
 import ipaddress
+import time
 
 from harness.sandbox.base import (
     Sandbox,
@@ -74,7 +75,8 @@ class DockerSandbox(Sandbox):
 
     def __init__(self, *, run=None, node_image="hc-node:golden", network="hc-range",
                  subnet="10.90.0.0/24", internet_canary=("1.1.1.1", 443),
-                 public_name="example.com", unrelated_net_ip="172.17.0.1", clock=now):
+                 public_name="example.com", unrelated_net_ip="172.17.0.1",
+                 kill_budget_ms=10000, clock=now):
         self._run = run or default_run
         self.node_image = node_image
         self.network = network
@@ -82,7 +84,9 @@ class DockerSandbox(Sandbox):
         self.internet_canary = internet_canary
         self.public_name = public_name
         self.unrelated_net_ip = unrelated_net_ip   # a second host network, for the §8.3 escape test
+        self.kill_budget_ms = kill_budget_ms       # the §8.4 network-freeze time budget
         self._clock = clock
+        self._forensics = []        # forensics images a kill left behind, cleared on teardown
         self.attacker = f"{network}-attacker"
         self.guard_table = "hc_guard"
         self._runtime = None        # a hardened OCI runtime (gVisor runsc) when the host has one
@@ -123,7 +127,7 @@ class DockerSandbox(Sandbox):
         if not engagement.in_scope_hosts:
             raise SandboxError("cannot provision: the contract declares no in_scope_hosts")
         self._eng = engagement
-        self.kill()                                             # start from a clean range
+        self.teardown()                                        # start from a clean range
         self._runtime = self._detect_runtime()                 # gVisor if the host offers it (§6.2)
         self.hardened = self._runtime == "runsc"
         self._host_ip = self._discover_host_ip()
@@ -170,18 +174,15 @@ class DockerSandbox(Sandbox):
             in_scope_reachable=self._tcp(self._in_scope_ip, self._guard_port))
 
     def proofs_pass(self):
-        """Aggregate G1-G5 (§8). The guard proof (G1/G2, §8.1), the snapshot round-trip
-        (G3, §8.2), and the escape-attempt (G4, §8.3) are implemented and must all hold;
-        the kill-switch drill (G5) is the last slice, so this stays False and the
-        harness stays passive-only until all five are proven (§3: an unproven guarantee
-        is treated as absent)."""
-        if not self.guard_proof().get("pass"):
-            return False
-        if not self.snapshot_round_trip().get("pass"):
-            return False
-        if not self.escape_attempt().get("pass"):
-            return False
-        return False                                           # G5 (kill-switch drill) still pending
+        """Aggregate G1-G5 (§8): the guard proof (G1/G2, §8.1), the snapshot round-trip
+        (G3, §8.2), the escape-attempt (G4, §8.3), and the kill-switch drill (G5, §8.4)
+        must all hold. Only then may the harness leave passive-only; a single failed
+        proof returns False and keeps it passive-only (§3). Each drill leaves the range
+        usable, so a passing run hands back a range ready for the engagement."""
+        return (self.guard_proof().get("pass", False)
+                and self.snapshot_round_trip().get("pass", False)
+                and self.escape_attempt().get("pass", False)
+                and self.kill_switch_drill().get("pass", False))
 
     def snapshot(self):
         """Commit every target container to an image and return a snapshot id, so the
@@ -240,27 +241,73 @@ class DockerSandbox(Sandbox):
         host = next(iter(self._targets))
         name = self._targets[host][0]
         original, overwrite, path = "hc-marker-original", "hc-marker-overwritten", "/hc_marker"
-        self._exec(name, "sh", "-c", f"echo {original} > {path}")
+        self._write_file(name, path, original)
         snap = self.snapshot()
-        self._exec(name, "sh", "-c", f"echo {overwrite} > {path}")
+        self._write_file(name, path, overwrite)
         self.restore(snap)
-        got = self._exec(self._targets[host][0], "cat", path).out.strip()
+        got = self._read_file(self._targets[host][0], path)
         return {"pass": got == original, "expected": original, "got": got}
 
     def kill(self):
-        """Tear the range down: remove the attacker and every target, drop the network,
-        and delete any snapshot images. Best-effort and idempotent, so it doubles as
-        pre-provision cleanup (§6.4)."""
+        """The kill switch (§6.4, G5): one action freezes the whole range at once, so
+        the agent and every target stop instantly, commits each frozen container for
+        forensics, then restores the targets from the golden image to a clean state.
+        The attacker is left frozen (paused), not destroyed, so its state is preserved
+        for analysis and the range can be revived. Returns the freeze latency and what
+        was restored."""
+        if self._attacker_pid is None:
+            return {"ok": True, "frozen_ms": 0, "forensics": [], "restored_from_golden": []}
+        containers = [self.attacker, *[name for name, _ in self._targets.values()]]
+        t0 = time.monotonic()
+        self._run(["docker", "pause", *containers])            # instant freeze (cgroup freezer)
+        frozen_ms = int((time.monotonic() - t0) * 1000)
+        forensics = []
+        for c in containers:
+            image = f"hc-forensics:{self.network}-{c}"
+            self._run(["docker", "commit", c, image])
+            forensics.append(image)
+        self._forensics.extend(forensics)
+        restored = []
+        for host, (name, ip) in self._targets.items():         # targets back to golden
+            self._run(["docker", "rm", "-f", name])
+            self._docker(*self._run_args(name, ip, self.node_image))
+            self._start_listeners(name, self._target_ports.get(host, []))
+            restored.append(host)
+        return {"ok": True, "frozen_ms": frozen_ms, "forensics": forensics,
+                "restored_from_golden": restored}
+
+    def kill_switch_drill(self):
+        """Prove G5 (§8.4): in a dry-run, write a marker to a target, invoke the kill
+        switch, and assert the freeze lands within the time budget, the target is wiped
+        back to golden (the marker is gone), and the attacker is frozen. Then revive the
+        attacker so the proven range stays usable."""
+        path = "/kill_marker"
+        if self._targets:
+            host = next(iter(self._targets))
+            self._write_file(self._targets[host][0], path, "pre-kill")
+        res = self.kill()
+        frozen_ok = res["frozen_ms"] <= self.kill_budget_ms
+        wiped = (not self._read_file(self._targets[host][0], path)) if self._targets else False
+        paused = self._run(["docker", "inspect", "-f", "{{.State.Status}}",
+                            self.attacker]).out.strip() == "paused"
+        self._run(["docker", "unpause", self.attacker])        # revive; range stays usable
+        return {"pass": bool(frozen_ok and wiped and paused), "frozen_ms": res["frozen_ms"],
+                "budget_ms": self.kill_budget_ms, "restored_from_golden": res["restored_from_golden"]}
+
+    def teardown(self):
+        """Destroy the range entirely: remove the attacker and every target, drop the
+        network, and delete the snapshot and forensics images. Best-effort and
+        idempotent, so it doubles as pre-provision cleanup."""
         names = [self.attacker, *[f"{self.network}-tgt-{i}"
                                   for i in range(max(len(self._targets), 8))]]
         for name in names:
             self._run(["docker", "rm", "-f", name])
         self._run(["docker", "network", "rm", self.network])
-        for images in self._snapshots.values():
-            for _, _, image in images.values():
-                self._run(["docker", "rmi", "-f", image])
+        images = [img for snap in self._snapshots.values() for _, _, img in snap.values()]
+        for image in images + self._forensics:
+            self._run(["docker", "rmi", "-f", image])
         self._attacker_pid = None
-        self._targets, self._target_ports, self._snapshots = {}, {}, {}
+        self._targets, self._target_ports, self._snapshots, self._forensics = {}, {}, {}, []
         return True
 
     # --- helpers --------------------------------------------------------
@@ -285,6 +332,16 @@ class DockerSandbox(Sandbox):
     def _start_listeners(self, name, ports):
         for port in ports:
             self._docker("exec", "-d", name, "python3", "-m", "http.server", str(port))
+
+    def _write_file(self, name, path, content):
+        self._exec(name, "sh", "-c", f"echo {content} > {path}")
+
+    def _read_file(self, name, path):
+        """Read a file from a container, returning empty when it is absent (a missing
+        file is a valid state, e.g. a marker wiped by a golden restore), so a read never
+        fails the caller the way a bare `cat` on a missing path would."""
+        return self._run(["docker", "exec", name, "sh", "-c",
+                          f"cat {path} 2>/dev/null || true"]).out.strip()
 
     def _exec(self, name, *args, input=None):
         r = self._run(["docker", "exec", name, *args], input=input)
