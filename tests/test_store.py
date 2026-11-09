@@ -121,6 +121,16 @@ def test_ledger_rejects_unknown_status():
         pass
 
 
+def test_ledger_records_a_sub_reason_detail():
+    conn = db.connect()
+    ledger.mark(conn, "eng-1", "a", "KB-X", "blocked_by_policy", detail="blocked_lateral")
+    assert ledger.detail(conn, "eng-1", "a", "KB-X") == "blocked_lateral"
+    assert ledger.summary(conn, "eng-1") == {"blocked_by_policy": 1}   # detail does not split the summary
+    ledger.mark(conn, "eng-1", "a", "KB-X", "confirmed")              # upsert clears the stale detail
+    assert ledger.detail(conn, "eng-1", "a", "KB-X") is None
+    assert ledger.detail(conn, "eng-1", "a", "missing") is None
+
+
 # --- tamper-evident audit log --------------------------------------------
 def test_audit_chain_verifies():
     conn = db.connect()

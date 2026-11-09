@@ -20,7 +20,7 @@ sys.path.insert(0, ROOT)
 from harness import ratelimit, roleio                         # noqa: E402
 from harness.dispatch import Dispatcher                       # noqa: E402
 from harness.loop import Loop                                 # noqa: E402
-from harness.store import blobstore, db, findings             # noqa: E402
+from harness.store import blobstore, db, findings, ledger      # noqa: E402
 from harness.substrate import contract                        # noqa: E402
 
 _OBJECTIVE = """objective:
@@ -46,8 +46,8 @@ policy:
 {objective}"""
 
 
-def _card(cid, preconds, yields):
-    return {"id": cid, "version": "1.0.0", "applicability": ['asset.type == "web_api"'],
+def _card(cid, preconds, yields, appl=None):
+    return {"id": cid, "version": "1.0.0", "applicability": appl or ['asset.type == "web_api"'],
             "preconditions": preconds, "yields_on_success": yields, "blast_tier": 1,
             "taxonomy": {"cwe": ["CWE-89"]},
             "severity_rubric": {"base": "high",
@@ -338,6 +338,91 @@ def test_objective_outcome_is_embedded_in_the_report_and_validates():
         outcome = res.report["objective_outcome"]
         assert outcome["status"] == "achieved" and outcome["id"] == "obj-dbadmin"
         assert res.valid, res.errors                             # the shipped report passes §9.2
+
+
+# --- lateral movement (§8) -----------------------------------------------
+# Two in-scope hosts. A foothold card runs on the app host and yields a `credential`;
+# a second card runs on the db host and needs that credential, which is a foothold on
+# a different host. With movement permitted the chain crosses the host boundary; with
+# it denied the db card is blocked_lateral and never runs. The probe target is always
+# the pair's own in-scope asset, so no scope is ever widened.
+_LAT = """engagement:
+  id: eng-lateral-001
+  authorized_by: test
+  window: {{ start: 2026-11-09T20:00, end: 2026-11-09T23:59 }}
+  max_blast_tier: 2
+scope:
+  in_scope_hosts: [app.sandbox.local, db.sandbox.local]
+  in_scope_cidrs: [10.10.0.0/24]
+  allowed_ports: {{ default: [443, 80] }}
+policy:
+  rate: {{ max_rps_per_target: 1000, max_actions_per_run: 10000 }}
+  tier3_techniques: []
+  lateral_movement: {lateral}
+objective:
+  id: obj-lateral
+  description: "Reach db admin via a foothold on the app host."
+  type: capability
+  target: db.sandbox.local
+  success: "exists(db_admin)"
+"""
+
+FOOT = _card("KB-FOOT", ["reachable"], ["credential"], appl=['host == "app.sandbox.local"'])
+LAT = _card("KB-LAT", ["reachable", "credential"], ["db_admin"], appl=['host == "db.sandbox.local"'])
+KB_LAT = {("KB-FOOT", "1.0.0"): FOOT, ("KB-LAT", "1.0.0"): LAT}
+TM_LAT = {"web": {"asset.type": "web_api", "reachable": True, "addr": "10.10.0.5",
+                  "host": "app.sandbox.local"},
+          "db": {"asset.type": "web_api", "reachable": True, "addr": "10.10.0.6",
+                 "host": "db.sandbox.local"}}
+HITS_LAT = [("10.10.0.5", "KB-FOOT"), ("10.10.0.6", "KB-LAT")]
+
+
+def _led(conn, eng, asset, tid):
+    row = conn.execute(
+        "SELECT status FROM coverage_ledger WHERE engagement_id=? AND asset=? AND technique_id=?",
+        (eng.id, asset, tid)).fetchone()
+    return row["status"] if row else None
+
+
+def _run_lat(conn, eng, disp, sandbox, *, verifier=None):
+    v = verifier or Verifier("ver", conn)
+    return Loop(conn, eng, kb_index=KB_LAT, dispatcher=disp, sandbox=sandbox, planner=Planner(),
+                operator=Operator(), verifier=v).run(TM_LAT)
+
+
+def test_lateral_card_runs_when_movement_is_permitted():
+    with tempfile.TemporaryDirectory() as root:
+        conn, eng, disp, sandbox = _build(root, _LAT.format(lateral="true"),
+                                          adapter=ProbeAdapter(HITS_LAT))
+        res = _run_lat(conn, eng, disp, sandbox)
+        assert _led(conn, eng, "web", "KB-FOOT") == "confirmed"   # foothold gained on app
+        assert _led(conn, eng, "db", "KB-LAT") == "confirmed"     # chain crossed to db
+        assert res.objective["status"] == "achieved"
+        assert {s["technique_id"] for s in res.objective["attack_path"]} == {"KB-FOOT", "KB-LAT"}
+
+
+def test_lateral_card_is_blocked_when_movement_is_denied():
+    with tempfile.TemporaryDirectory() as root:
+        conn, eng, disp, sandbox = _build(root, _LAT.format(lateral="false"),
+                                          adapter=ProbeAdapter(HITS_LAT))
+        res = _run_lat(conn, eng, disp, sandbox)
+        assert _led(conn, eng, "web", "KB-FOOT") == "confirmed"   # the foothold still confirms
+        assert _led(conn, eng, "db", "KB-LAT") == "blocked_by_policy"
+        assert ledger.detail(conn, eng.id, "db", "KB-LAT") == "blocked_lateral"
+        assert res.objective["status"] == "not_achieved"         # the chain could not cross
+
+
+def test_lateral_needs_a_confirmed_foothold_not_a_provisional_one():
+    # movement is permitted, but the verifier cannot reproduce the foothold, so
+    # `credential` never confirms; the db card is never a lateral candidate and never
+    # runs (finder-is-not-verifier carries across the host boundary too).
+    with tempfile.TemporaryDirectory() as root:
+        conn, eng, disp, sandbox = _build(root, _LAT.format(lateral="true"),
+                                          adapter=ProbeAdapter(HITS_LAT))
+        res = _run_lat(conn, eng, disp, sandbox, verifier=Verifier("ver", conn, reproduce=False))
+        assert _led(conn, eng, "web", "KB-FOOT") == "inconclusive"
+        assert _led(conn, eng, "db", "KB-LAT") is None            # never pending, never blocked
+        assert res.objective["status"] == "not_achieved"
 
 
 def main():

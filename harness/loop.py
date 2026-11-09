@@ -117,6 +117,15 @@ def _applicable(card, facts):
     return True
 
 
+def _card_identifiers(card):
+    """The fact names a card reads across its applicability and preconditions, used to
+    tell which cross-host facts a card actually depends on (HC-OBJ-01 §8.1)."""
+    names = set()
+    for expr in (card.get("applicability") or []) + (card.get("preconditions") or []):
+        names |= predicates.identifiers(expr)
+    return names
+
+
 def phase_threat_model(target_model, kb_index):
     """Assets x applicable KB cards -> candidate pairs (HC-AGENT-01 §4).
 
@@ -378,24 +387,77 @@ class Loop:
 
     def _frontier_pending(self):
         """Pairs whose applicability and preconditions both hold over the live
-        confirmed board and that the ledger has not processed (§6.1)."""
+        confirmed board and that the ledger has not processed (§6.1).
+
+        A card that holds over the asset's own host is pending as usual. A card that
+        holds only once a confirmed foothold on a different in-scope host is merged in
+        is a lateral move (§8.1): with `lateral_movement` it is pending; without it the
+        pair is marked `blocked_by_policy / blocked_lateral` and never runs, so a
+        negative result still names why. The probe target is always the pair's own
+        in-scope asset, so a foothold changes only which techniques apply, never which
+        hosts are reachable (the no-scope-widening invariant, §8.2)."""
         pending = []
         for asset in sorted(self.target_model):
-            facts = self._facts_for(asset)
+            own = self._facts_for(asset)
             for (tid, ver) in sorted(self.kb_index):
+                if ledger.done(self.conn, self.eng.id, asset, tid):
+                    continue
                 card = self.kb_index[(tid, ver)]
-                if (_applicable(card, facts) and self._preconditions_met(card, facts)
-                        and not ledger.done(self.conn, self.eng.id, asset, tid)):
-                    pending.append(Pair(asset, tid, ver))
+                pair = Pair(asset, tid, ver)
+                if _applicable(card, own) and self._preconditions_met(card, own):
+                    pending.append(pair)                   # holds on the asset's own host
+                    continue
+                if self.board is None:
+                    continue                               # coverage path: no board, no chaining
+                lateral = self._lateral_facts(asset, card, own)
+                if not lateral:
+                    continue                               # no cross-host dependency
+                merged = {**lateral, **own}
+                if not (_applicable(card, merged) and self._preconditions_met(card, merged)):
+                    continue                               # the foothold does not unlock it
+                if self.eng.lateral_movement:
+                    pending.append(pair)                   # lateral chain permitted (§8.1)
+                else:
+                    self._mark(pair, "blocked_by_policy", detail="blocked_lateral")
         return pending
 
     def _facts_for(self, asset):
-        """The fact view a card is evaluated over. On the coverage path this is the
-        recon facts; on the objective path it is the confirmed board at the asset's
-        host, so a confirmed yield from an earlier card is visible to the next."""
+        """The fact view a card is evaluated over, on the asset's own host. On the
+        coverage path this is the recon facts; on the objective path it is the
+        confirmed board at the asset's host, so a confirmed yield from an earlier card
+        is visible to the next. Cross-host foothold facts are added only by
+        `_effective_facts`, and only when the engagement permits lateral movement."""
         if self.board is None:
             return self.target_model.get(asset, {})
         return self.board.view(self._scope_of(asset), tier=CONFIRMED)
+
+    def _lateral_facts(self, asset, card, own):
+        """Confirmed facts a card references that live on a different in-scope host
+        than `asset` and that the asset does not already hold: the foothold, credential
+        or session a lateral chain pivots on (§8.1). Host-local recon facts are present
+        on every host, so only a capability gained elsewhere ever registers here, which
+        is what separates a lateral move from ordinary same-host chaining."""
+        refs = _card_identifiers(card)
+        if not refs:
+            return {}
+        host = self._scope_of(asset).get("host")
+        out = {}
+        for fact in self.board.current():
+            if (fact.tier == CONFIRMED and fact.name in refs and fact.name not in own
+                    and fact.scope.get("host") not in (None, host)):
+                out[fact.name] = fact.value
+        return out
+
+    def _effective_facts(self, asset, card):
+        """The fact view a card is hunted over: its own-host facts, plus the cross-host
+        foothold facts it references when `lateral_movement` is permitted. Mirrors the
+        merge `_frontier_pending` used to admit the pair, so a lateral pair that was
+        admitted also meets its preconditions when hunted (§8.1, §8.3)."""
+        own = self._facts_for(asset)
+        if self.board is None or not self.eng.lateral_movement:
+            return own
+        lateral = self._lateral_facts(asset, card, own)
+        return {**lateral, **own} if lateral else own
 
     def _scope_of(self, asset):
         facts = self.target_model.get(asset, {})
@@ -418,7 +480,7 @@ class Loop:
         if card is None:
             self._mark(pair, "not_applicable")
             return None
-        facts = self._facts_for(pair.asset)
+        facts = self._effective_facts(pair.asset, card)          # own host + any permitted foothold
         if not self._preconditions_met(card, facts):
             self._mark(pair, "not_applicable")
             return None
@@ -569,5 +631,5 @@ class Loop:
             "SELECT probe_event_id FROM finding_event WHERE finding_id=? AND side='found' ORDER BY probe_event_id",
             (finding_id,))]
 
-    def _mark(self, pair, status):
-        ledger.mark(self.conn, self.eng.id, pair.asset, pair.technique_id, status)
+    def _mark(self, pair, status, detail=None):
+        ledger.mark(self.conn, self.eng.id, pair.asset, pair.technique_id, status, detail=detail)

@@ -194,7 +194,7 @@ Objective completion is evaluated deterministically by `_objective_met`: the §4
 The proof is harness-observed, never model-asserted (§3): when a finding confirms, `_record_proof` reads the confirming probe's recorded signals and writes a confirmed proof fact (the retrieved canary's SHA-256, or the fired in-sandbox marker), and `_proof_holds` then compares the canary hash to `proof.sha256` or checks the marker, so a confirmed finding whose predicate holds but whose hash does not match is `not_achieved` and no role can flip it (a `capability` objective's proof is the confirmed fact itself).
 The outcome (`achieved` / `not_achieved` / `not_applicable`, the proof summary, the `attack_path` of confirmed findings, and the `reached_facts` when short) is recorded on the run result; `on_success: stop` ends the frontier on completion, and passive-only is always `not_achieved` (§9.2).
 Covered by `tests/test_frontier.py`: chaining (a confirmed yield opens the next card, a provisional one does not, passive chains nothing, no-objective takes the coverage path) and completion (a capability objective is achieved with its attack path, a canary objective needs its proof hash to match, a short chain lists the facts it reached, `on_success: stop` halts the frontier, and passive is not achieved).
-The precise backward-trace that prunes off-path findings from `attack_path` is built in §9.3, and the §8 lateral gate and the §7 planner relevance key remain.
+The precise backward-trace that prunes off-path findings from `attack_path` is built in §9.3 and the §8 lateral gate in §8.4; the §7 planner relevance key remains.
 
 ## 7. Objective-aware planning (delta to the Planner)
 
@@ -233,6 +233,17 @@ A foothold is modeled as a capability fact (a credential, token, or network-posi
 Subsequent probes are still issued by the attacker VM's allow-listed adapters, now authorized by the acquired credential or aimed at a host recon places behind the first, which preserves containment (HC-SUB-01 G4): no role ever holds a shell on a compromised host.
 Executing tooling from inside a compromised host (a true on-host pivot) is a separately gated, deferred capability with its own containment analysis, the same stance HC-KB-10 takes on weaponized memory exploitation.
 
+### 8.4 Status
+
+The lateral gate is implemented in `harness/loop.py`, with a ledger sub-reason in `harness/store/ledger.py`.
+In the frontier loop, a card is evaluated first over the confirmed facts at the pair's own host; if it does not hold there, `_lateral_facts` collects the confirmed facts the card references that live on a different in-scope host and that the pair's host does not already hold.
+Because host-local recon facts (reachable, asset.type, host) are seeded for every asset, only a capability gained elsewhere (a credential, token, or session) ever registers, which is exactly what separates a lateral move from ordinary same-host chaining.
+When such a cross-host foothold would make the card applicable, `policy.lateral_movement: true` admits the pair and `_effective_facts` merges the foothold into the view the pair is hunted over, so the acquired credential authorizes the probe; `false` marks the pair `blocked_by_policy` with ledger detail `blocked_lateral` and never runs it, so the `blocked_by_policy` count in the coverage summary carries the denied move and `ledger.detail` names why.
+A confirmed foothold is required: a merely provisional yield never registers as a lateral fact, so finder-is-not-verifier holds across the host boundary too.
+The probe target is always the pair's own in-scope asset, never a host the foothold named, so a foothold changes which techniques apply but never which hosts are reachable; `scope.validate` and `blast.gate` still run on every probe and the gateway still default-denies, which is the no-scope-widening invariant (§8.2).
+Covered by `tests/test_frontier.py` (a lateral card runs when movement is permitted and the objective is achieved across hosts, is `blocked_by_policy / blocked_lateral` and the objective `not_achieved` when denied, and is never a candidate while its foothold is only provisional) and `tests/test_store.py` (the ledger records and clears a sub-reason without splitting the summary).
+The §7 planner relevance key remains.
+
 ## 9. Reporting the objective (delta to HC-FIND-01 §7)
 
 ### 9.1 The objective_outcome section
@@ -269,7 +280,7 @@ The report delta is implemented in `harness/report.py` and `harness/loop.py`.
 The `attack_path` is no longer every confirmed finding in id order: `loop._attack_path` traces the objective's required facts (the `success` predicate's identifiers via the new `predicates.identifiers`, plus the recorded proof facts) back through `yields_on_success <- preconditions` over the confirmed board, keeps only the findings that transitively contributed, and orders them by precondition depth, so a branch that converges reads recon-to-goal and an off-path confirmed finding is pruned rather than listed.
 `validate_report` gains the §9.2 checks: an `achieved` outcome must carry a non-empty `attack_path` whose every step is a confirmed, independently verified finding in the report, a matched canary hash or a fired marker for its proof kind, and never the `passive-only` mode; a `not_achieved` outcome must list `reached_facts`.
 Covered by `tests/test_frontier.py` (the outcome is embedded and the shipped report validates, and an off-path confirmed finding is pruned from the kill chain) and `tests/test_findings_report.py` (the §9.2 validator branches, and `predicates.identifiers` reads exactly the facts a predicate depends on).
-The §8 lateral gate and the §7 planner relevance key remain.
+The §7 planner relevance key remains.
 
 ## 10. Deltas to existing specs and code (applied at implementation time)
 

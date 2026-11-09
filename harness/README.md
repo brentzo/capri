@@ -276,6 +276,26 @@ claim rather than trusting it.
 - `predicates.py` - adds `identifiers(expr)`, the fact names a predicate depends on,
   which is how the trace learns what the objective requires.
 
+## What's here (the lateral-movement gate)
+
+HC-OBJ-01 §8: a chain may cross from one in-scope host to another only when the
+contract permits it, and a foothold never widens scope.
+
+- `loop.py` - in the frontier, a card is evaluated first over the confirmed facts at
+  the pair's own host. If it does not hold there, `_lateral_facts` gathers the
+  confirmed facts the card references that live on a *different* in-scope host and
+  that this host lacks - the foothold a lateral chain pivots on (host-local recon
+  facts are present everywhere, so only a capability gained elsewhere registers).
+  When such a foothold would make the card applicable, `lateral_movement: true`
+  admits the pair and `_effective_facts` merges the foothold into the hunt view;
+  `false` marks the pair `blocked_by_policy` with ledger detail `blocked_lateral` and
+  never runs it. A merely provisional foothold never counts, so finder-is-not-verifier
+  holds across the host boundary too. The probe target stays the pair's own in-scope
+  asset, so a foothold changes which techniques apply, never which hosts are reachable.
+- `store/ledger.py` - `mark` takes an optional `detail` sub-reason (a new nullable
+  column) and `detail()` reads it back, so a negative result names *why* a pair was
+  blocked without multiplying the status vocabulary; `summary` is unchanged.
+
 ## Run
 
 ```sh

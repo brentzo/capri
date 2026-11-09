@@ -108,6 +108,7 @@ CREATE TABLE IF NOT EXISTS coverage_ledger (
   asset         TEXT NOT NULL,
   technique_id  TEXT NOT NULL,
   status        TEXT NOT NULL,   -- pending|not_applicable|blocked_by_policy|attempted|lead|confirmed|rejected|inconclusive
+  detail        TEXT,            -- optional sub-reason, e.g. blocked_lateral under blocked_by_policy (HC-OBJ-01 §8)
   updated_at    TEXT NOT NULL,
   PRIMARY KEY (engagement_id, asset, technique_id)
 );
