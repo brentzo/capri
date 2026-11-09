@@ -37,7 +37,8 @@ from harness.planner import DeterministicPlanner               # noqa: E402
 from harness.recon import phase_recon                          # noqa: E402
 from harness.roles import ModelOperator, ModelVerifier         # noqa: E402
 from harness.sandbox.adapters import (                         # noqa: E402
-    BflaAdapter, HttpRequestAdapter, HttpxAdapter, IdorAdapter, NmapAdapter, SqliAdapter)
+    BflaAdapter, HttpRequestAdapter, HttpxAdapter, IdorAdapter, JwtAdapter,
+    NmapAdapter, SqliAdapter)
 from harness.sandbox.docker import DockerSandbox               # noqa: E402
 from harness.sandbox.probe import DockerProbe                  # noqa: E402
 from harness.store import blobstore, db                        # noqa: E402
@@ -149,10 +150,24 @@ BFLA_CARD = {
     "probe_steps": [{"tool": "bfla", "intent": "forced_browsing", "path": "/admin",
                      "login_path": "/login", "login_user": "1"}],
 }
+# An eighth technique: JWT algorithm confusion. The harness forges an unsigned (alg:none)
+# token and a bogus-signature one; if the server accepts the unsigned token but rejects
+# the bogus one, it honors alg:none and trusts forged claims, which the harness owns.
+JWT_CARD = {
+    "id": "KB-LIVE-JWT-001", "version": "1.0.0",
+    "applicability": ['asset.type == "web_service"'], "preconditions": ["reachable"],
+    "yields_on_success": [], "blast_tier": 1, "taxonomy": {"cwe": ["CWE-347"]},
+    "severity_rubric": {"base": "high",
+                        "cvss_base_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:N/SC:N/SI:N/SA:N"},
+    "success_signal": {"type": "jwt_alg_confusion", "evaluator": "deterministic",
+                       "assert": "unsigned_token_accepted_while_bogus_signature_rejected"},
+    "probe_steps": [{"tool": "jwt", "intent": "alg_confusion", "path": "/account",
+                     "params": {"id": "1"}}],
+}
 KB = {("KB-LIVE-SVC-001", "1.0.0"): CARD, ("KB-LIVE-SVC-002", "1.0.0"): NMAP_CARD,
       ("KB-LIVE-WEB-001", "1.0.0"): WEB_CARD, ("KB-LIVE-XSS-001", "1.0.0"): XSS_CARD,
       ("KB-LIVE-SQLI-001", "1.0.0"): SQLI_CARD, ("KB-LIVE-IDOR-001", "1.0.0"): IDOR_CARD,
-      ("KB-LIVE-BFLA-001", "1.0.0"): BFLA_CARD}
+      ("KB-LIVE-BFLA-001", "1.0.0"): BFLA_CARD, ("KB-LIVE-JWT-001", "1.0.0"): JWT_CARD}
 
 # A deliberately vulnerable stand-in app, seeded into the target at provision time so the
 # reflected-XSS technique has a real hole to find; it never leaves the egress-denied range.
@@ -255,7 +270,8 @@ def main():
                         "http": HttpRequestAdapter(sb.attacker, eng.pinned),
                         "sqli": SqliAdapter(sb.attacker, eng.pinned),
                         "idor": IdorAdapter(sb.attacker, eng.pinned),
-                        "bfla": BflaAdapter(sb.attacker, eng.pinned)}
+                        "bfla": BflaAdapter(sb.attacker, eng.pinned),
+                        "jwt": JwtAdapter(sb.attacker, eng.pinned)}
             disp = Dispatcher(conn, blobstore.BlobStore(root), eng, adapters,
                               ratelimit.RateLimiter(1000, now=lambda: 0.0))
             res = Loop(conn, eng, kb_index=KB, dispatcher=disp, sandbox=sb,

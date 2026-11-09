@@ -48,14 +48,19 @@ def _jwt_issue(claims):
 
 
 def _jwt_verify(token):
-    # Strict HS256 verification: the signature must match. (The JWT algorithm-confusion
-    # technique relaxes this in a later slice; here only a correctly signed token passes.)
     try:
         head, payload, sig = token.split(".")
+        header = json.loads(_b64u_dec(head))
+        claims = json.loads(_b64u_dec(payload))
+        # VULNERABLE BY DESIGN: honors alg "none", accepting an unsigned token whose
+        # claims the caller forged (JWT algorithm confusion). A correct verifier would
+        # reject alg "none" outright and only trust a signature it recomputed.
+        if header.get("alg") == "none":
+            return claims
         expected = _b64u(hmac.new(_JWT_SECRET, ("%s.%s" % (head, payload)).encode(),
                                   hashlib.sha256).digest())
         if hmac.compare_digest(expected, sig):
-            return json.loads(_b64u_dec(payload))
+            return claims
     except Exception:
         return None
     return None

@@ -321,9 +321,9 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   `http.server` stand-in, or, when `listener_app` is set, a python app seeded in over
   stdin (never baked into the golden image); the live runner seeds `infra/sandbox/vulnweb.py`,
   a deliberately vulnerable app (it reflects one query parameter unencoded, concatenates
-  another into a SQL query, and exposes a toy JWT login whose /account skips the ownership
-  check and whose /admin skips the role check), so the XSS, SQLi, IDOR, and BFLA
-  techniques have a real hole to confirm.
+  another into a SQL query, and exposes a toy JWT login whose verifier honors alg:none,
+  whose /account skips the ownership check, and whose /admin skips the role check), so the
+  XSS, SQLi, IDOR, BFLA, and JWT-confusion techniques have a real hole to confirm.
   The scope guard is an nftables
   ruleset the host installs into the attacker's netns - default-deny egress, allowing
   only the pinned in-scope IPs on their allowed ports (`scope.ports_for`). `guard_proof`
@@ -383,7 +383,11 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   `BflaAdapter`, the `bfla` tool, is the function-level counterpart: it calls a privileged
   function with no token and then with an ordinary user's token, reporting broken
   function-level authorization only when the anonymous call is refused but the user's
-  executes - a public endpoint that answers both is not flagged.
+  executes - a public endpoint that answers both is not flagged. `JwtAdapter`, the `jwt`
+  tool, attacks the token: it forges an unsigned (alg:none) token and a bogus-signature
+  one and reports JWT algorithm confusion only when the server accepts the unsigned token
+  but rejects the bogus-signature one, proving it honors alg:none rather than ignoring
+  verification entirely.
   The attacker container runs the toolchain image (`infra/sandbox/Dockerfile.attacker`,
   built for amd64 and arm64, httpx checksum-pinned) while targets stay the minimal node
   image, and the attacker still holds no `NET_ADMIN`, so the host-owned scope guard
@@ -391,9 +395,9 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   real tool output (or, for the crafted probes, a runner that simulates the vulnerable
   server) with no Docker and no tool present (`tests/test_adapters.py`); a live
   model-driven run confirmed service-disclosure, web-fingerprint, reflected-XSS,
-  boolean-blind-SQLi, broken-object-level-authorization, and broken-function-level-
-  authorization findings alongside the baseline probe, the Operator proposing each probe
-  and the Verifier reproducing on a disjoint provider.
+  boolean-blind-SQLi, broken-object-level-authorization, broken-function-level-
+  authorization, and JWT-algorithm-confusion findings alongside the baseline probe, the
+  Operator proposing each probe and the Verifier reproducing on a disjoint provider.
 
 ## What's here (the capri CLI and model-plane setup)
 

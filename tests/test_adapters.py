@@ -14,8 +14,10 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from urllib.parse import parse_qs, urlparse                              # noqa: E402
+import base64                                                            # noqa: E402
 from harness.sandbox.adapters import (                                   # noqa: E402
-    BflaAdapter, HttpRequestAdapter, HttpxAdapter, IdorAdapter, NmapAdapter, SqliAdapter,
+    BflaAdapter, HttpRequestAdapter, HttpxAdapter, IdorAdapter, JwtAdapter,
+    NmapAdapter, SqliAdapter,
     _parse_http_response, _parse_httpx, _parse_nmap_services)
 from harness.sandbox.base import RunResult                               # noqa: E402
 
@@ -450,6 +452,61 @@ def test_idor_without_a_usable_login_is_not_a_hit():
          "args": {"path": "/account", "id_param": "id", "login_path": "/login", "own_id": "1"}})
     assert res["deterministic_signals"]["authenticated"] is False
     assert res["deterministic_signals"]["hit"] is False
+
+
+def _token_alg(token):
+    try:
+        head = token.split(".")[0]
+        return json.loads(base64.urlsafe_b64decode(head + "=" * (-len(head) % 4))).get("alg")
+    except Exception:
+        return None
+
+
+class JwtVerifierRunner:
+    """Simulates a protected endpoint's JWT check: it decodes the presented token's alg.
+    When vulnerable it accepts alg 'none' (no signature); it always rejects a token with a
+    real (here always bogus) HS256 signature, exactly as the live verifier behaves."""
+
+    def __init__(self, *, accept_alg_none=True):
+        self.accept_alg_none = accept_alg_none
+        self.calls = []
+
+    def __call__(self, argv, input=None, timeout=None):
+        self.calls.append(argv)
+        url, headers = _call_url_headers(argv)
+        auth = headers.get("Authorization", "")
+        token = auth[7:] if auth.startswith("Bearer ") else ""
+        acct = (parse_qs(urlparse(url).query).get("id") or ["1"])[0]
+        if _token_alg(token) == "none" and self.accept_alg_none:
+            return RunResult(0, f"STATUS 200\n---BODY---\naccount {acct}: secret-{acct}", "")
+        return RunResult(0, "STATUS 401\n---BODY---\nunauthorized", "")
+
+
+def test_jwt_confusion_accepts_an_unsigned_forged_token():
+    res = JwtAdapter("atk", PINNED, run=JwtVerifierRunner()).run(
+        {"tool": "jwt", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/account", "params": {"id": "1"}}})
+    sig = res["deterministic_signals"]
+    assert res["status"] == "ok"
+    assert sig["hit"] is True and sig["jwt_alg_confusion"] is True
+    assert sig["alg_none_status"] == 200 and sig["bad_sig_status"] == 401
+
+
+def test_jwt_strict_verifier_is_not_a_hit():
+    res = JwtAdapter("atk", PINNED, run=JwtVerifierRunner(accept_alg_none=False)).run(
+        {"tool": "jwt", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/account", "params": {"id": "1"}}})
+    assert res["deterministic_signals"]["hit"] is False
+    assert res["deterministic_signals"]["alg_none_status"] == 401    # alg:none rejected
+
+
+def test_jwt_forges_an_alg_none_and_a_bogus_signature_token():
+    fake = JwtVerifierRunner()
+    JwtAdapter("atk", PINNED, run=fake).run(
+        {"tool": "jwt", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/account", "params": {"id": "1"}}})
+    algs = {_token_alg(_call_url_headers(c)[1].get("Authorization", "")[7:]) for c in fake.calls}
+    assert algs == {"none", "HS256"}                                 # one of each, both harness-forged
 
 
 def test_bfla_confirms_missing_function_level_authorization():

