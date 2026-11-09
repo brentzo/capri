@@ -24,6 +24,7 @@ from harness import ratelimit, roleio                          # noqa: E402
 from harness.dispatch import Dispatcher                        # noqa: E402
 from harness.loop import Loop                                  # noqa: E402
 from harness.planner import DeterministicPlanner               # noqa: E402
+from harness.recon import phase_recon                          # noqa: E402
 from harness.sandbox.docker import DockerSandbox               # noqa: E402
 from harness.sandbox.probe import DockerProbe                  # noqa: E402
 from harness.store import blobstore, db                        # noqa: E402
@@ -103,9 +104,8 @@ def main():
             return 1
         print("all five guarantees proved; running the engagement under sandbox enforcement")
 
-        ip = str(eng.pinned["t1.sandbox.local"])
-        target_model = {"t1": {"asset.type": "web_service", "reachable": True,
-                               "addr": ip, "host": "t1.sandbox.local"}}
+        target_model = phase_recon(sb.attacker, eng)           # live recon, not hand-built
+        print("recon:", target_model)
         with tempfile.TemporaryDirectory() as root:
             conn = db.connect()
             probe = DockerProbe(sb.attacker, eng.pinned)

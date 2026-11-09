@@ -325,6 +325,41 @@ def test_docker_probe_resolves_a_pinned_host_to_its_guarded_ip():
     assert seen["ip"] == "10.90.0.3"               # aimed at the IP the scope guard enforces on
 
 
+# --- live reconnaissance (HC-AGENT-01 phase_recon) ----------------------
+def _pinned_eng():
+    eng = _eng()
+    eng.pin({"t1.sandbox.local": "10.90.0.3"})
+    return eng
+
+
+def _recon_runner(*, open_ports=(), http=()):
+    open_ports, http = set(open_ports), set(http)
+
+    def run(argv, *, input=None, timeout=30):
+        src = argv[argv.index("-c") + 1]
+        ip, port = argv[argv.index("-c") + 2], int(argv[argv.index("-c") + 3])
+        if "OPEN" in src:                                      # the TCP port probe
+            return RunResult(0, "OPEN" if (ip, port) in open_ports else "CLOSED", "")
+        return RunResult(0, "STATUS 200" if (ip, port) in http else "ERR", "")  # HTTP probe
+    return run
+
+
+def test_phase_recon_builds_the_target_model_from_live_probes():
+    from harness.recon import phase_recon
+    run = _recon_runner(open_ports=[("10.90.0.3", 8080)], http=[("10.90.0.3", 8080)])
+    model = phase_recon("hc-range-attacker", _pinned_eng(), run=run)
+    assert model == {"t1": {"host": "t1.sandbox.local", "addr": "10.90.0.3",
+                            "reachable": True, "open_ports": [8080],
+                            "asset.type": "web_service", "http_status": 200}}
+
+
+def test_phase_recon_marks_an_unreachable_target_and_omits_service_type():
+    from harness.recon import phase_recon
+    model = phase_recon("a", _pinned_eng(), run=_recon_runner())   # nothing open
+    assert model["t1"]["reachable"] is False and model["t1"]["open_ports"] == []
+    assert "asset.type" not in model["t1"]
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

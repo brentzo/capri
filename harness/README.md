@@ -330,10 +330,14 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
 - `sandbox/probe.py` - `DockerProbe`, the live tool adapter. After the dispatcher
   passes scope/blast/rate, it runs an HTTP probe on the attacker container against a
   pinned in-scope target (resolving a pinned name to the IP the guard enforces on) and
-  reports the raw signals the harness triages. `tools/run_engagement.py` wires it all:
-  parse a contract, provision the real range, gate on `proofs_pass`, and drive the
-  control loop so a live run confirms a finding (finder and verifier disjoint) and
-  produces a validated report under sandbox enforcement.
+  reports the raw signals the harness triages. `recon.py:phase_recon` is the live
+  recon phase: it probes each pinned in-scope target on its allowed ports from the
+  attacker container and returns the `{asset: facts}` target model the threat-model
+  phase consumes (reachable, open ports, service type), reading state only and within
+  scope. `tools/run_engagement.py` wires it all: parse a contract, provision the real
+  range, gate on `proofs_pass`, recon the targets, and drive the control loop, so a
+  live run confirms a finding (finder and verifier disjoint) and produces a validated
+  report under sandbox enforcement.
   Every docker/nsenter call goes through an injected runner, so the logic is
   unit-tested with no Docker present (`tests/test_sandbox.py`); the live path is proven
   by `tools/sandbox_selftest.py` (golden image and notes in `infra/sandbox/`).
