@@ -54,7 +54,12 @@ def main():
         print(f"  [{'ok ' if rt['pass'] else 'FAIL'}] marker survives restore: "
               f"expected {rt.get('expected')!r}, got {rt.get('got')!r}")
         print("snapshot round-trip (G3):", "PASS" if rt["pass"] else "FAIL")
-        return 0 if (guard["pass"] and rt["pass"]) else 1
+        esc = sb.escape_attempt()
+        for a in esc["assertions"]:
+            print(f"  [{'ok ' if a['ok'] else 'FAIL'}] {a['name']}: {a['describes']}")
+        print(f"escape attempt (G4): {'PASS' if esc['pass'] else 'FAIL'} "
+              f"(runtime: {esc['hardened_runtime']})")
+        return 0 if (guard["pass"] and rt["pass"] and esc["pass"]) else 1
     finally:
         sb.kill()
         print("range torn down")

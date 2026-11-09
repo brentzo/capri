@@ -315,8 +315,14 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   give reproducibility (G3): `snapshot` commits each target container to an image and
   `restore` recreates it from that image at the same pinned IP (the attacker and guard
   are untouched), and `snapshot_round_trip` proves it per §8.2 (marker survives an
-  overwrite-then-restore). `proofs_pass` runs the implemented proofs but stays `False`
-  until the G4/G5 drills land, so this backend alone keeps the harness passive-only.
+  overwrite-then-restore). `escape_attempt` proves containment (G4, §8.3): from the
+  attacker it probes the operator host, the range gateway (the host's interface on the
+  range, closed only by the guard), and an unrelated network, asserting all
+  unreachable; `provision` runs the containers under gVisor's `runsc` runtime when the
+  host offers it (auto-detected, no KVM needed), so an escape is contained in a
+  user-space kernel. `proofs_pass` runs the three implemented proofs but stays `False`
+  until the G5 kill-switch drill lands, so this backend alone keeps the harness
+  passive-only.
   Every docker/nsenter call goes through an injected runner, so the logic is
   unit-tested with no Docker present (`tests/test_sandbox.py`); the live path is proven
   by `tools/sandbox_selftest.py` (golden image and notes in `infra/sandbox/`).

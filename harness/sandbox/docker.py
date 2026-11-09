@@ -74,16 +74,20 @@ class DockerSandbox(Sandbox):
 
     def __init__(self, *, run=None, node_image="hc-node:golden", network="hc-range",
                  subnet="10.90.0.0/24", internet_canary=("1.1.1.1", 443),
-                 public_name="example.com", clock=now):
+                 public_name="example.com", unrelated_net_ip="172.17.0.1", clock=now):
         self._run = run or default_run
         self.node_image = node_image
         self.network = network
         self.subnet = ipaddress.ip_network(subnet)
         self.internet_canary = internet_canary
         self.public_name = public_name
+        self.unrelated_net_ip = unrelated_net_ip   # a second host network, for the §8.3 escape test
         self._clock = clock
         self.attacker = f"{network}-attacker"
         self.guard_table = "hc_guard"
+        self._runtime = None        # a hardened OCI runtime (gVisor runsc) when the host has one
+        self.hardened = False
+        self._host_ip = None        # the operator host's own IP, a §8.3 escape target
         self._eng = None
         self._attacker_pid = None
         self._targets = {}          # host -> (container_name, ip_str)
@@ -120,21 +124,22 @@ class DockerSandbox(Sandbox):
             raise SandboxError("cannot provision: the contract declares no in_scope_hosts")
         self._eng = engagement
         self.kill()                                             # start from a clean range
+        self._runtime = self._detect_runtime()                 # gVisor if the host offers it (§6.2)
+        self.hardened = self._runtime == "runsc"
+        self._host_ip = self._discover_host_ip()
 
         hosts = self.subnet.hosts()
         self._out_of_scope_ip = str(next(hosts))               # .1: in-range, never in scope
         attacker_ip = str(next(hosts))                         # .2
         self._docker("network", "create", "--internal",
                      "--subnet", str(self.subnet), self.network)
-        self._docker("run", "-d", "--name", self.attacker, "--network", self.network,
-                     "--ip", attacker_ip, self.node_image)     # no NET_ADMIN by design
+        self._docker(*self._run_args(self.attacker, attacker_ip, self.node_image))
 
         pinned, pinned_ports = {}, []
         for host in engagement.in_scope_hosts:
             ip = str(next(hosts))
             name = f"{self.network}-tgt-{len(self._targets)}"
-            self._docker("run", "-d", "--name", name, "--network", self.network,
-                         "--ip", ip, self.node_image)
+            self._docker(*self._run_args(name, ip, self.node_image))
             pinned[host] = ip
             self._targets[host] = (name, ip)
             ports = scope.ports_for(engagement, ipaddress.ip_address(ip))
@@ -165,16 +170,18 @@ class DockerSandbox(Sandbox):
             in_scope_reachable=self._tcp(self._in_scope_ip, self._guard_port))
 
     def proofs_pass(self):
-        """Aggregate G1-G5 (§8). The guard proof (G1/G2, §8.1) and the snapshot round-
-        trip (G3, §8.2) are implemented and must both hold; the escape-attempt (G4) and
-        kill-switch drill (G5) are the next slices, so this stays False and the harness
-        stays passive-only until all five are proven (§3: an unproven guarantee is
-        treated as absent)."""
+        """Aggregate G1-G5 (§8). The guard proof (G1/G2, §8.1), the snapshot round-trip
+        (G3, §8.2), and the escape-attempt (G4, §8.3) are implemented and must all hold;
+        the kill-switch drill (G5) is the last slice, so this stays False and the
+        harness stays passive-only until all five are proven (§3: an unproven guarantee
+        is treated as absent)."""
         if not self.guard_proof().get("pass"):
             return False
         if not self.snapshot_round_trip().get("pass"):
             return False
-        return False                                           # G4 and G5 still pending
+        if not self.escape_attempt().get("pass"):
+            return False
+        return False                                           # G5 (kill-switch drill) still pending
 
     def snapshot(self):
         """Commit every target container to an image and return a snapshot id, so the
@@ -203,10 +210,27 @@ class DockerSandbox(Sandbox):
             raise SandboxError(f"unknown snapshot {snapshot_id}")
         for host, (name, ip, image) in images.items():
             self._run(["docker", "rm", "-f", name])
-            self._docker("run", "-d", "--name", name, "--network", self.network,
-                         "--ip", ip, image)
+            self._docker(*self._run_args(name, ip, image))
             self._start_listeners(name, self._target_ports.get(host, []))
         return True
+
+    def escape_attempt(self):
+        """Prove G4 (§8.3): from the attacker container, try to reach the operator
+        host's management interface and a second, unrelated host network, and assert
+        both are unreachable. The range gateway is the host's own interface on the
+        range and is the real escape path, closed only by the scope guard; the
+        container runtime is reported so an operator knows whether kernel-escape
+        hardening (gVisor) backs the network containment."""
+        if self._attacker_pid is None:
+            return {"pass": False, "assertions": [], "reason": "range not provisioned"}
+        targets = [(self._out_of_scope_ip, "the range gateway (the operator host's interface on the range)")]
+        if self._host_ip:
+            targets.append((self._host_ip, "the operator host's management interface"))
+        targets.append((self.unrelated_net_ip, "a second, unrelated host network"))
+        assertions = [{"name": f"unreachable:{ip}", "describes": desc, "ok": not self._tcp(ip, 22)}
+                      for ip, desc in targets]
+        return {"pass": all(a["ok"] for a in assertions), "assertions": assertions,
+                "hardened_runtime": self._runtime or "runc"}
 
     def snapshot_round_trip(self):
         """Prove G3 (§8.2): write a marker to a target, snapshot, overwrite the marker,
@@ -240,6 +264,24 @@ class DockerSandbox(Sandbox):
         return True
 
     # --- helpers --------------------------------------------------------
+    def _run_args(self, name, ip, image):
+        """`docker run` args for a range container, under the hardened runtime when one
+        is present, so a container escape is contained in gVisor's user-space kernel
+        rather than the host kernel (§6.2, G4)."""
+        args = ["run", "-d", "--name", name, "--network", self.network, "--ip", ip]
+        if self._runtime:
+            args += ["--runtime", self._runtime]
+        return [*args, image]
+
+    def _detect_runtime(self):
+        r = self._run(["docker", "info", "--format", "{{json .Runtimes}}"])
+        return "runsc" if r.rc == 0 and "runsc" in (r.out or "") else None
+
+    def _discover_host_ip(self):
+        r = self._run(["ip", "route", "get", "1.1.1.1"])
+        toks = r.out.split() if r.rc == 0 else []
+        return toks[toks.index("src") + 1] if "src" in toks else None
+
     def _start_listeners(self, name, ports):
         for port in ports:
             self._docker("exec", "-d", name, "python3", "-m", "http.server", str(port))

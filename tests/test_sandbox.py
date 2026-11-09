@@ -45,11 +45,14 @@ class FakeRunner:
     container filesystem so the snapshot round-trip (commit, overwrite, recreate, read)
     is exercised end to end with no Docker present."""
 
-    def __init__(self, *, reachable=(), dns_resolves=False, pid=4242):
+    def __init__(self, *, reachable=(), dns_resolves=False, pid=4242,
+                 runtimes='{"runc":{"path":"runc"}}', host_ip="203.0.113.9"):
         self.calls = []
         self.reachable = set(reachable)
         self.dns_resolves = dns_resolves
         self.pid = pid
+        self.runtimes = runtimes
+        self.host_ip = host_ip
         self.files = {}       # container -> {path: content}
         self.images = {}      # image tag -> {path: content} (a committed filesystem)
 
@@ -57,6 +60,10 @@ class FakeRunner:
         self.calls.append(list(argv))
         if argv[:4] == ["docker", "inspect", "-f", "{{.State.Pid}}"]:
             return RunResult(0, str(self.pid), "")
+        if argv[:2] == ["docker", "info"]:
+            return RunResult(0, self.runtimes, "")
+        if argv[:3] == ["ip", "route", "get"]:
+            return RunResult(0, f"1.1.1.1 via 10.0.0.1 dev eth0 src {self.host_ip} uid 0", "")
         if argv[:2] == ["docker", "commit"]:
             self.images[argv[3]] = dict(self.files.get(argv[2], {}))
             return RunResult(0, "", "")
@@ -203,15 +210,56 @@ def test_restore_unknown_snapshot_raises():
         assert "unknown snapshot" in str(e)
 
 
+# --- escape attempt (§8.3, G4) and gVisor hardening (§6.2) --------------
+def test_escape_attempt_passes_when_the_host_and_other_nets_are_unreachable():
+    # only the in-scope target is reachable; the range gateway, host, and an unrelated
+    # network are not, so there is no path off the range.
+    run = FakeRunner(reachable=[("10.90.0.3", 8080)])
+    sb = DockerSandbox(run=run)
+    sb.provision(_eng())
+    res = sb.escape_attempt()
+    assert res["pass"] is True, res
+    assert res["hardened_runtime"] == "runc"                   # no gVisor on this stub host
+    assert {a["name"] for a in res["assertions"]} == {
+        "unreachable:10.90.0.1", "unreachable:203.0.113.9", "unreachable:172.17.0.1"}
+
+
+def test_escape_attempt_fails_when_the_operator_host_is_reachable():
+    # a path to the host's management interface is an escape and must fail the proof
+    run = FakeRunner(reachable=[("10.90.0.3", 8080), ("203.0.113.9", 22)])
+    sb = DockerSandbox(run=run)
+    sb.provision(_eng())
+    res = sb.escape_attempt()
+    assert res["pass"] is False
+    assert any(a["name"] == "unreachable:203.0.113.9" and not a["ok"] for a in res["assertions"])
+
+
+def test_provision_uses_gvisor_runtime_when_the_host_offers_it():
+    hardened = FakeRunner(runtimes='{"runsc":{"path":"/usr/bin/runsc"},"runc":{"path":"runc"}}')
+    sb = DockerSandbox(run=hardened)
+    sb.provision(_eng())
+    assert sb.hardened is True
+    assert hardened.ran("run", "--name", "hc-range-attacker", "--runtime", "runsc")
+    # without gVisor the range still provisions, just without the hardened runtime
+    plain = FakeRunner()
+    sb2 = DockerSandbox(run=plain)
+    sb2.provision(_eng())
+    assert sb2.hardened is False
+    attacker_run = next(c for c in plain.calls
+                        if c[:2] == ["docker", "run"] and "hc-range-attacker" in c)
+    assert "--runtime" not in attacker_run
+
+
 def test_proofs_pass_is_false_until_all_five_guarantees_are_proven():
-    # G1/G2 (guard proof) and G3 (snapshot round-trip) pass, but the escape (G4) and
-    # kill-switch (G5) drills are unbuilt, so the aggregate stays False and the harness
-    # stays passive-only (§3).
+    # G1/G2 (guard), G3 (snapshot), and G4 (escape) all pass, but the kill-switch (G5)
+    # drill is unbuilt, so the aggregate stays False and the harness stays passive-only
+    # (§3).
     run = FakeRunner(reachable=[("10.90.0.3", 8080)])
     sb = DockerSandbox(run=run)
     sb.provision(_eng())
     assert sb.guard_proof()["pass"] is True
     assert sb.snapshot_round_trip()["pass"] is True
+    assert sb.escape_attempt()["pass"] is True
     assert sb.proofs_pass() is False
 
 
