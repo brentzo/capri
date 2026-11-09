@@ -170,6 +170,24 @@ still out of repo; what lives here is the wiring and the propose-only contract.
   point; the reasoning-model choice and few-shot are the HC-MODEL-01 bake-off and
   iterate behind this same seam.
 
+## What's here (the Tavily enrichment service)
+
+Optional, advisory vulnerability intelligence (HC-ENRICH-01). It sharpens threat
+modeling and never decides, acts, or touches the sandbox. The Tavily client
+egresses from the trusted host and is infrastructure, injected as a `transport`.
+
+- `enrich.py` - `Enricher.lookup(stack_or_cpe)` refuses a query that is not a bare
+  product/version or CPE identifier (an IP, address, or URL is rejected before any
+  egress, under a generic client identity, never the user's email), then returns
+  the public intel bucketed into cves / advisories / default_creds / writeups,
+  each provenance-tagged (`source: tavily`, `url`, `fetched_at`, `trust: low`).
+  `frame` wraps a result as a delimited untrusted block (via `roleio`) for the
+  enrichment role only; it is advisory, never a success signal or a label, and the
+  model plane brokers the tool to `vk-enrich` alone, never the Operator. Lookups
+  are TTL-cached, and with no transport the service runs `passive-intel-off` so the
+  loop proceeds on the KB. `research` yields only human-review-required card
+  drafts, never an active card.
+
 ## Run
 
 ```sh
@@ -183,6 +201,7 @@ python3 tests/test_planner.py                               # deterministic plan
 python3 tests/test_roleio.py                                # role I/O boundary (parse-or-reject, framing)
 python3 tests/test_modelplane.py                            # Bifrost model plane (vkeys, budgets, diversity)
 python3 tests/test_roles.py                                 # model-backed Operator/Verifier end to end
+python3 tests/test_enrich.py                                # Tavily enrichment (opsec, provenance, framing)
 python3 -m harness.substrate.contract harness/substrate/examples/engagement.example.yaml
 ```
 

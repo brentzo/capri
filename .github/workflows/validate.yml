@@ -46,6 +46,8 @@ jobs:
         run: python3 tests/test_modelplane.py
       - name: Role-session self-tests (HC-AGENT-01 §4.1, §4.2)
         run: python3 tests/test_roles.py
+      - name: Enrichment self-tests (HC-ENRICH-01 §10)
+        run: python3 tests/test_enrich.py
       - name: Example engagement contract parses
         run: python3 -m harness.substrate.contract harness/substrate/examples/engagement.example.yaml
       - name: Business-requirement features are valid and in sync

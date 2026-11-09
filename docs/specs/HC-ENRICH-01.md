@@ -79,6 +79,14 @@ enrich.research(topic)       -> candidate_card_drafts[]                         
 
 Both are exposed only to `vk-enrich` via the Bifrost MCP broker, and all results carry the low-trust provenance tag.
 
+The service is implemented as pure-standard-library policy in `harness/enrich.py` (`Enricher`, `lookup`, `research`).
+The Tavily client egresses from the trusted host and is infrastructure, injected as a `transport`, the same pattern as the Bifrost model transport and the tool adapters, so tests drive the service with a stub.
+`assert_public_identifier` refuses a query that is not a bare product/version or CPE identifier (an IP, an address, or a URL is rejected before any egress), and every query goes out under a generic client identity (`CLIENT_ID`), never the user's email.
+Results are bucketed into cves / advisories / default_creds / writeups, each provenance-tagged (`source: tavily`, `url`, `fetched_at`, `trust: low`), and `frame` renders them through `harness/roleio.py:frame_untrusted` as a delimited untrusted block for the enrichment role only; nothing here hands enrichment to the Operator, and the model plane (HC-MODEL-01 §8) refuses to broker the tool to any vkey but `vk-enrich`.
+Lookups are cached by normalized query with a TTL, and with no transport the service returns `passive-intel-off` so the loop proceeds on the KB alone; `research` only ever yields human-review-required drafts, never an active card.
+The §10 criteria are covered by `tests/test_enrich.py` in CI.
+The live Tavily transport behind the service and its wiring into live recon and threat modeling remain to be built against this seam.
+
 ## 10. Acceptance criteria
 
 - Tavily is never reachable from the range; an enrichment call originates only from the trusted host.
