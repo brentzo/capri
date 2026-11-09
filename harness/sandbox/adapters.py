@@ -10,9 +10,19 @@ unit-tested with no Docker or real tool present. A new capability is a new revie
 adapter here, never a general exec primitive (§5.3); the baseline HTTP probe lives in
 `harness/sandbox/probe.py`.
 """
+import json
 import xml.etree.ElementTree as ET
 
 from harness.sandbox.base import default_run
+
+# Security headers whose absence is itself a lead the client-side and web-auth cards act
+# on (clickjacking, weak CSP, missing HSTS, MIME sniffing). Checked on every httpx hit.
+_SECURITY_HEADERS = (
+    "content-security-policy",
+    "x-frame-options",
+    "strict-transport-security",
+    "x-content-type-options",
+)
 
 
 class _Adapter:
@@ -67,6 +77,74 @@ class NmapAdapter(_Adapter):
                 "services": services,
             },
         }
+
+
+class HttpxAdapter(_Adapter):
+    """Web recon and fingerprinting with ProjectDiscovery `httpx`. Registered as `httpx`.
+
+    Issues one request to a pinned in-scope web target and returns what makes the
+    web-protocol-auth and client-side cards applicable: the status, title, the server and
+    technology fingerprint, the response headers, which security headers are missing, any
+    CORS allow-origin, and any redirect target. It does not follow redirects, since a
+    redirect can leave the asset, so the Location is reported for a card to reason about
+    rather than chased; the scope guard would drop an out-of-scope hop regardless."""
+
+    def run(self, req):
+        ip = self._resolve(req["target"])
+        port = int(req["port"])
+        args = req.get("args") or {}
+        scheme = args.get("scheme") or ("https" if port in (443, 8443) else "http")
+        path = args.get("path", "/")
+        url = f"{scheme}://{ip}:{port}{path}"
+        argv = ["httpx", "-u", url, "-json", "-silent", "-sc", "-title", "-server",
+                "-td", "-cl", "-location", "-include-response-header", "-no-color",
+                "-timeout", "10"]
+        r = self._exec(*argv)
+        raw = (r.out or "").encode("utf-8", "replace") if isinstance(r.out, str) else (r.out or b"")
+        obj = _parse_httpx(r.out or "")
+        # httpx normalizes header names to lowercase with underscores; map back to the
+        # canonical hyphenated names the cards and this module reason about.
+        headers = {k.replace("_", "-").lower(): v for k, v in (obj.get("header") or {}).items()}
+        status_code = int(obj.get("status_code") or 0)
+        hit = bool(obj) and not obj.get("failed", False) and status_code > 0
+        missing = [h for h in _SECURITY_HEADERS if h not in headers] if hit else []
+        return {
+            "status": "ok" if hit else "error",
+            "parsed": {"http": obj},
+            "request_bytes": (" ".join(argv)).encode("utf-8"),
+            "response_bytes": raw,
+            "deterministic_signals": {
+                "hit": hit,
+                "status_code": status_code,
+                "title": obj.get("title"),
+                "webserver": obj.get("webserver"),
+                "tech": obj.get("tech") or [],
+                "content_type": obj.get("content_type"),
+                "location": obj.get("location"),
+                "headers": headers,
+                "missing_security_headers": missing,
+                "cors_allow_origin": headers.get("access-control-allow-origin"),
+                "confidence": 0.9 if hit else 0.0,
+            },
+        }
+
+
+def _parse_httpx(out_text):
+    """Parse httpx `-json` output (one JSON object per line) into the probed URL's result
+    dict. Tolerant: returns {} on no output or unparseable lines, so the adapter reports
+    no hit rather than raising."""
+    obj = {}
+    for line in (out_text or "").splitlines():
+        line = line.strip()
+        if not line or not line.startswith("{"):
+            continue
+        try:
+            cand = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(cand, dict) and ("status_code" in cand or "url" in cand):
+            obj = cand
+    return obj
 
 
 def _parse_nmap_services(xml_text):

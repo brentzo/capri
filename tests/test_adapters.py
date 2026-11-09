@@ -12,7 +12,8 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from harness.sandbox.adapters import NmapAdapter, _parse_nmap_services   # noqa: E402
+from harness.sandbox.adapters import (                                   # noqa: E402
+    HttpxAdapter, NmapAdapter, _parse_httpx, _parse_nmap_services)
 from harness.sandbox.base import RunResult                               # noqa: E402
 
 # Real `nmap -sV -Pn -p 8080 -oX -` output (captured live), trimmed to the shape we parse.
@@ -36,6 +37,33 @@ NMAP_XML_NO_SERVICE = """<?xml version="1.0"?>
 <nmaprun><host><address addr="10.90.0.3" addrtype="ipv4"/>
 <ports><port protocol="tcp" portid="22"><state state="open" reason="syn-ack"/></port></ports>
 </host></nmaprun>"""
+
+# Real `httpx -json ...` output (captured live), one JSON object per line. Base is a bare
+# SimpleHTTPServer with no security headers; SECURE carries CSP/XFO/HSTS/CORS; REDIR is a
+# 302 that reports its Location without httpx following it. httpx lowercases header names
+# and swaps hyphens for underscores, which the adapter normalizes back.
+HTTPX_JSON_BASE = ('{"port":"8080","url":"http://10.90.0.3:8080","title":"Directory listing for /",'
+                   '"scheme":"http","webserver":"SimpleHTTP/0.6 Python/3.12.13","content_type":"text/html",'
+                   '"path":"/","header":{"content_length":"503","content_type":"text/html; charset=utf-8",'
+                   '"date":"Mon, 09 Nov 2026 12:50:27 GMT","server":"SimpleHTTP/0.6 Python/3.12.13"},'
+                   '"a":["10.90.0.3"],"tech":["Python:3.12.13","SimpleHTTP:0.6"],"status_code":200,'
+                   '"content_length":503,"failed":false,"knowledgebase":{"pHash":0}}')
+
+HTTPX_JSON_SECURE = ('{"port":"8080","url":"http://10.90.0.3:8080/secure","title":"Admin","scheme":"http",'
+                     '"webserver":"nginx/1.25.3","content_type":"text/html","path":"/secure",'
+                     '"header":{"access_control_allow_origin":"*","content_security_policy":"default-src self",'
+                     '"content_type":"text/html","date":"Mon, 09 Nov 2026 12:52:40 GMT","server":"nginx/1.25.3",'
+                     '"set_cookie":"sid=abc; HttpOnly; Secure; SameSite=Strict",'
+                     '"strict_transport_security":"max-age=31536000","x_frame_options":"DENY"},'
+                     '"tech":["HSTS","Nginx:1.25.3","Python:3.12.13"],"status_code":200,'
+                     '"content_length":22,"failed":false}')
+
+HTTPX_JSON_REDIR = ('{"port":"8080","url":"http://10.90.0.3:8080/redir",'
+                    '"location":"http://10.90.0.3:8080/secure","scheme":"http",'
+                    '"webserver":"BaseHTTP/0.6 Python/3.12.13","path":"/redir",'
+                    '"header":{"date":"Mon, 09 Nov 2026 12:52:42 GMT",'
+                    '"location":"http://10.90.0.3:8080/secure","server":"BaseHTTP/0.6 Python/3.12.13"},'
+                    '"tech":["Python:3.12.13"],"status_code":302,"content_length":0,"failed":false}')
 
 
 class FakeRunner:
@@ -95,6 +123,75 @@ def test_nmap_malformed_output_is_tolerated_not_raised():
     res = NmapAdapter("atk", PINNED, run=FakeRunner("this is not xml")).run(
         {"tool": "nmap", "target": "10.90.0.3", "port": 80, "args": {}})
     assert res["deterministic_signals"]["hit"] is False        # no hit, no exception
+
+
+def test_httpx_fingerprints_server_tech_title_and_flags_missing_security_headers():
+    res = HttpxAdapter("atk", PINNED, run=FakeRunner(HTTPX_JSON_BASE)).run(
+        {"tool": "httpx", "target": "t1.sandbox.local", "port": 8080, "args": {}})
+    assert res["status"] == "ok"
+    sig = res["deterministic_signals"]
+    assert sig["hit"] is True
+    assert sig["status_code"] == 200
+    assert sig["title"] == "Directory listing for /"
+    assert sig["webserver"] == "SimpleHTTP/0.6 Python/3.12.13"
+    assert "SimpleHTTP:0.6" in sig["tech"]
+    # a bare server exposes none of the four, so every one is reported missing
+    assert sig["missing_security_headers"] == [
+        "content-security-policy", "x-frame-options",
+        "strict-transport-security", "x-content-type-options"]
+
+
+def test_httpx_normalizes_headers_and_reads_present_security_headers_and_cors():
+    res = HttpxAdapter("atk", PINNED, run=FakeRunner(HTTPX_JSON_SECURE)).run(
+        {"tool": "httpx", "target": "t1.sandbox.local", "port": 8080, "args": {}})
+    sig = res["deterministic_signals"]
+    # httpx underscore keys are normalized back to canonical hyphenated header names
+    assert sig["headers"]["content-security-policy"] == "default-src self"
+    assert sig["headers"]["x-frame-options"] == "DENY"
+    assert sig["cors_allow_origin"] == "*"
+    # three of the four are present; only MIME-sniffing protection is missing
+    assert sig["missing_security_headers"] == ["x-content-type-options"]
+
+
+def test_httpx_reports_redirect_location_without_following_it():
+    fake = FakeRunner(HTTPX_JSON_REDIR)
+    res = HttpxAdapter("atk", PINNED, run=fake).run(
+        {"tool": "httpx", "target": "t1.sandbox.local", "port": 8080, "args": {}})
+    sig = res["deterministic_signals"]
+    assert sig["hit"] is True and sig["status_code"] == 302
+    assert sig["location"] == "http://10.90.0.3:8080/secure"
+    argv = fake.calls[0]
+    assert not any(a in ("-fr", "-follow-redirects") for a in argv)   # not chased
+
+
+def test_httpx_targets_the_resolved_ip_not_the_bare_name():
+    fake = FakeRunner(HTTPX_JSON_BASE)
+    HttpxAdapter("atk", PINNED, run=fake).run(
+        {"tool": "httpx", "target": "t1.sandbox.local", "port": 8080, "args": {}})
+    argv = fake.calls[0]
+    assert argv[:3] == ["docker", "exec", "atk"]
+    assert "http://10.90.0.3:8080/" in argv                          # resolved + scheme + path
+    assert "t1.sandbox.local" not in " ".join(argv)
+
+
+def test_httpx_uses_https_scheme_for_a_tls_port():
+    fake = FakeRunner(HTTPX_JSON_BASE)
+    HttpxAdapter("atk", PINNED, run=fake).run(
+        {"tool": "httpx", "target": "10.90.0.3", "port": 443, "args": {}})
+    assert "https://10.90.0.3:443/" in fake.calls[0]
+
+
+def test_httpx_no_output_is_not_a_hit():
+    res = HttpxAdapter("atk", PINNED, run=FakeRunner("")).run(
+        {"tool": "httpx", "target": "10.90.0.3", "port": 8080, "args": {}})
+    assert res["status"] == "error"
+    assert res["deterministic_signals"]["hit"] is False
+
+
+def test_parse_httpx_tolerates_banner_noise_before_the_json_line():
+    out = "[INF] Current Version: v1.12.0\n" + HTTPX_JSON_BASE
+    obj = _parse_httpx(out)
+    assert obj["status_code"] == 200 and obj["webserver"].startswith("SimpleHTTP")
 
 
 def main():

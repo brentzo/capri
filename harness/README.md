@@ -354,13 +354,19 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   tools beyond the baseline probe. `NmapAdapter`, registered in `dispatch()` as the
   `nmap` tool, runs `nmap -sV -Pn` on one in-scope port against a pinned target and
   parses the XML into per-port service, product, version, and CPE signals (the shape
-  version-based cards match on). The attacker container now runs the toolchain image
-  (`infra/sandbox/Dockerfile.attacker`) while targets stay the minimal node image, and
-  the attacker still holds no `NET_ADMIN`, so the host-owned scope guard bounds every
-  scan. The parse and signal shape are pinned against captured real `nmap -sV` output
-  through a fake runner with no Docker and no tool present (`tests/test_adapters.py`);
-  a live model-driven run confirmed a service-disclosure finding (DeepSeek proposed the
-  scan, nmap ran on the attacker container, OpenAI verified on a disjoint provider).
+  version-based cards match on). `HttpxAdapter`, the `httpx` tool, fingerprints a web
+  surface with ProjectDiscovery httpx: status, title, server and technology, the
+  normalized response headers, which of the four baseline security headers are missing,
+  any CORS allow-origin, and any redirect target (reported, not followed, since a
+  redirect can leave the asset) - the signals the web-protocol-auth and client-side
+  cards become applicable on. The attacker container runs the toolchain image
+  (`infra/sandbox/Dockerfile.attacker`, built for amd64 and arm64, httpx checksum-pinned)
+  while targets stay the minimal node image, and the attacker still holds no `NET_ADMIN`,
+  so the host-owned scope guard bounds every scan. Each adapter's parse and signal shape
+  are pinned against captured real tool output through a fake runner with no Docker and
+  no tool present (`tests/test_adapters.py`); a live model-driven run confirmed a
+  service-disclosure finding and a web-fingerprint finding alongside the baseline probe,
+  the Operator proposing each tool and the Verifier reproducing on a disjoint provider.
 
 ## What's here (the capri CLI and model-plane setup)
 
