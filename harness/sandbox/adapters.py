@@ -654,6 +654,70 @@ class PathAdapter(_Adapter):
         }
 
 
+def _cookie_sid(headers):
+    """The `sid` value a Set-Cookie response header carries, or None. Tolerant of the
+    header's attributes (Path, HttpOnly, ...) and of case in the header name."""
+    for key, val in (headers or {}).items():
+        if key.lower() == "set-cookie":
+            for part in str(val).split(";"):
+                name, _, value = part.strip().partition("=")
+                if name == "sid":
+                    return value
+    return None
+
+
+class SessAdapter(_Adapter):
+    """Session fixation against a pinned in-scope login endpoint. Registered as `sess`.
+
+    The harness obtains a pre-auth session id, authenticates reusing that exact id, and
+    reports session fixation only when the login does not rotate the id (issues no fresh
+    one) and the pre-auth id is authenticated afterward, which is the condition that lets an
+    attacker fix an id onto a victim and inherit their session. The id is the one the server
+    issued and the harness drives the cookie lifecycle itself, so a model cannot forge the
+    verdict; an app that rotates the id on login leaves the pre-auth id anonymous and does
+    not fire. The Verifier repeats the sequence against a fresh snapshot."""
+
+    def run(self, req):
+        ip = self._resolve(req["target"])
+        port = int(req["port"])
+        args = req.get("args") or {}
+        scheme = args.get("scheme") or ("https" if port in (443, 8443) else "http")
+        base = f"{scheme}://{ip}:{port}"
+        path = args.get("path", "/portal")
+        login_path = args.get("login_path", "/portal/login")
+        me_path = args.get("me_path", "/portal/me")
+        login_user = str(args.get("login_user", "1"))
+
+        _, h0, _ = self._send_http_full(base + path)             # establish a pre-auth session
+        pre_sid = _cookie_sid(h0)
+        rotated = authed = False
+        s_login = s_me = 0
+        if pre_sid:
+            cookie = {"Cookie": f"sid={pre_sid}"}
+            qs = urllib.parse.urlencode({"user": login_user})
+            s_login, h1, _ = self._send_http_full(f"{base}{login_path}?{qs}", "GET", cookie)
+            new_sid = _cookie_sid(h1)
+            rotated = new_sid is not None and new_sid != pre_sid  # login issued a fresh id
+            s_me, _, b_me = self._send_http_full(f"{base}{me_path}", "GET", cookie)
+            authed = s_me == 200 and login_user in b_me and "anonymous" not in b_me.lower()
+        hit = bool(pre_sid) and authed and not rotated
+        return {
+            "status": "ok" if hit else "error",
+            "parsed": {"pre_sid_present": bool(pre_sid), "rotated": rotated,
+                       "authenticated_after_login": authed},
+            "request_bytes": f"sess {base}{login_path} reusing pre-auth sid".encode("utf-8"),
+            "response_bytes": f"login[{s_login}] me[{s_me}] rotated={rotated}".encode("utf-8"),
+            "deterministic_signals": {
+                "hit": hit,
+                "session_fixation": hit,
+                "pre_auth_id_authenticated": authed,
+                "rotated_on_login": rotated,
+                "status_code": s_me,
+                "confidence": 0.95 if hit else 0.0,
+            },
+        }
+
+
 class CacheAdapter(_Adapter):
     """Web cache poisoning via unkeyed input against a pinned in-scope target. Registered
     as `cache`.

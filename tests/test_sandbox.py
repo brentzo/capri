@@ -391,6 +391,21 @@ def test_phase_recon_detects_a_cacheable_endpoint():
     assert facts["asset.cache_path"] == "/promo"
 
 
+def test_phase_recon_adds_a_login_endpoint_asset_for_a_session_cookie():
+    from harness.recon import phase_recon
+    pages = {"/": (200, "Try /search?q=..."), "/portal": (200, "portal session anonymous")}
+    headers = {"/portal": {"Set-Cookie": "sid=abc123; Path=/; HttpOnly"}}
+    run = _recon_runner(open_ports=[("10.90.0.3", 8080)], http=[("10.90.0.3", 8080)],
+                        pages=pages, headers=headers)
+    model = phase_recon("hc-range-attacker", _pinned_eng(), run=run)
+    assert "t1-login" in model                               # a distinct asset, same host
+    login = model["t1-login"]
+    assert login["asset.type"] == "login_endpoint"
+    assert login["asset.session_cookie"] == "sid"
+    assert login["login_endpoint"] is True and login["reachable"] is True
+    assert login["host"] == "t1.sandbox.local"
+
+
 def test_phase_recon_marks_an_unreachable_target_and_omits_service_type():
     from harness.recon import phase_recon
     model = phase_recon("a", _pinned_eng(), run=_recon_runner())   # nothing open

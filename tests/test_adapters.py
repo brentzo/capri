@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, urlparse                              # noqa:
 import base64                                                            # noqa: E402
 from harness.sandbox.adapters import (                                   # noqa: E402
     BflaAdapter, CacheAdapter, CmdiAdapter, CorsAdapter, HttpRequestAdapter, HttpxAdapter,
-    IdorAdapter, JwtAdapter, NmapAdapter, PathAdapter, SqliAdapter, SstiAdapter,
+    IdorAdapter, JwtAdapter, NmapAdapter, PathAdapter, SessAdapter, SqliAdapter, SstiAdapter,
     _RANGE_CANARY, _parse_http_full, _parse_http_response, _parse_httpx, _parse_nmap_services)
 from harness.sandbox.base import RunResult                               # noqa: E402
 
@@ -757,6 +757,90 @@ def test_cache_injects_an_unkeyed_header_only_on_the_first_request():
     assert "X-Forwarded-Host" in hdrs[0] and "X-Forwarded-Host" not in hdrs[1]
     urls = [_call_url_headers(c)[0] for c in fake.calls]
     assert urls[0] == urls[1] and "10.90.0.3" in urls[0]     # same cache-buster URL, victim's view
+
+
+class SessionRunner:
+    """Simulates the cookie-session portal. Vulnerable: /portal/login authenticates the
+    existing session id in place without issuing a new one, so the pre-auth id is valid and
+    authenticated afterward. Safe (`rotate_on_login`): login issues a fresh id and leaves
+    the pre-auth id anonymous. Emits the header-returning format the session adapter reads."""
+
+    def __init__(self, *, rotate_on_login=False):
+        self.rotate_on_login = rotate_on_login
+        self.sessions = {}
+        self.calls = []
+        self._seq = 0
+
+    def _issue(self):
+        self._seq += 1
+        return f"sid{self._seq}"
+
+    def __call__(self, argv, input=None, timeout=None):
+        self.calls.append(argv)
+        url, headers = _call_url_headers(argv)
+        parts = urlparse(url)
+        sid = None
+        for part in headers.get("Cookie", "").split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == "sid":
+                sid = v
+        set_cookie = None
+        body = ""
+        if parts.path == "/portal":
+            if not sid or sid not in self.sessions:
+                sid = self._issue()
+                self.sessions[sid] = None
+                set_cookie = f"sid={sid}; Path=/"
+            user = self.sessions.get(sid)
+            body = "portal session %s: %s" % (sid, ("user %s" % user) if user else "anonymous")
+        elif parts.path == "/portal/login":
+            uid = (parse_qs(parts.query).get("user") or ["1"])[0]
+            if self.rotate_on_login:
+                self.sessions.setdefault(sid, None)          # old id stays anonymous
+                new = self._issue()
+                self.sessions[new] = uid
+                set_cookie = f"sid={new}; Path=/"
+                body = "logged in as %s (rotated)" % uid
+            else:
+                self.sessions[sid] = uid                     # authenticate in place, no rotation
+                body = "logged in as %s on session %s" % (uid, sid)
+        elif parts.path == "/portal/me":
+            user = self.sessions.get(sid)
+            body = ("me: user %s" % user) if user else "me: anonymous"
+        hdr = {"Set-Cookie": set_cookie} if set_cookie else {}
+        return RunResult(0, "STATUS 200\n" + json.dumps(hdr) + "\n---BODY---\n" + body, "")
+
+
+def test_sess_confirms_fixation_when_the_preauth_id_stays_authenticated():
+    res = SessAdapter("atk", PINNED, run=SessionRunner()).run(
+        {"tool": "sess", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/portal", "login_path": "/portal/login", "me_path": "/portal/me"}})
+    sig = res["deterministic_signals"]
+    assert res["status"] == "ok"
+    assert sig["hit"] is True and sig["session_fixation"] is True
+    assert sig["pre_auth_id_authenticated"] is True and sig["rotated_on_login"] is False
+
+
+def test_sess_rotated_id_on_login_is_not_a_hit():
+    res = SessAdapter("atk", PINNED, run=SessionRunner(rotate_on_login=True)).run(
+        {"tool": "sess", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/portal", "login_path": "/portal/login", "me_path": "/portal/me"}})
+    sig = res["deterministic_signals"]
+    assert sig["rotated_on_login"] is True                    # login issued a fresh id
+    assert sig["pre_auth_id_authenticated"] is False          # the pre-auth id is anonymous
+    assert sig["hit"] is False
+
+
+def test_sess_reuses_the_preauth_cookie_through_login_and_me():
+    fake = SessionRunner()
+    SessAdapter("atk", PINNED, run=fake).run(
+        {"tool": "sess", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/portal", "login_path": "/portal/login", "me_path": "/portal/me"}})
+    # the first call establishes the session; login and me must carry that same sid cookie
+    later = [_call_url_headers(c) for c in fake.calls[1:]]
+    cookies = {h.get("Cookie") for _, h in later}
+    assert len(cookies) == 1 and next(iter(cookies)) == "sid=sid1"
+    assert all("10.90.0.3" in u for u, _ in later)            # resolved to the guarded IP
 
 
 def test_parse_http_full_splits_status_headers_and_body():

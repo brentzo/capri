@@ -402,7 +402,11 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   harness times itself (the clock is injected so tests need no real sleep). `CacheAdapter`
   (`cache`) proves web cache poisoning: it injects a random marker through an unkeyed
   header on a cache-busting request, then makes a clean request for the same URL, and fires
-  only when that clean request is served the marker from cache.
+  only when that clean request is served the marker from cache. `SessAdapter` (`sess`)
+  proves session fixation: it obtains a pre-auth session id, logs in reusing it, and fires
+  only when the login issues no fresh id and the pre-auth id is authenticated afterward;
+  recon emits the login endpoint as a second asset so this card has a login-typed asset to
+  apply over.
   The attacker container runs the toolchain image (`infra/sandbox/Dockerfile.attacker`,
   built for amd64 and arm64, httpx checksum-pinned) while targets stay the minimal node
   image, and the attacker still holds no `NET_ADMIN`, so the host-owned scope guard
@@ -473,13 +477,14 @@ cards, bridged to the concrete tool adapters.
 - `recon.py` now does light web discovery (reading state only) so the real cards' facts
   are there to gate on: the parameters a landing page exposes, a JWT auth scheme and an
   available authenticated session from a login probe, privileged sibling paths from a short
-  conventional-path list, and a cache header on a conventional cacheable path.
-  `tools/run_engagement.py` loads the KB with `kb.load`, projects it with
-  `capabilities.runnable_index`, and drives it; a live model-driven run confirmed nine
-  genuine web-protocol-auth cards (JWT algorithm confusion, server-side template injection,
-  and OS command injection at the cards' own critical severity, object- and function-level
-  authorization, boolean-blind SQL injection, path traversal, web cache poisoning, and CORS
-  misconfiguration), each verified on a disjoint provider.
+  conventional-path list, a cache header on a conventional cacheable path, and a
+  cookie-session login endpoint emitted as a second asset. `tools/run_engagement.py` loads
+  the KB with `kb.load`, projects it with `capabilities.runnable_index`, and drives it; a
+  live model-driven run confirmed ten genuine web-protocol-auth cards (JWT algorithm
+  confusion, server-side template injection, and OS command injection at the cards' own
+  critical severity, object- and function-level authorization, boolean-blind SQL injection,
+  path traversal, web cache poisoning, session fixation, and CORS misconfiguration), each
+  verified on a disjoint provider.
 
 ## Run
 

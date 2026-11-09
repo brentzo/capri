@@ -15,6 +15,9 @@ harness has real web vulnerabilities to find and independently confirm:
   - /promo       caches by path and query but reflects the X-Forwarded-Host header, which
                  is not part of the cache key, so a value injected on a miss is served to
                  later clean requests (web cache poisoning via unkeyed input).
+  - /portal + /portal/login + /portal/me is a cookie session that does not rotate the
+                 session id on authentication, so a pre-auth id stays valid and becomes
+                 authenticated after login (session fixation).
 It is seeded into a target container at provision time (not baked into the golden image)
 and is never reachable off the range.
 
@@ -26,6 +29,7 @@ import hmac
 import json
 import os
 import re
+import secrets
 import sqlite3
 import subprocess
 import sys
@@ -48,6 +52,10 @@ _CANARY_MARKER = "HC-RANGE-CANARY-d41d8cd98f00b204"
 # A per-process response cache for /promo, keyed by path and query only. It starts empty
 # each time the app is seeded (provision, restore, kill), so a run always begins clean.
 _CACHE = {}
+
+# Cookie session store: sid -> user id (None means established but not authenticated). It
+# too starts empty each time the app is seeded.
+_SESSIONS = {}
 
 
 def _seed_files():
@@ -117,13 +125,22 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):            # keep the range quiet
         pass
 
-    def _respond(self, status, text, ctype="text/html; charset=utf-8"):
+    def _respond(self, status, text, ctype="text/html; charset=utf-8", set_cookie=None):
         body = text.encode("utf-8", "replace")
         self.send_response(status)
         self.send_header("Content-Type", ctype)
+        if set_cookie:
+            self.send_header("Set-Cookie", set_cookie)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _req_sid(self):
+        for part in self.headers.get("Cookie", "").split(";"):
+            name, _, value = part.strip().partition("=")
+            if name == "sid":
+                return value
+        return None
 
     def do_GET(self):
         parts = urlparse(self.path)
@@ -211,6 +228,32 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(out)))
             self.end_headers()
             self.wfile.write(out)
+        elif parts.path == "/portal":
+            sid = self._req_sid()
+            set_cookie = None
+            if not sid or sid not in _SESSIONS:
+                sid = secrets.token_hex(8)                # issue a pre-auth session id
+                _SESSIONS[sid] = None
+                set_cookie = "sid=%s; Path=/" % sid
+            user = _SESSIONS.get(sid)
+            state = ("user " + str(user)) if user else "anonymous"
+            self._respond(200, "portal session %s: %s" % (sid, state),
+                          "text/plain", set_cookie=set_cookie)
+        elif parts.path == "/portal/login":
+            sid = self._req_sid()
+            if not sid:                                   # accept an attacker-supplied id too
+                sid = secrets.token_hex(8)
+            _SESSIONS.setdefault(sid, None)
+            uid = (query.get("user") or ["1"])[0]
+            # VULNERABLE BY DESIGN: the existing session id is authenticated in place and
+            # NOT rotated (no new Set-Cookie), so a pre-auth id (which an attacker can fix
+            # onto a victim) stays valid and becomes authenticated (session fixation). A
+            # correct app issues a fresh session id on every authentication.
+            _SESSIONS[sid] = uid
+            self._respond(200, "logged in as %s on session %s" % (uid, sid), "text/plain")
+        elif parts.path == "/portal/me":
+            user = _SESSIONS.get(self._req_sid())
+            self._respond(200, ("me: user %s" % user) if user else "me: anonymous", "text/plain")
         elif parts.path == "/greet":
             name = (query.get("name") or ["guest"])[0]
             # VULNERABLE BY DESIGN: the name is rendered through the template engine, so
