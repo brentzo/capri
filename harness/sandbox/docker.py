@@ -31,6 +31,8 @@ from harness.sandbox.base import (
 from harness.store.db import now
 from harness.substrate import scope
 
+GOLDEN = "golden"   # the per-run baseline snapshot id the loop restores before verifying (§4.2)
+
 # Probes the attacker container runs; stdlib python3 only, so the node image stays tiny.
 _TCP_PROBE = (
     "import socket,sys\n"
@@ -202,14 +204,18 @@ class DockerSandbox(Sandbox):
         return snap_id
 
     def restore(self, snapshot_id):
-        """Recreate every target from its snapshot image at the same pinned IP, so the
-        range returns to the captured state (§6.3, G3). The attacker and the scope
-        guard are untouched, since the guard lives in the attacker netns and the IPs
-        are preserved."""
-        images = self._snapshots.get(snapshot_id)
-        if images is None:
-            raise SandboxError(f"unknown snapshot {snapshot_id}")
-        for host, (name, ip, image) in images.items():
+        """Recreate every target at its pinned IP, so the range returns to a known
+        state (§6.3, G3). `GOLDEN` restores the clean golden image (the per-run baseline
+        the Verifier reproduces against, §4.2); any other id restores that snapshot. The
+        attacker and the scope guard are untouched, since the guard lives in the
+        attacker netns and the IPs are preserved."""
+        if snapshot_id == GOLDEN:
+            targets = {h: (name, ip, self.node_image) for h, (name, ip) in self._targets.items()}
+        else:
+            targets = self._snapshots.get(snapshot_id)
+            if targets is None:
+                raise SandboxError(f"unknown snapshot {snapshot_id}")
+        for host, (name, ip, image) in targets.items():
             self._run(["docker", "rm", "-f", name])
             self._docker(*self._run_args(name, ip, image))
             self._start_listeners(name, self._target_ports.get(host, []))

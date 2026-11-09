@@ -327,6 +327,13 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   the range. `proofs_pass` runs all five drills and returns `True` only when every
   guarantee holds, so the harness may leave passive-only; any failed proof keeps it
   passive-only.
+- `sandbox/probe.py` - `DockerProbe`, the live tool adapter. After the dispatcher
+  passes scope/blast/rate, it runs an HTTP probe on the attacker container against a
+  pinned in-scope target (resolving a pinned name to the IP the guard enforces on) and
+  reports the raw signals the harness triages. `tools/run_engagement.py` wires it all:
+  parse a contract, provision the real range, gate on `proofs_pass`, and drive the
+  control loop so a live run confirms a finding (finder and verifier disjoint) and
+  produces a validated report under sandbox enforcement.
   Every docker/nsenter call goes through an injected runner, so the logic is
   unit-tested with no Docker present (`tests/test_sandbox.py`); the live path is proven
   by `tools/sandbox_selftest.py` (golden image and notes in `infra/sandbox/`).

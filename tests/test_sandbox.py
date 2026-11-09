@@ -18,6 +18,7 @@ sys.path.insert(0, ROOT)
 from harness.sandbox import PassiveOnlySandbox, guard_proof_result                 # noqa: E402
 from harness.sandbox.base import RunResult                                         # noqa: E402
 from harness.sandbox.docker import DockerSandbox, guard_ruleset                     # noqa: E402
+from harness.sandbox.probe import DockerProbe                                       # noqa: E402
 from harness.substrate import contract                                             # noqa: E402
 
 CONTRACT = """
@@ -296,6 +297,32 @@ def test_proofs_pass_is_true_only_when_all_five_guarantees_prove():
     sb2 = DockerSandbox(run=leaky)
     sb2.provision(_eng())
     assert sb2.proofs_pass() is False
+
+
+# --- the live probe adapter (HC-AGENT-01) -------------------------------
+def test_docker_probe_reports_an_http_response_as_a_hit():
+    p = DockerProbe("hc-range-attacker", {}, run=lambda *a, **k: RunResult(0, "STATUS 200", ""))
+    res = p.run({"tool": "probe", "target": "10.90.0.3", "port": 8080, "args": {"path": "/"}})
+    assert res["deterministic_signals"]["hit"] is True
+    assert res["parsed"]["http_status"] == 200 and res["status"] == "ok"
+
+
+def test_docker_probe_treats_no_response_as_not_a_hit():
+    p = DockerProbe("a", {}, run=lambda *a, **k: RunResult(0, "ERR TimeoutError", ""))
+    res = p.run({"target": "10.0.0.9", "port": 8080})
+    assert res["deterministic_signals"]["hit"] is False and res["status"] == "error"
+
+
+def test_docker_probe_resolves_a_pinned_host_to_its_guarded_ip():
+    import ipaddress
+    seen = {}
+
+    def run(argv, *, input=None, timeout=30):
+        seen["ip"] = argv[argv.index("-c") + 2]    # the first probe arg after the source
+        return RunResult(0, "STATUS 200", "")
+    p = DockerProbe("a", {"t1.sandbox.local": ipaddress.ip_address("10.90.0.3")}, run=run)
+    p.run({"target": "t1.sandbox.local", "port": 8080})
+    assert seen["ip"] == "10.90.0.3"               # aimed at the IP the scope guard enforces on
 
 
 def main():
