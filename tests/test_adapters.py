@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from urllib.parse import parse_qs, urlparse                              # noqa: E402
 from harness.sandbox.adapters import (                                   # noqa: E402
-    HttpRequestAdapter, HttpxAdapter, IdorAdapter, NmapAdapter, SqliAdapter,
+    BflaAdapter, HttpRequestAdapter, HttpxAdapter, IdorAdapter, NmapAdapter, SqliAdapter,
     _parse_http_response, _parse_httpx, _parse_nmap_services)
 from harness.sandbox.base import RunResult                               # noqa: E402
 
@@ -372,9 +372,12 @@ class JwtAppRunner:
     /account returns the requested account to any valid token. With `ownership_check`,
     it returns another user's account only to that user's token (the safe behaviour)."""
 
-    def __init__(self, *, ownership_check=False, issue_token=True):
+    def __init__(self, *, ownership_check=False, issue_token=True,
+                 admin_role_check=False, admin_public=False):
         self.ownership_check = ownership_check
         self.issue_token = issue_token
+        self.admin_role_check = admin_role_check
+        self.admin_public = admin_public
         self.calls = []
 
     def __call__(self, argv, input=None, timeout=None):
@@ -382,19 +385,27 @@ class JwtAppRunner:
         url, headers = _call_url_headers(argv)
         parts = urlparse(url)
         q = parse_qs(parts.query)
+        auth = headers.get("Authorization", "")
+        token = auth[7:] if auth.startswith("Bearer ") else ""
         if parts.path == "/login":
             uid = (q.get("user") or ["1"])[0]
             body = f"h.user{uid}.s" if self.issue_token else "login disabled"
             return RunResult(0, f"STATUS 200\n---BODY---\n{body}", "")
         if parts.path == "/account":
-            auth = headers.get("Authorization", "")
-            token = auth[7:] if auth.startswith("Bearer ") else ""
             if not token.startswith("h.user"):
                 return RunResult(0, "STATUS 401\n---BODY---\nunauthorized", "")
             acct = (q.get("id") or ["1"])[0]
             if self.ownership_check and acct != token.split(".")[1][4:]:
                 return RunResult(0, "STATUS 403\n---BODY---\nforbidden", "")
             return RunResult(0, f"STATUS 200\n---BODY---\naccount {acct}: secret-{acct}", "")
+        if parts.path == "/admin":
+            if self.admin_public:                            # a genuinely public page: not BFLA
+                return RunResult(0, "STATUS 200\n---BODY---\nadmin panel", "")
+            if not token.startswith("h.user"):
+                return RunResult(0, "STATUS 401\n---BODY---\nunauthorized", "")
+            if self.admin_role_check:                        # a correct role check refuses a user
+                return RunResult(0, "STATUS 403\n---BODY---\nforbidden", "")
+            return RunResult(0, "STATUS 200\n---BODY---\nadmin panel: secrets", "")
         return RunResult(0, "STATUS 404\n---BODY---\n", "")
 
 
@@ -438,6 +449,33 @@ def test_idor_without_a_usable_login_is_not_a_hit():
         {"tool": "idor", "target": "t1.sandbox.local", "port": 8080,
          "args": {"path": "/account", "id_param": "id", "login_path": "/login", "own_id": "1"}})
     assert res["deterministic_signals"]["authenticated"] is False
+    assert res["deterministic_signals"]["hit"] is False
+
+
+def test_bfla_confirms_missing_function_level_authorization():
+    res = BflaAdapter("atk", PINNED, run=JwtAppRunner()).run(
+        {"tool": "bfla", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/admin", "login_path": "/login", "login_user": "1"}})
+    sig = res["deterministic_signals"]
+    assert res["status"] == "ok"
+    assert sig["hit"] is True and sig["bfla"] is True
+    assert sig["anon_status"] == 401 and sig["user_status"] == 200
+
+
+def test_bfla_role_check_is_not_a_hit():
+    res = BflaAdapter("atk", PINNED, run=JwtAppRunner(admin_role_check=True)).run(
+        {"tool": "bfla", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/admin", "login_path": "/login", "login_user": "1"}})
+    assert res["deterministic_signals"]["hit"] is False
+    assert res["deterministic_signals"]["user_status"] == 403    # the role check refuses
+
+
+def test_bfla_public_endpoint_is_not_a_hit():
+    res = BflaAdapter("atk", PINNED, run=JwtAppRunner(admin_public=True)).run(
+        {"tool": "bfla", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/admin", "login_path": "/login", "login_user": "1"}})
+    # answers the anonymous call too, so it is public, not a privileged function
+    assert res["deterministic_signals"]["anon_status"] == 200
     assert res["deterministic_signals"]["hit"] is False
 
 

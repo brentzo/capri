@@ -322,7 +322,8 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   stdin (never baked into the golden image); the live runner seeds `infra/sandbox/vulnweb.py`,
   a deliberately vulnerable app (it reflects one query parameter unencoded, concatenates
   another into a SQL query, and exposes a toy JWT login whose /account skips the ownership
-  check), so the XSS, SQLi, and IDOR techniques have a real hole to confirm.
+  check and whose /admin skips the role check), so the XSS, SQLi, IDOR, and BFLA
+  techniques have a real hole to confirm.
   The scope guard is an nftables
   ruleset the host installs into the attacker's netns - default-deny egress, allowing
   only the pinned in-scope IPs on their allowed ports (`scope.ports_for`). `guard_proof`
@@ -379,6 +380,10 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   in as one user, then reads that user's own object and a neighbour's with the same token,
   and reports broken object-level authorization (IDOR/BOLA) only when the neighbour comes
   back 200 with distinct data, which an ownership check would refuse with a 401/403.
+  `BflaAdapter`, the `bfla` tool, is the function-level counterpart: it calls a privileged
+  function with no token and then with an ordinary user's token, reporting broken
+  function-level authorization only when the anonymous call is refused but the user's
+  executes - a public endpoint that answers both is not flagged.
   The attacker container runs the toolchain image (`infra/sandbox/Dockerfile.attacker`,
   built for amd64 and arm64, httpx checksum-pinned) while targets stay the minimal node
   image, and the attacker still holds no `NET_ADMIN`, so the host-owned scope guard
@@ -386,9 +391,9 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   real tool output (or, for the crafted probes, a runner that simulates the vulnerable
   server) with no Docker and no tool present (`tests/test_adapters.py`); a live
   model-driven run confirmed service-disclosure, web-fingerprint, reflected-XSS,
-  boolean-blind-SQLi, and broken-object-level-authorization findings alongside the
-  baseline probe, the Operator proposing each probe and the Verifier reproducing on a
-  disjoint provider.
+  boolean-blind-SQLi, broken-object-level-authorization, and broken-function-level-
+  authorization findings alongside the baseline probe, the Operator proposing each probe
+  and the Verifier reproducing on a disjoint provider.
 
 ## What's here (the capri CLI and model-plane setup)
 

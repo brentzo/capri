@@ -106,6 +106,15 @@ class Handler(BaseHTTPRequestHandler):
             # caller with no check that they own it, so user 1 can read user 2's account.
             acct = (query.get("id") or [str(claims.get("sub", "1"))])[0]
             self._respond(200, "account %s: secret-%s" % (acct, acct), "text/plain")
+        elif parts.path == "/admin":
+            auth = self.headers.get("Authorization", "")
+            claims = _jwt_verify(auth[7:]) if auth.startswith("Bearer ") else None
+            if not claims:
+                self._respond(401, "unauthorized", "text/plain")
+                return
+            # VULNERABLE BY DESIGN: an admin-only function with no role check, so any
+            # authenticated user (role "user") reaches it (broken function-level authz).
+            self._respond(200, "admin panel: accounts 1,2,3 secrets exposed", "text/plain")
         else:
             self._respond(200, _PAGE + "<p>Try /search?q=... /item?id=... /account?id=...</p>")
 

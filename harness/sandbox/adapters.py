@@ -363,6 +363,56 @@ class IdorAdapter(_Adapter):
         }
 
 
+class BflaAdapter(_Adapter):
+    """Broken function-level authorization against a pinned in-scope target. Registered
+    as `bfla`.
+
+    The harness calls a privileged function first with no token and then with a token for
+    an ordinary, non-privileged user, and reports broken function-level authorization only
+    when the function refuses the anonymous call (401 or 403) yet executes for the ordinary
+    user (200). The function is gated on being logged in but not on holding the role, which
+    is the flaw; a public endpoint that answers the anonymous call too is not reported. The
+    identity is the harness's and the Verifier repeats the pair, so the verdict is
+    deterministic and harness-owned."""
+
+    def run(self, req):
+        ip = self._resolve(req["target"])
+        port = int(req["port"])
+        args = req.get("args") or {}
+        scheme = args.get("scheme") or ("https" if port in (443, 8443) else "http")
+        path = args.get("path", "/admin")
+        login_path = args.get("login_path", "/login")
+        login_user = str(args.get("login_user", "1"))
+
+        def get(p, params=None, headers=None):
+            qs = urllib.parse.urlencode(params or {})
+            url = f"{scheme}://{ip}:{port}{p}" + (f"?{qs}" if qs else "")
+            return url, self._send_http(url, "GET", headers)
+
+        priv_url, (s_anon, _) = get(path)                       # no token: must be refused
+        _, (login_status, token) = get(login_path, {"user": login_user})
+        token = (token or "").strip()
+        authenticated = login_status == 200 and token.count(".") == 2
+        hdr = {"Authorization": f"Bearer {token}"} if authenticated else {}
+        _, (s_user, b_user) = get(path, None, hdr)              # ordinary user's token
+        hit = (authenticated and s_anon in (401, 403)
+               and s_user == 200 and b_user.strip() != "")
+        return {
+            "status": "ok" if hit else "error",
+            "parsed": {"anon_status": s_anon, "user_status": s_user},
+            "request_bytes": f"bfla {priv_url} as user {login_user}".encode("utf-8"),
+            "response_bytes": f"anon[{s_anon}] user[{s_user}]={b_user}".encode("utf-8", "replace"),
+            "deterministic_signals": {
+                "hit": hit,
+                "bfla": hit,
+                "authenticated": authenticated,
+                "anon_status": s_anon,
+                "user_status": s_user,
+                "confidence": 0.95 if hit else 0.0,
+            },
+        }
+
+
 def _parse_nmap_services(xml_text):
     """Parse nmap `-oX -` output into a list of open-port service dicts. Tolerant: any
     parse failure or no open port yields an empty list (the adapter reports no hit)."""

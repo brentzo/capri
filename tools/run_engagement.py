@@ -37,7 +37,7 @@ from harness.planner import DeterministicPlanner               # noqa: E402
 from harness.recon import phase_recon                          # noqa: E402
 from harness.roles import ModelOperator, ModelVerifier         # noqa: E402
 from harness.sandbox.adapters import (                         # noqa: E402
-    HttpRequestAdapter, HttpxAdapter, IdorAdapter, NmapAdapter, SqliAdapter)
+    BflaAdapter, HttpRequestAdapter, HttpxAdapter, IdorAdapter, NmapAdapter, SqliAdapter)
 from harness.sandbox.docker import DockerSandbox               # noqa: E402
 from harness.sandbox.probe import DockerProbe                  # noqa: E402
 from harness.store import blobstore, db                        # noqa: E402
@@ -135,9 +135,24 @@ IDOR_CARD = {
     "probe_steps": [{"tool": "idor", "intent": "bola", "path": "/account",
                      "id_param": "id", "login_path": "/login", "own_id": "1"}],
 }
+# A seventh technique: broken function-level authorization. The harness calls a privileged
+# function anonymously (refused) and again with an ordinary user's token; a 200 for the
+# ordinary user confirms the missing role check, which the harness owns.
+BFLA_CARD = {
+    "id": "KB-LIVE-BFLA-001", "version": "1.0.0",
+    "applicability": ['asset.type == "web_service"'], "preconditions": ["reachable"],
+    "yields_on_success": [], "blast_tier": 1, "taxonomy": {"cwe": ["CWE-862"]},
+    "severity_rubric": {"base": "high",
+                        "cvss_base_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:H/VI:H/VA:N/SC:N/SI:N/SA:N"},
+    "success_signal": {"type": "bfla", "evaluator": "deterministic",
+                       "assert": "privileged_function_executes_for_an_ordinary_user"},
+    "probe_steps": [{"tool": "bfla", "intent": "forced_browsing", "path": "/admin",
+                     "login_path": "/login", "login_user": "1"}],
+}
 KB = {("KB-LIVE-SVC-001", "1.0.0"): CARD, ("KB-LIVE-SVC-002", "1.0.0"): NMAP_CARD,
       ("KB-LIVE-WEB-001", "1.0.0"): WEB_CARD, ("KB-LIVE-XSS-001", "1.0.0"): XSS_CARD,
-      ("KB-LIVE-SQLI-001", "1.0.0"): SQLI_CARD, ("KB-LIVE-IDOR-001", "1.0.0"): IDOR_CARD}
+      ("KB-LIVE-SQLI-001", "1.0.0"): SQLI_CARD, ("KB-LIVE-IDOR-001", "1.0.0"): IDOR_CARD,
+      ("KB-LIVE-BFLA-001", "1.0.0"): BFLA_CARD}
 
 # A deliberately vulnerable stand-in app, seeded into the target at provision time so the
 # reflected-XSS technique has a real hole to find; it never leaves the egress-denied range.
@@ -239,7 +254,8 @@ def main():
                         "httpx": HttpxAdapter(sb.attacker, eng.pinned),
                         "http": HttpRequestAdapter(sb.attacker, eng.pinned),
                         "sqli": SqliAdapter(sb.attacker, eng.pinned),
-                        "idor": IdorAdapter(sb.attacker, eng.pinned)}
+                        "idor": IdorAdapter(sb.attacker, eng.pinned),
+                        "bfla": BflaAdapter(sb.attacker, eng.pinned)}
             disp = Dispatcher(conn, blobstore.BlobStore(root), eng, adapters,
                               ratelimit.RateLimiter(1000, now=lambda: 0.0))
             res = Loop(conn, eng, kb_index=KB, dispatcher=disp, sandbox=sb,
