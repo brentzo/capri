@@ -50,6 +50,8 @@ jobs:
         run: python3 tests/test_enrich.py
       - name: Bifrost transport self-tests (HC-MODEL-01)
         run: python3 tests/test_bifrost.py
+      - name: Tavily transport self-tests (HC-ENRICH-01)
+        run: python3 tests/test_tavily.py
       - name: Example engagement contract parses
         run: python3 -m harness.substrate.contract harness/substrate/examples/engagement.example.yaml
       - name: Business-requirement features are valid and in sync

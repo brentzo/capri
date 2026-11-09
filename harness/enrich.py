@@ -47,6 +47,11 @@ class OpsecError(Exception):
     """A query that would leak target data or a secret; refused before egress (§6)."""
 
 
+class IntelUnavailable(Exception):
+    """A transport could not serve (an outage or a bad key). Enrichment is optional,
+    so the enricher degrades to an empty advisory result rather than let it raise."""
+
+
 def normalize_query(stack_or_cpe):
     """A product/version string, a CPE string, or a {product, version} / {cpe} dict
     becomes one normalized query string built only from those public fields."""
@@ -94,7 +99,10 @@ class Enricher:
         cached = self._cache.get(query)
         if cached is not None and (self._clock() - cached[0]) < self.ttl:
             return cached[1]
-        raw = self.transport.search(query, client_id=self.client_id) or []
+        try:
+            raw = self.transport.search(query, client_id=self.client_id) or []
+        except IntelUnavailable:
+            return self._unavailable(query)          # transient: degrade, do not cache it
         result = self._assemble(query, raw)
         self._cache[query] = (self._clock(), result)
         return result
@@ -129,6 +137,10 @@ class Enricher:
     # --- helpers --------------------------------------------------------
     def _passive(self, query):
         return {"query": query, "mode": "passive-intel-off",
+                **{b: [] for b in _BUCKETS}}
+
+    def _unavailable(self, query):
+        return {"query": query, "mode": "intel-unavailable",
                 **{b: [] for b in _BUCKETS}}
 
     def _assemble(self, query, raw):

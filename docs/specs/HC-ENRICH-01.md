@@ -85,7 +85,12 @@ The Tavily client egresses from the trusted host and is infrastructure, injected
 Results are bucketed into cves / advisories / default_creds / writeups, each provenance-tagged (`source: tavily`, `url`, `fetched_at`, `trust: low`), and `frame` renders them through `harness/roleio.py:frame_untrusted` as a delimited untrusted block for the enrichment role only; nothing here hands enrichment to the Operator, and the model plane (HC-MODEL-01 §8) refuses to broker the tool to any vkey but `vk-enrich`.
 Lookups are cached by normalized query with a TTL, and with no transport the service returns `passive-intel-off` so the loop proceeds on the KB alone; `research` only ever yields human-review-required drafts, never an active card.
 The §10 criteria are covered by `tests/test_enrich.py` in CI.
-The live Tavily transport behind the service and its wiring into live recon and threat modeling remain to be built against this seam.
+
+The live transport behind the injected seam is `harness/tavily.py:TavilyTransport`, a thin standard-library HTTP client to the Tavily search API.
+It is the only holder of the Tavily key: it presents the key as a bearer token and never puts it, or any account identity, in the query, which carries only a generic client identity as the User-Agent (§6).
+Tavily returns generic web results, so the client maps each into the enricher's shape and infers a bucket (cve / advisory / default_cred / writeup) from the result.
+Because enrichment is optional and advisory, any failure (an outage, an unreachable endpoint, a bad key, or a malformed body) raises `IntelUnavailable` and the enricher degrades to an `intel-unavailable` result without caching the failure, rather than letting a lookup break a run.
+`tests/test_tavily.py` drives it against an in-process stdlib mock Tavily so the wire contract stays CI-green and zero-dependency; what remains is pointing it at the real API with a real key and wiring enrichment into live recon and threat modeling.
 
 ## 10. Acceptance criteria
 

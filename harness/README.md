@@ -203,6 +203,22 @@ gateway is out of repo.
   is exercised against an in-process stdlib mock Bifrost in CI, so the wire
   contract is tested without a live gateway; pointing it at a real one is config.
 
+## What's here (the live Tavily transport)
+
+The second live transport: the real HTTP client behind the enrichment service's
+injected seam (HC-ENRICH-01). Still pure standard library (`urllib`); the live
+Tavily endpoint is out of repo.
+
+- `tavily.py` - `TavilyTransport` POSTs a search to the Tavily API and is the only
+  holder of the Tavily key: it presents the key as a bearer token and never puts
+  it, or any account identity, in the query, which goes out under a generic
+  User-Agent. Tavily returns generic web results, so the client maps each into the
+  enricher's shape and infers a bucket (cve / advisory / default_cred / writeup).
+  Because enrichment is optional and advisory, any failure raises
+  `IntelUnavailable` and the enricher degrades to `intel-unavailable` without
+  caching the failure. It is contract-tested against an in-process stdlib mock
+  Tavily in CI; pointing it at the real API with a key is config.
+
 ## Run
 
 ```sh
@@ -218,16 +234,17 @@ python3 tests/test_modelplane.py                            # Bifrost model plan
 python3 tests/test_roles.py                                 # model-backed Operator/Verifier end to end
 python3 tests/test_enrich.py                                # Tavily enrichment (opsec, provenance, framing)
 python3 tests/test_bifrost.py                               # live Bifrost transport (mock-server contract)
+python3 tests/test_tavily.py                                # live Tavily transport (mock-server contract)
 python3 -m harness.substrate.contract harness/substrate/examples/engagement.example.yaml
 ```
 
 ## Not here yet
 
 Provisioning, snapshot/restore, the gateway, the guard-proof self-tests as live
-probes, and the kill switch (infrastructure). The Bifrost transport
-(`bifrost.py`) is here and contract-tested against a mock, but pointing it at a
-running gateway with real virtual-key secrets is deployment; the live Tavily
-transport behind the enrichment service is the same shape and not yet written. On
+probes, and the kill switch (infrastructure). The Bifrost and Tavily transports
+(`bifrost.py`, `tavily.py`) are here and contract-tested against mocks, but
+pointing them at a running gateway and the real Tavily API with real secrets is
+deployment, and wiring enrichment into live recon and threat modeling remains. On
 the model plane, a Reporter LLM over the deterministic reporter and the
 reasoning-model planner that would replace the deterministic one remain, as does
 the live `phase_recon` that produces the target model. What is here is the policy

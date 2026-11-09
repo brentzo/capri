@@ -28,6 +28,7 @@ test:
 	python3 tests/test_roles.py
 	python3 tests/test_enrich.py
 	python3 tests/test_bifrost.py
+	python3 tests/test_tavily.py
 
 ## contract: validate the example engagement contract (HC-SUB-01 §4)
 contract:
