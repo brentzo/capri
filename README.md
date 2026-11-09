@@ -65,7 +65,7 @@ Untrusted target output enters a role's context only as delimited data, never as
 | `kb/` | The 107 technique cards, by target class. Generated. |
 | `eval/` | Ground-truth manifests for the eval harness. Generated. |
 | `tools/` | The KB validator, materializer, and feature generator. |
-| `tests/` | 15 self-test suites, run in CI. |
+| `tests/` | 17 self-test suites, run in CI. |
 
 `kb/`, `eval/`, and `docs/requirements/features/` are generated from the specs; run `make materialize` / `make features` instead of editing them by hand.
 
@@ -76,7 +76,7 @@ Needs Python 3.12, `make`, and `git`. Nothing to install.
 ```bash
 git clone <this-repo> capri && cd capri
 
-make check      # the strict KB validator plus all 15 test suites (what CI runs)
+make check      # the strict KB validator plus all 17 test suites (what CI runs)
 make contract   # validate the example engagement contract
 make materialize # regenerate the card tree and eval manifests from the specs
 ```
@@ -125,8 +125,15 @@ The objective is proven by the harness (a canary hash match or an in-sandbox mar
 
 The harness runs against injected seams, so you supply three things:
 
-1. **An isolated sandbox lab** meeting the five substrate guarantees (scope, no egress, reproducibility, containment, killability): the reference is Firecracker microVMs on an isolated segment behind an nftables/eBPF scope-guard gateway, with snapshot and restore. See [`docs/specs/HC-SUB-01.md`](docs/specs/HC-SUB-01.md).
-2. **A Bifrost model gateway** with one virtual key per role, the Operator and Verifier on disjoint providers, and no provider credential in any role. See [`docs/specs/HC-MODEL-01.md`](docs/specs/HC-MODEL-01.md).
+1. **An isolated sandbox lab** meeting the five substrate guarantees (scope, no egress, reproducibility, containment, killability). The self-hostable reference backend is Docker plus an nftables scope guard, with no nested virtualization, so it runs on any Linux host or inside Docker Desktop on macOS/Windows; prove all five guarantees on your host with `python3 tools/sandbox_selftest.py` (host notes in [`infra/sandbox/`](infra/sandbox/)). Firecracker microVMs plug in behind the same interface for stronger isolation. See [`docs/specs/HC-SUB-01.md`](docs/specs/HC-SUB-01.md).
+2. **A Bifrost model gateway** with one virtual key per role, the Operator and Verifier on disjoint providers, and no provider credential in any role. One command stands it up, no cloud account:
+
+   ```bash
+   python3 tools/modelplane.py up      # generate config, mint virtual keys, run the gateway
+   python3 tools/modelplane.py keys    # paste your own provider API keys (hidden input)
+   ```
+
+   Then `eval "$(python3 tools/modelplane.py env)"` exports the handles a run reads. Walkthrough in [`infra/modelplane/README.md`](infra/modelplane/README.md); design in [`docs/specs/HC-MODEL-01.md`](docs/specs/HC-MODEL-01.md).
 3. **Tool adapters** behind the allow-listed `dispatch()` interface (nmap, httpx, ffuf, sqlmap, nuclei, a headless browser), optionally with the Tavily enrichment service.
 
 Until the five sandbox self-tests pass, the harness stays in `passive-only`: no active probe runs and every lead is held unverified.
