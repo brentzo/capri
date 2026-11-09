@@ -134,7 +134,7 @@ class Operator:
         self.fail_on = set(fail_on)
         self.target_override = target_override
 
-    def begin(self, pair):
+    def begin(self, pair, facts=None):
         if pair.asset in self.fail_on:
             raise RuntimeError("operator killed mid-hunt")
         s = Session(self.sid)
@@ -197,7 +197,7 @@ class RawOperator:
         self.sid = sid
         self.raw = raw
 
-    def begin(self, pair):
+    def begin(self, pair, facts=None):
         s = Session(self.sid)
         s.pair = pair
         return s
@@ -227,7 +227,7 @@ class CapturingOperator:
         self.addr = addr
         self.captured = []
 
-    def begin(self, pair):
+    def begin(self, pair, facts=None):
         s = Session(self.sid)
         s.pair = pair
         return s

@@ -44,10 +44,12 @@ GOLDEN = "golden"
 # untrusted-data view (roleio.role_context, §7), not the raw store rows.
 #
 #   planner.plan(target_model, candidates, ledger_summary) -> [Pair]   (ordered)
-#   operator.begin(pair) -> session         (session.id is the Bifrost vkey/session id)
+#   operator.begin(pair, facts) -> session   (session.id is the Bifrost vkey/session id;
+#                                             facts are the asset's recon facts that scope the hunt)
 #   operator.propose_next(session, card, role_context) -> str | None
 #   verifier.begin() -> session             (session.id; disjoint provider from the Operator)
 #   verifier.propose_next(session, vinput, role_context) -> str | None
+#       vinput = {steps: [the recorded requests], evidence: [probe_event ids]}; only this crosses over
 #       a Verifier may set session.disproved = True to actively reject (vs inconclusive)
 #   reporter.render(conn, eng, *, mode, kb_version) -> report dict
 
@@ -189,7 +191,7 @@ class Loop:
             return
 
         snap = self.sandbox.snapshot() if tier >= 2 else None    # §4.1 tier>=2 snapshot
-        session = self.operator.begin(pair)
+        session = self.operator.begin(pair, facts)               # recon facts scope the hunt
         observations, repro, pe_ids = [], [], []
         denied = invalid = 0
         outcome = "attempted"
@@ -218,7 +220,7 @@ class Loop:
                         break
                     continue
                 pe_ids.append(obs["probe_event_id"])
-                repro.append(turn.request.get("intent") or turn.request.get("tool"))
+                repro.append(turn.request)                       # the full request, so a Verifier can reproduce
                 signals = evidence.get_signals(self.conn, obs["probe_event_id"])
                 if self.signal_evaluator(card, signals):
                     self._emit_lead(pair, card, facts, session.id, repro, pe_ids,

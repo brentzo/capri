@@ -150,7 +150,25 @@ the tool adapters and the sandbox.
   budget and the per-vkey rate as fail-closed stops, serves the semantic cache
   only for the prose roles and only within an engagement, and writes an audit row
   for every call and every stop. `from_config` builds one from the §11 config
-  shape. The role sessions that run on it are the next slice.
+  shape.
+
+## What's here (the Bifrost-backed role sessions)
+
+The Operator and Verifier as model sessions that run on the plane (HC-AGENT-01
+§4.1, §4.2), the first consumers of the plane, the role I/O boundary, and the
+loop together. The actual Bifrost HTTP transport and the prompt bake-off are
+still out of repo; what lives here is the wiring and the propose-only contract.
+
+- `roles.py` - `ModelOperator` / `ModelVerifier` assemble a prompt from the
+  harness-owned `role_context` (the framed, untrusted probe history) plus the
+  trusted task, call `plane.call` through the role's virtual key, and return the
+  model's raw text, which the loop parses or rejects with `roleio`. No role holds
+  a provider key, and because the plane keeps the Operator and Verifier on
+  disjoint providers, finder is not verifier at the model plane as well. A plane
+  stop (budget, rate, a down provider) or a stop sentinel makes a role give up,
+  so the loop ends the pair or holds the lead. The prompts here are a starting
+  point; the reasoning-model choice and few-shot are the HC-MODEL-01 bake-off and
+  iterate behind this same seam.
 
 ## Run
 
@@ -164,15 +182,16 @@ python3 tests/test_loop.py                                  # outer control loop
 python3 tests/test_planner.py                               # deterministic planner
 python3 tests/test_roleio.py                                # role I/O boundary (parse-or-reject, framing)
 python3 tests/test_modelplane.py                            # Bifrost model plane (vkeys, budgets, diversity)
+python3 tests/test_roles.py                                 # model-backed Operator/Verifier end to end
 python3 -m harness.substrate.contract harness/substrate/examples/engagement.example.yaml
 ```
 
 ## Not here yet
 
 Provisioning, snapshot/restore, the gateway, the guard-proof self-tests as live
-probes, and the kill switch (infrastructure). On the model plane: the
-Bifrost-backed role sessions that implement the loop's role seam (the Operator,
-Verifier, and Reporter prompts and their virtual keys, plus the reasoning-model
-planner that would replace the deterministic one) and the live `phase_recon`
-that produces the target model. This slice is the policy core and the
-orchestration those plug into.
+probes, and the kill switch (infrastructure). On the model plane, the live
+Bifrost HTTP transport behind the plane (the Operator and Verifier sessions run
+on it here, over an injected fake model); a Reporter LLM over the deterministic
+reporter; the reasoning-model planner that would replace the deterministic one;
+and the live `phase_recon` that produces the target model. What is here is the
+policy core and the orchestration those plug into.
