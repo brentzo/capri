@@ -46,12 +46,15 @@ def main():
     try:
         desc = sb.provision(eng)
         print(f"provisioned {desc['range_id']}  pinned={desc['pinned_targets']}")
-        res = sb.guard_proof()
-        for a in res["assertions"]:
+        guard = sb.guard_proof()
+        for a in guard["assertions"]:
             print(f"  [{'ok ' if a['ok'] else 'FAIL'}] {a['name']}: {a['describes']}")
-        ok = res["pass"]
-        print("guard proof (G1/G2):", "PASS" if ok else "FAIL")
-        return 0 if ok else 1
+        print("guard proof (G1/G2):", "PASS" if guard["pass"] else "FAIL")
+        rt = sb.snapshot_round_trip()
+        print(f"  [{'ok ' if rt['pass'] else 'FAIL'}] marker survives restore: "
+              f"expected {rt.get('expected')!r}, got {rt.get('got')!r}")
+        print("snapshot round-trip (G3):", "PASS" if rt["pass"] else "FAIL")
+        return 0 if (guard["pass"] and rt["pass"]) else 1
     finally:
         sb.kill()
         print("range torn down")

@@ -41,26 +41,51 @@ def _eng():
 
 class FakeRunner:
     """Records every command and answers the ones the backend reads back: the attacker
-    pid, and the TCP/DNS probes per a configured reachability model."""
+    pid, the TCP/DNS probes per a configured reachability model, and a tiny per-
+    container filesystem so the snapshot round-trip (commit, overwrite, recreate, read)
+    is exercised end to end with no Docker present."""
 
     def __init__(self, *, reachable=(), dns_resolves=False, pid=4242):
         self.calls = []
         self.reachable = set(reachable)
         self.dns_resolves = dns_resolves
         self.pid = pid
+        self.files = {}       # container -> {path: content}
+        self.images = {}      # image tag -> {path: content} (a committed filesystem)
 
     def __call__(self, argv, *, input=None, timeout=30):
         self.calls.append(list(argv))
         if argv[:4] == ["docker", "inspect", "-f", "{{.State.Pid}}"]:
             return RunResult(0, str(self.pid), "")
-        if "python3" in argv and "-c" in argv:
-            src = argv[argv.index("-c") + 1]
-            args = argv[argv.index("-c") + 2:]
-            if "getaddrinfo" in src:
-                return RunResult(0, "RESOLVED" if self.dns_resolves else "REFUSED:gaierror", "")
-            ip, port = args[0], int(args[1])
-            return RunResult(0, "CONNECTED" if (ip, port) in self.reachable
-                             else "BLOCKED:TimeoutError", "")
+        if argv[:2] == ["docker", "commit"]:
+            self.images[argv[3]] = dict(self.files.get(argv[2], {}))
+            return RunResult(0, "", "")
+        if argv[:2] == ["docker", "run"]:
+            name, image = argv[argv.index("--name") + 1], argv[-1]
+            self.files[name] = dict(self.images.get(image, {}))   # snapshot image -> its files
+            return RunResult(0, "", "")
+        if argv[:3] == ["docker", "rm", "-f"]:
+            self.files.pop(argv[3], None)
+            return RunResult(0, "", "")
+        if argv[:2] == ["docker", "exec"]:
+            i = 2
+            while argv[i].startswith("-"):
+                i += 1
+            name, rest = argv[i], argv[i + 1:]
+            if rest[:2] == ["sh", "-c"] and ">" in rest[2]:
+                token, path = rest[2].split("echo")[1].split(">")
+                self.files.setdefault(name, {})[path.strip()] = token.strip()
+                return RunResult(0, "", "")
+            if rest[:1] == ["cat"]:
+                return RunResult(0, self.files.get(name, {}).get(rest[1], ""), "")
+            if rest[0] == "python3" and "-c" in rest:
+                src = rest[rest.index("-c") + 1]
+                args = rest[rest.index("-c") + 2:]
+                if "getaddrinfo" in src:
+                    return RunResult(0, "RESOLVED" if self.dns_resolves else "REFUSED", "")
+                ip, port = args[0], int(args[1])
+                return RunResult(0, "CONNECTED" if (ip, port) in self.reachable
+                                 else "BLOCKED:TimeoutError", "")
         return RunResult(0, "", "")
 
     def ran(self, *needles):
@@ -144,14 +169,49 @@ def test_guard_proof_passes_only_when_the_range_enforces_scope():
     assert any(a["name"] == "internet_tcp_dropped" and not a["ok"] for a in res2["assertions"])
 
 
+# --- snapshot round-trip (§8.2, G3) -------------------------------------
+def test_snapshot_round_trip_restores_the_original_marker():
+    run = FakeRunner(reachable=[("10.90.0.3", 8080)])
+    sb = DockerSandbox(run=run)
+    sb.provision(_eng())
+    res = sb.snapshot_round_trip()
+    assert res["pass"] is True, res
+    assert res["got"] == "hc-marker-original"                  # overwrite was undone by restore
+
+
+def test_restore_recreates_each_target_at_its_pinned_ip():
+    run = FakeRunner(reachable=[("10.90.0.3", 8080)])
+    sb = DockerSandbox(run=run)
+    sb.provision(_eng())
+    snap = sb.snapshot()
+    assert run.ran("commit", "hc-range-tgt-0")
+    run.calls.clear()
+    sb.restore(snap)
+    assert run.ran("rm", "-f", "hc-range-tgt-0")               # old container discarded
+    assert run.ran("run", "-d", "--name", "hc-range-tgt-0", "--ip", "10.90.0.3")
+    assert any("hc-snap:" in " ".join(c) for c in run.calls
+               if c[:2] == ["docker", "run"])                  # recreated from the snapshot image
+
+
+def test_restore_unknown_snapshot_raises():
+    sb = DockerSandbox(run=FakeRunner())
+    sb.provision(_eng())
+    try:
+        sb.restore("no-such-snap")
+        raise AssertionError("expected an unknown snapshot to raise")
+    except Exception as e:  # noqa: BLE001
+        assert "unknown snapshot" in str(e)
+
+
 def test_proofs_pass_is_false_until_all_five_guarantees_are_proven():
-    # the guard proof (G1/G2) passing is necessary but not sufficient: snapshot (G3),
-    # escape (G4), and kill-switch (G5) drills are unbuilt, so the aggregate stays
-    # False and the harness stays passive-only (§3).
+    # G1/G2 (guard proof) and G3 (snapshot round-trip) pass, but the escape (G4) and
+    # kill-switch (G5) drills are unbuilt, so the aggregate stays False and the harness
+    # stays passive-only (§3).
     run = FakeRunner(reachable=[("10.90.0.3", 8080)])
     sb = DockerSandbox(run=run)
     sb.provision(_eng())
     assert sb.guard_proof()["pass"] is True
+    assert sb.snapshot_round_trip()["pass"] is True
     assert sb.proofs_pass() is False
 
 

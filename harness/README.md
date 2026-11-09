@@ -311,11 +311,15 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   agent can neither leave scope nor touch the guard). The scope guard is an nftables
   ruleset the host installs into the attacker's netns - default-deny egress, allowing
   only the pinned in-scope IPs on their allowed ports (`scope.ports_for`). `guard_proof`
-  runs the four §8.1 probes from inside the attacker container; `proofs_pass` stays
-  `False` until the G3/G4/G5 drills land, so this backend alone keeps the harness
-  passive-only. Every docker/nsenter call goes through an injected runner, so the
-  logic is unit-tested with no Docker present (`tests/test_sandbox.py`); the live path
-  is proven by `tools/sandbox_selftest.py` (golden image and notes in `infra/sandbox/`).
+  runs the four §8.1 probes from inside the attacker container. `snapshot`/`restore`
+  give reproducibility (G3): `snapshot` commits each target container to an image and
+  `restore` recreates it from that image at the same pinned IP (the attacker and guard
+  are untouched), and `snapshot_round_trip` proves it per §8.2 (marker survives an
+  overwrite-then-restore). `proofs_pass` runs the implemented proofs but stays `False`
+  until the G4/G5 drills land, so this backend alone keeps the harness passive-only.
+  Every docker/nsenter call goes through an injected runner, so the logic is
+  unit-tested with no Docker present (`tests/test_sandbox.py`); the live path is proven
+  by `tools/sandbox_selftest.py` (golden image and notes in `infra/sandbox/`).
 
 ## Run
 

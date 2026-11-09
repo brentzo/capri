@@ -86,7 +86,10 @@ class DockerSandbox(Sandbox):
         self.guard_table = "hc_guard"
         self._eng = None
         self._attacker_pid = None
-        self._targets = {}          # host -> ip_str
+        self._targets = {}          # host -> (container_name, ip_str)
+        self._target_ports = {}     # host -> [ports], to restart listeners after restore
+        self._snapshots = {}        # snapshot_id -> {host: (name, ip, image_tag)}
+        self._snap_seq = 0
         self._out_of_scope_ip = None
         self._guard_port = None     # an allowed in-scope port, for the §8.1(d) probe
         self._in_scope_ip = None
@@ -133,11 +136,11 @@ class DockerSandbox(Sandbox):
             self._docker("run", "-d", "--name", name, "--network", self.network,
                          "--ip", ip, self.node_image)
             pinned[host] = ip
-            self._targets[host] = ip
+            self._targets[host] = (name, ip)
             ports = scope.ports_for(engagement, ipaddress.ip_address(ip))
+            self._target_ports[host] = ports
             pinned_ports.append((ip, ports))
-            for port in ports:                                 # a listener so §8.1(d) connects
-                self._docker("exec", "-d", name, "python3", "-m", "http.server", str(port))
+            self._start_listeners(name, ports)                 # a listener so §8.1(d) connects
             if self._in_scope_ip is None and ports:
                 self._in_scope_ip, self._guard_port = ip, int(ports[0])
 
@@ -162,28 +165,90 @@ class DockerSandbox(Sandbox):
             in_scope_reachable=self._tcp(self._in_scope_ip, self._guard_port))
 
     def proofs_pass(self):
-        """Aggregate G1-G5 (§8). Only the guard proof (G1/G2, §8.1) is implemented; the
-        snapshot round-trip (G3), escape-attempt (G4), and kill-switch drill (G5) are
-        the next slices, so this stays False and the harness stays passive-only until
-        all five are proven (§3: an unproven guarantee is treated as absent)."""
-        return False
+        """Aggregate G1-G5 (§8). The guard proof (G1/G2, §8.1) and the snapshot round-
+        trip (G3, §8.2) are implemented and must both hold; the escape-attempt (G4) and
+        kill-switch drill (G5) are the next slices, so this stays False and the harness
+        stays passive-only until all five are proven (§3: an unproven guarantee is
+        treated as absent)."""
+        if not self.guard_proof().get("pass"):
+            return False
+        if not self.snapshot_round_trip().get("pass"):
+            return False
+        return False                                           # G4 and G5 still pending
 
     def snapshot(self):
-        raise SandboxError("snapshot/restore (G3) is not yet implemented in this backend")
+        """Commit every target container to an image and return a snapshot id, so the
+        range's state can be restored after a tier>=2 action (§6.3, G3). Filesystem
+        state is captured, which is what the §8.2 round-trip and recoverable actions
+        need; a separate backend adds memory checkpointing where a target requires it."""
+        if self._attacker_pid is None:
+            raise SandboxError("no range to snapshot: not provisioned")
+        self._snap_seq += 1
+        snap_id = f"{self.network}-snap-{self._snap_seq}"
+        images = {}
+        for host, (name, ip) in self._targets.items():
+            image = f"hc-snap:{snap_id}-{len(images)}"
+            self._docker("commit", name, image)
+            images[host] = (name, ip, image)
+        self._snapshots[snap_id] = images
+        return snap_id
 
     def restore(self, snapshot_id):
-        raise SandboxError("snapshot/restore (G3) is not yet implemented in this backend")
+        """Recreate every target from its snapshot image at the same pinned IP, so the
+        range returns to the captured state (§6.3, G3). The attacker and the scope
+        guard are untouched, since the guard lives in the attacker netns and the IPs
+        are preserved."""
+        images = self._snapshots.get(snapshot_id)
+        if images is None:
+            raise SandboxError(f"unknown snapshot {snapshot_id}")
+        for host, (name, ip, image) in images.items():
+            self._run(["docker", "rm", "-f", name])
+            self._docker("run", "-d", "--name", name, "--network", self.network,
+                         "--ip", ip, image)
+            self._start_listeners(name, self._target_ports.get(host, []))
+        return True
+
+    def snapshot_round_trip(self):
+        """Prove G3 (§8.2): write a marker to a target, snapshot, overwrite the marker,
+        restore, and assert the original marker is back."""
+        if not self._targets:
+            return {"pass": False, "reason": "range not provisioned"}
+        host = next(iter(self._targets))
+        name = self._targets[host][0]
+        original, overwrite, path = "hc-marker-original", "hc-marker-overwritten", "/hc_marker"
+        self._exec(name, "sh", "-c", f"echo {original} > {path}")
+        snap = self.snapshot()
+        self._exec(name, "sh", "-c", f"echo {overwrite} > {path}")
+        self.restore(snap)
+        got = self._exec(self._targets[host][0], "cat", path).out.strip()
+        return {"pass": got == original, "expected": original, "got": got}
 
     def kill(self):
-        """Tear the range down: remove the attacker and every target, then the network.
-        Best-effort and idempotent, so it doubles as pre-provision cleanup (§6.4)."""
-        names = [self.attacker, *[f"{self.network}-tgt-{i}" for i in range(len(self._targets) or 8)]]
+        """Tear the range down: remove the attacker and every target, drop the network,
+        and delete any snapshot images. Best-effort and idempotent, so it doubles as
+        pre-provision cleanup (§6.4)."""
+        names = [self.attacker, *[f"{self.network}-tgt-{i}"
+                                  for i in range(max(len(self._targets), 8))]]
         for name in names:
             self._run(["docker", "rm", "-f", name])
         self._run(["docker", "network", "rm", self.network])
+        for images in self._snapshots.values():
+            for _, _, image in images.values():
+                self._run(["docker", "rmi", "-f", image])
         self._attacker_pid = None
-        self._targets = {}
+        self._targets, self._target_ports, self._snapshots = {}, {}, {}
         return True
+
+    # --- helpers --------------------------------------------------------
+    def _start_listeners(self, name, ports):
+        for port in ports:
+            self._docker("exec", "-d", name, "python3", "-m", "http.server", str(port))
+
+    def _exec(self, name, *args, input=None):
+        r = self._run(["docker", "exec", name, *args], input=input)
+        if r.rc != 0:
+            raise SandboxError(f"docker exec {name} {args[0]} failed: {r.err.strip()}")
+        return r
 
     # --- probes ---------------------------------------------------------
     def _tcp(self, ip, port):
