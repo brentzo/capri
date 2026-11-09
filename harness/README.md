@@ -321,9 +321,10 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   `http.server` stand-in, or, when `listener_app` is set, a python app seeded in over
   stdin (never baked into the golden image); the live runner seeds `infra/sandbox/vulnweb.py`,
   a deliberately vulnerable app (it reflects one query parameter unencoded, concatenates
-  another into a SQL query, and exposes a toy JWT login whose verifier honors alg:none,
+  another into a SQL query, evaluates a third through a template engine, reflects any
+  Origin with credentials, and exposes a toy JWT login whose verifier honors alg:none,
   whose /account skips the ownership check, and whose /admin skips the role check), so the
-  XSS, SQLi, IDOR, BFLA, and JWT-confusion techniques have a real hole to confirm.
+  XSS, SQLi, SSTI, CORS, IDOR, BFLA, and JWT-confusion techniques have a real hole.
   The scope guard is an nftables
   ruleset the host installs into the attacker's netns - default-deny egress, allowing
   only the pinned in-scope IPs on their allowed ports (`scope.ports_for`). `guard_proof`
@@ -387,7 +388,11 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   tool, attacks the token: it forges an unsigned (alg:none) token and a bogus-signature
   one and reports JWT algorithm confusion only when the server accepts the unsigned token
   but rejects the bogus-signature one, proving it honors alg:none rather than ignoring
-  verification entirely.
+  verification entirely. `SstiAdapter` (`ssti`) injects a fixed template expression and
+  confirms server-side template injection only when the response has the computed value
+  and not the raw expression; `CorsAdapter` (`cors`) sends a crafted Origin and confirms a
+  CORS misconfiguration only when the response reflects that origin with credentials (it
+  reads a response header, so the in-container request grew a header-returning variant).
   The attacker container runs the toolchain image (`infra/sandbox/Dockerfile.attacker`,
   built for amd64 and arm64, httpx checksum-pinned) while targets stay the minimal node
   image, and the attacker still holds no `NET_ADMIN`, so the host-owned scope guard
@@ -459,9 +464,10 @@ cards, bridged to the concrete tool adapters.
   available authenticated session from a login probe, and privileged sibling paths from a
   short conventional-path list. `tools/run_engagement.py` loads the KB with `kb.load`,
   projects it with `capabilities.runnable_index`, and drives it; a live model-driven run
-  confirmed four genuine web-protocol-auth cards (JWT algorithm confusion at the card's
-  own critical severity, object- and function-level authorization, and boolean-blind SQL
-  injection), each verified on a disjoint provider.
+  confirmed six genuine web-protocol-auth cards (JWT algorithm confusion and server-side
+  template injection at the cards' own critical severity, object- and function-level
+  authorization, boolean-blind SQL injection, and CORS misconfiguration), each verified on
+  a disjoint provider.
 
 ## Run
 

@@ -16,9 +16,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from urllib.parse import parse_qs, urlparse                              # noqa: E402
 import base64                                                            # noqa: E402
 from harness.sandbox.adapters import (                                   # noqa: E402
-    BflaAdapter, HttpRequestAdapter, HttpxAdapter, IdorAdapter, JwtAdapter,
-    NmapAdapter, SqliAdapter,
-    _parse_http_response, _parse_httpx, _parse_nmap_services)
+    BflaAdapter, CorsAdapter, HttpRequestAdapter, HttpxAdapter, IdorAdapter,
+    JwtAdapter, NmapAdapter, SqliAdapter, SstiAdapter,
+    _parse_http_full, _parse_http_response, _parse_httpx, _parse_nmap_services)
 from harness.sandbox.base import RunResult                               # noqa: E402
 
 # Real `nmap -sV -Pn -p 8080 -oX -` output (captured live), trimmed to the shape we parse.
@@ -534,6 +534,89 @@ def test_bfla_public_endpoint_is_not_a_hit():
     # answers the anonymous call too, so it is public, not a privileged function
     assert res["deterministic_signals"]["anon_status"] == 200
     assert res["deterministic_signals"]["hit"] is False
+
+
+class SstiRunner:
+    """Simulates the endpoint: renders a {{ expression }} the caller injects. With
+    `evaluate`, it computes it (template injection); otherwise it reflects it raw."""
+
+    def __init__(self, *, evaluate=True):
+        self.evaluate = evaluate
+        self.calls = []
+
+    def __call__(self, argv, input=None, timeout=None):
+        self.calls.append(argv)
+        url = next((a for a in argv if a.startswith("http")), "")
+        name = (parse_qs(urlparse(url).query).get("name") or [""])[0]
+        shown = "49" if (self.evaluate and name == "{{7*7}}") else name
+        return RunResult(0, f"STATUS 200\n---BODY---\n<p>Hello {shown}</p>", "")
+
+
+def test_ssti_confirms_template_evaluation():
+    res = SstiAdapter("atk", PINNED, run=SstiRunner()).run(
+        {"tool": "ssti", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/greet", "param": "name"}})
+    sig = res["deterministic_signals"]
+    assert res["status"] == "ok"
+    assert sig["hit"] is True and sig["ssti"] is True
+
+
+def test_ssti_raw_reflection_is_not_a_hit():
+    # a page that echoes the expression without evaluating it is not injection
+    res = SstiAdapter("atk", PINNED, run=SstiRunner(evaluate=False)).run(
+        {"tool": "ssti", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/greet", "param": "name"}})
+    assert res["deterministic_signals"]["hit"] is False
+
+
+class CorsRunner:
+    """Simulates the CORS endpoint. When vulnerable it reflects the request Origin into
+    Access-Control-Allow-Origin and allows credentials; a safe server does neither."""
+
+    def __init__(self, *, reflect=True, credentials=True):
+        self.reflect, self.credentials = reflect, credentials
+        self.calls = []
+
+    def __call__(self, argv, input=None, timeout=None):
+        self.calls.append(argv)
+        _, req_headers = _call_url_headers(argv)
+        origin = req_headers.get("Origin", "")
+        headers = {"Content-Type": "application/json"}
+        if self.reflect and origin:
+            headers["Access-Control-Allow-Origin"] = origin
+            if self.credentials:
+                headers["Access-Control-Allow-Credentials"] = "true"
+        out = "STATUS 200\n" + json.dumps(headers) + '\n---BODY---\n{"data": "ok"}'
+        return RunResult(0, out, "")
+
+
+def test_cors_confirms_reflected_origin_with_credentials():
+    res = CorsAdapter("atk", PINNED, run=CorsRunner()).run(
+        {"tool": "cors", "target": "t1.sandbox.local", "port": 8080, "args": {"path": "/api/data"}})
+    sig = res["deterministic_signals"]
+    assert res["status"] == "ok"
+    assert sig["hit"] is True and sig["reflects_origin"] is True and sig["allows_credentials"] is True
+
+
+def test_cors_reflected_origin_without_credentials_is_not_a_hit():
+    res = CorsAdapter("atk", PINNED, run=CorsRunner(credentials=False)).run(
+        {"tool": "cors", "target": "t1.sandbox.local", "port": 8080, "args": {"path": "/api/data"}})
+    sig = res["deterministic_signals"]
+    assert sig["reflects_origin"] is True and sig["allows_credentials"] is False
+    assert sig["hit"] is False                               # reading it needs credentials too
+
+
+def test_cors_strict_origin_is_not_a_hit():
+    res = CorsAdapter("atk", PINNED, run=CorsRunner(reflect=False)).run(
+        {"tool": "cors", "target": "t1.sandbox.local", "port": 8080, "args": {"path": "/api/data"}})
+    assert res["deterministic_signals"]["hit"] is False
+
+
+def test_parse_http_full_splits_status_headers_and_body():
+    out = 'STATUS 200\n{"Server": "x", "X-A": "b"}\n---BODY---\n<html>hi</html>'
+    code, headers, body = _parse_http_full(out)
+    assert code == 200 and headers["X-A"] == "b" and body == "<html>hi</html>"
+    assert _parse_http_full("ERR Timeout") == (0, {}, "")
 
 
 def main():

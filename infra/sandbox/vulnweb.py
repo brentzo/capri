@@ -17,6 +17,7 @@ import base64
 import hashlib
 import hmac
 import json
+import re
 import sqlite3
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -24,6 +25,19 @@ from urllib.parse import parse_qs, urlparse
 
 _PAGE = "<!doctype html><title>hc-shop</title><body><h1>hc-shop</h1>"
 _JWT_SECRET = b"hc-very-secret-key"
+_TMPL_RE = re.compile(r"\{\{(.+?)\}\}")
+
+
+def _render(text):
+    # VULNERABLE BY DESIGN: evaluates a {{ expression }} the caller controls, which is
+    # server-side template injection. Builtins are stripped so the fixture stays bounded,
+    # but arithmetic like {{7*7}} still evaluates, which is enough to prove the hole.
+    def sub(match):
+        try:
+            return str(eval(match.group(1), {"__builtins__": {}}, {}))
+        except Exception:
+            return match.group(0)
+    return _TMPL_RE.sub(sub, text)
 
 # A tiny in-memory catalog, so the SQL-injectable endpoint has real rows to leak.
 _DB = sqlite3.connect(":memory:", check_same_thread=False)
@@ -120,6 +134,24 @@ class Handler(BaseHTTPRequestHandler):
             # VULNERABLE BY DESIGN: an admin-only function with no role check, so any
             # authenticated user (role "user") reaches it (broken function-level authz).
             self._respond(200, "admin panel: accounts 1,2,3 secrets exposed", "text/plain")
+        elif parts.path == "/greet":
+            name = (query.get("name") or ["guest"])[0]
+            # VULNERABLE BY DESIGN: the name is rendered through the template engine, so
+            # an injected {{ expression }} is evaluated server-side.
+            self._respond(200, _render(_PAGE + "<p>Hello " + name + "</p>"))
+        elif parts.path == "/api/data":
+            origin = self.headers.get("Origin", "")
+            body = b'{"data": "ok"}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            if origin:
+                # VULNERABLE BY DESIGN: reflects any Origin and allows credentials, so a
+                # malicious site can read this authenticated response (CORS misconfig).
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Access-Control-Allow-Credentials", "true")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
         else:
             self._respond(200, _PAGE + "<p>Try /search?q=... /item?id=... /account?id=...</p>")
 
