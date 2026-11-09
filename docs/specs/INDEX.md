@@ -17,6 +17,7 @@ Areas:
 - `ENRICH` - external enrichment (Tavily)
 - `KB` - technique knowledge base
 - `AGENT` - agent loop and role orchestration
+- `OBJ` - objective-driven engagements, chaining, and lateral movement
 - `FIND` - findings model and verification
 - `DATA` - evidence store and corpus
 - `SAFE` - safety and guardrails
@@ -56,6 +57,7 @@ updated: 2026-11-08
 | HC-KB-10   | Memory and binary technique-card starter set          | SPEC.md#7        | draft   |
 | HC-KB-11   | Mobile and local-IPC technique-card starter set       | SPEC.md#7        | draft   |
 | HC-AGENT-01 | Agent loop and role orchestration                      | SPEC.md#4, #6    | draft   |
+| HC-OBJ-01   | Objective-driven engagements, chaining, lateral movement | SPEC.md#4, #6  | draft   |
 | HC-FIND-01  | Findings model and verification protocol               | SPEC.md#8        | draft   |
 | HC-DATA-01  | Evidence store and self-labeling corpus                | SPEC.md#9        | draft   |
 | HC-SAFE-01  | Safety and guardrails                                  | SPEC.md#11       | draft   |

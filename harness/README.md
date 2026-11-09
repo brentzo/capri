@@ -15,7 +15,12 @@ harness runs on top of it:
 - `substrate/contract.py` - parse and validate the engagement contract
   (HC-SUB-01 §4). Fail-closed: `parse()` returns `(engagement, errors)` and
   yields no Engagement on any error, so nothing is provisioned from a bad
-  contract. Runnable: `python3 -m harness.substrate.contract <file>`.
+  contract. It also validates the optional `objective` block and
+  `policy.lateral_movement` (HC-OBJ-01 §4): an out-of-scope objective target, an
+  unparseable `success` predicate, a `reach` objective without lateral movement,
+  or a canary that inlines the plaintext each abort, while a contract with no
+  objective runs exactly as before. Runnable:
+  `python3 -m harness.substrate.contract <file>`.
 - `substrate/scope.py` - `scope_validate(eng, target, port)`, the default-deny
   scope pre-check (§5.3); out_of_scope wins and unpinned hosts are denied
   (anti-TOCTOU, §4.3).

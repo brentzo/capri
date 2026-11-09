@@ -5,11 +5,22 @@ Validation is fail-closed: a missing, malformed, or contradictory field makes
 `parse` return errors and no Engagement, so nothing is provisioned (§4.2).
 """
 import ipaddress
+import re
 from datetime import datetime
 
-from harness import yamlmini
+from harness import predicates, yamlmini
 
 BLAST_TIERS = (0, 1, 2, 3)
+
+# Objective block (HC-OBJ-01 §4). Optional and additive: a contract with no
+# objective validates and runs exactly as before.
+OBJECTIVE_TYPES = ("capability", "canary", "reach")
+PROOF_KINDS = ("canary", "oob_marker")
+ON_SUCCESS = ("stop", "continue-for-coverage")
+# A canary objective carries a hash, never the secret (§4.4); these keys would be
+# the plaintext inlined, so a proof block that has one is rejected.
+_PLAINTEXT_KEYS = ("secret", "plaintext", "value", "content", "flag")
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
 class Engagement:
@@ -32,6 +43,8 @@ class Engagement:
         self.forbidden = list(p.get("forbidden", []))
         self.rate = p.get("rate", {}) or {}
         self.tier3_techniques = list(p.get("tier3_techniques", []))
+        self.lateral_movement = p.get("lateral_movement", False) is True  # HC-OBJ-01 §8
+        self.objective = raw.get("objective")   # validated objective block, or None
         self.pinned = {}   # host -> ipaddress, set at provisioning (§4.3)
 
     def pin(self, host_to_ip):
@@ -140,9 +153,10 @@ def validate(raw, management_cidrs=None):
             in_nets.append(ipaddress.ip_network(str(c), strict=False))
         except ValueError:
             errs.append(f"scope.in_scope_cidrs: '{c}' is not a valid CIDR")
+    out_nets = []
     for x in scope.get("out_of_scope", []) or []:
         try:
-            _as_net(x)
+            out_nets.append(_as_net(x))
         except ValueError:
             errs.append(f"scope.out_of_scope: '{x}' is not a valid IP or CIDR")
     # in_scope must not overlap the operator's management network (§4.2)
@@ -158,7 +172,103 @@ def validate(raw, management_cidrs=None):
     pol = raw.get("policy")
     if pol is not None and not isinstance(pol, dict):
         errs.append("policy must be a mapping")
+    pol = pol if isinstance(pol, dict) else {}
+    lateral = pol.get("lateral_movement")
+    if lateral is not None and not isinstance(lateral, bool):
+        errs.append("policy.lateral_movement must be a boolean")
+
+    if "objective" in raw:            # optional; absent means a pure-coverage run (§3)
+        _validate_objective(raw["objective"], list(hosts), in_nets, out_nets,
+                            lateral is True, errs)
     return errs
+
+
+def _validate_objective(obj, hosts, in_nets, out_nets, lateral, errs):
+    """Fail-closed validation of the HC-OBJ-01 §4 objective block (§4.4)."""
+    if not isinstance(obj, dict):
+        errs.append("objective must be a mapping")
+        return
+    for f in ("id", "description", "type", "target", "success"):
+        if obj.get(f) in (None, ""):
+            errs.append(f"objective.{f} is required")
+
+    otype = obj.get("type")
+    if otype is not None and otype not in OBJECTIVE_TYPES:
+        errs.append(f"objective.type must be one of {list(OBJECTIVE_TYPES)}")
+
+    target = obj.get("target")
+    if target not in (None, "") and not _target_in_scope(str(target), hosts, in_nets, out_nets):
+        errs.append(f"objective.target '{target}' must be an in_scope_host or an "
+                    "in-scope, pinned IP; an out-of-scope target aborts before provisioning")
+
+    success = obj.get("success")
+    if isinstance(success, str) and success.strip():
+        try:
+            predicates.evaluate(success, {})      # parse-check only, over empty facts
+        except predicates.PredicateError as ex:
+            errs.append(f"objective.success does not parse under the predicate DSL: {ex}")
+
+    if otype == "reach" and not lateral:          # internally contradictory (§4.4)
+        errs.append("objective.type 'reach' requires policy.lateral_movement: true")
+
+    on_success = obj.get("on_success")
+    if on_success is not None and on_success not in ON_SUCCESS:
+        errs.append(f"objective.on_success must be one of {list(ON_SUCCESS)}")
+
+    _validate_proof(otype, obj.get("proof"), errs)
+
+
+def _validate_proof(otype, proof, errs):
+    """A proof binds completion to a deterministic artifact (§4.3). Required for a
+    canary or reach objective; a capability's proof is its confirmed fact."""
+    if proof is None:
+        if otype in ("canary", "reach"):
+            errs.append(f"objective.type '{otype}' requires a proof block")
+        return
+    if not isinstance(proof, dict):
+        errs.append("objective.proof must be a mapping")
+        return
+    kind = proof.get("kind")
+    if kind not in PROOF_KINDS:
+        errs.append(f"objective.proof.kind must be one of {list(PROOF_KINDS)}")
+    if otype == "canary" and kind != "canary":
+        errs.append("a canary objective requires proof.kind: canary")
+    if otype == "reach" and kind != "oob_marker":
+        errs.append("a reach objective requires proof.kind: oob_marker")
+
+    if kind == "canary":
+        if not _SHA256.match(str(proof.get("sha256", ""))):
+            errs.append("objective.proof.sha256 must be a 64-character lowercase hex digest")
+        if proof.get("location") in (None, ""):
+            errs.append("objective.proof.location is required for a canary")
+        leaked = sorted(k for k in proof if str(k).lower() in _PLAINTEXT_KEYS)
+        if leaked:
+            errs.append("objective.proof carries a hash, not the plaintext secret; "
+                        f"remove {', '.join(leaked)}")
+    elif kind == "oob_marker":
+        if proof.get("marker") in (None, "") and proof.get("collaborator") in (None, ""):
+            errs.append("an oob_marker proof must name an in-sandbox marker or collaborator")
+        for v in (proof.get("collaborator"), proof.get("location"), proof.get("marker")):
+            if isinstance(v, str) and ("://" in v or "@" in v):
+                errs.append("an oob_marker proof must terminate in-sandbox, not at an "
+                            "external host or URL")
+
+
+def _target_in_scope(target, hosts, in_nets, out_nets):
+    if target in hosts:
+        return True                               # a declared, pinnable in-scope host
+    try:
+        ip = ipaddress.ip_address(target)
+    except ValueError:
+        return False                              # a hostname not declared in scope
+    if not any(ip in n for n in in_nets):
+        return False
+    for entry in out_nets:
+        if isinstance(entry, ipaddress._BaseNetwork) and ip in entry:
+            return False
+        if ip == entry:
+            return False
+    return True
 
 
 if __name__ == "__main__":  # python3 -m harness.substrate.contract <file|->
@@ -176,3 +286,7 @@ if __name__ == "__main__":  # python3 -m harness.substrate.contract <file|->
           f"{len(e.in_scope_nets)} in-scope CIDR(s), "
           f"{len(e.out_of_scope)} excluded, "
           f"window {e.window_start:%Y-%m-%d %I:%M%p}-{e.window_end:%I:%M%p})")
+    if e.objective:
+        print(f"objective: {e.objective.get('id')} "
+              f"(type={e.objective.get('type')}, target={e.objective.get('target')}, "
+              f"lateral_movement={e.lateral_movement})")

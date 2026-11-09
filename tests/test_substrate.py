@@ -144,6 +144,119 @@ def test_blast_tier3_requires_named_technique():
     assert v2 == "allow"
 
 
+# --- objective block (HC-OBJ-01 §4, fail-closed) -------------------------
+CANARY = """objective:
+  id: obj-flag
+  description: "Read the planted secret."
+  type: canary
+  target: app.sandbox.local
+  success: "exists(flag.captured) && flag.host == 'app.sandbox.local'"
+  proof:
+    kind: canary
+    location: "/flag.txt"
+    sha256: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+  on_success: stop
+"""
+
+
+def _with(objective="", extra_policy=""):
+    text = VALID
+    if extra_policy:
+        text = text.rstrip() + "\n  " + extra_policy + "\n"
+    if objective:
+        text = text.rstrip() + "\n" + objective
+    return text
+
+
+def test_no_objective_runs_as_before():
+    e, errs = contract.parse(VALID)
+    assert errs == [] and e.objective is None and e.lateral_movement is False
+
+
+def test_valid_canary_objective_parses():
+    e, errs = contract.parse(_with(CANARY))
+    assert errs == [], errs
+    assert e.objective["id"] == "obj-flag" and e.objective["type"] == "canary"
+
+
+def test_objective_target_out_of_scope_is_rejected():
+    bad = CANARY.replace("target: app.sandbox.local", "target: evil.example.com")
+    e, errs = contract.parse(_with(bad))
+    assert e is None and any("out-of-scope target aborts" in x for x in errs)
+
+
+def test_objective_target_may_be_an_in_scope_ip():
+    ipobj = CANARY.replace("target: app.sandbox.local", "target: 10.13.0.5")
+    e, errs = contract.parse(_with(ipobj))
+    assert errs == [], errs
+
+
+def test_objective_target_in_out_of_scope_ip_is_rejected():
+    # 10.13.0.1 is in_scope_cidrs but listed under out_of_scope
+    ipobj = CANARY.replace("target: app.sandbox.local", "target: 10.13.0.1")
+    e, errs = contract.parse(_with(ipobj))
+    assert e is None and errs
+
+
+def test_canary_inlining_the_plaintext_is_rejected():
+    leak = CANARY.replace('sha256: "9f86d0', 'secret: "hunter2"\n    sha256: "9f86d0')
+    e, errs = contract.parse(_with(leak))
+    assert e is None and any("not the plaintext" in x for x in errs)
+
+
+def test_canary_requires_a_valid_sha256():
+    bad = CANARY.replace("9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+                         "deadbeef")
+    e, errs = contract.parse(_with(bad))
+    assert e is None and any("sha256" in x for x in errs)
+
+
+def test_unparseable_success_predicate_is_rejected():
+    bad = CANARY.replace('success: "exists(flag.captured) && flag.host == \'app.sandbox.local\'"',
+                         'success: "exists((("')
+    e, errs = contract.parse(_with(bad))
+    assert e is None and any("predicate DSL" in x for x in errs)
+
+
+def test_unknown_objective_type_is_rejected():
+    bad = CANARY.replace("type: canary", "type: pivot")
+    e, errs = contract.parse(_with(bad))
+    assert e is None and any("objective.type must be one of" in x for x in errs)
+
+
+def test_reach_objective_requires_lateral_movement():
+    reach = """objective:
+  id: obj-reach
+  description: "Land on the db host."
+  type: reach
+  target: app.sandbox.local
+  success: "exists(foothold.db)"
+  proof: { kind: oob_marker, collaborator: oob-sandbox }
+"""
+    e, errs = contract.parse(_with(reach))
+    assert e is None and any("lateral_movement: true" in x for x in errs)
+    e2, errs2 = contract.parse(_with(reach, extra_policy="lateral_movement: true"))
+    assert errs2 == [] and e2.lateral_movement is True
+
+
+def test_reach_objective_rejects_an_external_oob_marker():
+    reach = """objective:
+  id: obj-reach
+  description: "Land on the db host."
+  type: reach
+  target: app.sandbox.local
+  success: "exists(foothold.db)"
+  proof: { kind: oob_marker, collaborator: "http://evil.example/cb" }
+"""
+    e, errs = contract.parse(_with(reach, extra_policy="lateral_movement: true"))
+    assert e is None and any("in-sandbox" in x for x in errs)
+
+
+def test_lateral_movement_must_be_boolean():
+    e, errs = contract.parse(_with(extra_policy="lateral_movement: maybe"))
+    assert e is None and any("lateral_movement must be a boolean" in x for x in errs)
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0
