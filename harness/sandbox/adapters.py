@@ -598,6 +598,62 @@ class CorsAdapter(_Adapter):
         }
 
 
+# The range canary marker the deliberately-vulnerable target writes outside its public
+# download dir (infra/sandbox/vulnweb.py). A path-traversal response that carries this
+# exact sentinel proves the read escaped the public dir and reached a file on disk; the
+# marker is never sent in the request, so a server that stays inside its dir never echoes
+# it, and a model cannot force it. Both halves are harness code, so the value is shared.
+_RANGE_CANARY = "HC-RANGE-CANARY-d41d8cd98f00b204"
+
+
+class PathAdapter(_Adapter):
+    """Path traversal / local file read against a pinned in-scope target. Registered as
+    `path`.
+
+    The harness requests the named file parameter with a traversal ladder that walks out
+    of the app's public directory toward the range canary file, and reports a read only
+    when the response carries the canary marker, which proves the path escaped the public
+    directory and read a file off disk rather than serving an in-directory file. The
+    marker is the harness's and never travels in the request, so an app that contains the
+    path never echoes it; the Verifier repeats the ladder."""
+
+    # Walk out of the public dir toward /tmp/hc_canary.txt from a few plausible depths.
+    _LADDER = ("../hc_canary.txt", "../../tmp/hc_canary.txt", "../../../tmp/hc_canary.txt")
+
+    def run(self, req):
+        ip = self._resolve(req["target"])
+        port = int(req["port"])
+        args = req.get("args") or {}
+        scheme = args.get("scheme") or ("https" if port in (443, 8443) else "http")
+        path = args.get("path", "/download")
+        param = args.get("param", "file")
+        attempts = []
+        read = False
+        last_status = 0
+        for payload in self._LADDER:
+            qs = urllib.parse.urlencode({param: payload})
+            url = f"{scheme}://{ip}:{port}{path}?{qs}"
+            status_code, body = self._send_http(url)
+            last_status = status_code
+            attempts.append({"payload": payload, "status": status_code})
+            if _RANGE_CANARY in body:
+                read = True
+                break
+        return {
+            "status": "ok" if read else "error",
+            "parsed": {"attempts": attempts, "canary_read": read},
+            "request_bytes": f"path {path}?{param}=../ ladder".encode("utf-8"),
+            "response_bytes": repr(attempts).encode("utf-8"),
+            "deterministic_signals": {
+                "hit": read,
+                "path_traversal": read,
+                "file_read": read,
+                "status_code": last_status,
+                "confidence": 0.95 if read else 0.0,
+            },
+        }
+
+
 def _parse_nmap_services(xml_text):
     """Parse nmap `-oX -` output into a list of open-port service dicts. Tolerant: any
     parse failure or no open port yields an empty list (the adapter reports no hit)."""

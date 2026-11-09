@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, urlparse                              # noqa:
 import base64                                                            # noqa: E402
 from harness.sandbox.adapters import (                                   # noqa: E402
     BflaAdapter, CorsAdapter, HttpRequestAdapter, HttpxAdapter, IdorAdapter,
-    JwtAdapter, NmapAdapter, SqliAdapter, SstiAdapter,
+    JwtAdapter, NmapAdapter, PathAdapter, SqliAdapter, SstiAdapter, _RANGE_CANARY,
     _parse_http_full, _parse_http_response, _parse_httpx, _parse_nmap_services)
 from harness.sandbox.base import RunResult                               # noqa: E402
 
@@ -610,6 +610,54 @@ def test_cors_strict_origin_is_not_a_hit():
     res = CorsAdapter("atk", PINNED, run=CorsRunner(reflect=False)).run(
         {"tool": "cors", "target": "t1.sandbox.local", "port": 8080, "args": {"path": "/api/data"}})
     assert res["deterministic_signals"]["hit"] is False
+
+
+class TraversalRunner:
+    """Simulates the vulnerable /download endpoint: it joins the `file` parameter to a
+    public dir with no containment check, so a `../` payload reads the canary file and its
+    marker comes back. A safe server (`contained`) refuses to leave the dir, so the marker
+    never appears."""
+
+    def __init__(self, *, contained=False):
+        self.contained = contained
+        self.calls = []
+
+    def __call__(self, argv, input=None, timeout=None):
+        self.calls.append(argv)
+        url = next((a for a in argv if a.startswith("http")), "")
+        fname = (parse_qs(urlparse(url).query).get("file") or [""])[0]
+        if ".." in fname and not self.contained:
+            return RunResult(0, f"STATUS 200\n---BODY---\n{_RANGE_CANARY}\n", "")
+        if ".." in fname:                                    # contained: traversal refused
+            return RunResult(0, "STATUS 404\n---BODY---\nnot found", "")
+        return RunResult(0, "STATUS 200\n---BODY---\nhc-shop public downloads", "")
+
+
+def test_path_confirms_traversal_when_the_canary_marker_is_read():
+    res = PathAdapter("atk", PINNED, run=TraversalRunner()).run(
+        {"tool": "path", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/download", "param": "file"}})
+    sig = res["deterministic_signals"]
+    assert res["status"] == "ok"
+    assert sig["hit"] is True and sig["path_traversal"] is True and sig["file_read"] is True
+
+
+def test_path_contained_download_is_not_a_hit():
+    res = PathAdapter("atk", PINNED, run=TraversalRunner(contained=True)).run(
+        {"tool": "path", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/download", "param": "file"}})
+    assert res["deterministic_signals"]["hit"] is False      # the app stays inside its dir
+
+
+def test_path_walks_out_of_the_public_dir_against_the_resolved_ip():
+    fake = TraversalRunner()
+    PathAdapter("atk", PINNED, run=fake).run(
+        {"tool": "path", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/download", "param": "file"}})
+    url = next(a for a in fake.calls[0] if a.startswith("http"))
+    assert url.startswith("http://10.90.0.3:8080/download?")  # resolved IP + endpoint
+    assert "t1.sandbox.local" not in url
+    assert "..%2F" in url or "../" in url                     # a traversal payload
 
 
 def test_parse_http_full_splits_status_headers_and_body():

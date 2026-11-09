@@ -393,6 +393,10 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   and not the raw expression; `CorsAdapter` (`cors`) sends a crafted Origin and confirms a
   CORS misconfiguration only when the response reflects that origin with credentials (it
   reads a response header, so the in-container request grew a header-returning variant).
+  `PathAdapter` (`path`) requests a file parameter with a traversal ladder and confirms a
+  path traversal only when the response carries the range canary marker the target writes
+  outside its public dir, proving the read escaped it; the marker never travels in the
+  request, so a contained server never echoes it.
   The attacker container runs the toolchain image (`infra/sandbox/Dockerfile.attacker`,
   built for amd64 and arm64, httpx checksum-pinned) while targets stay the minimal node
   image, and the attacker still holds no `NET_ADMIN`, so the host-owned scope guard
@@ -465,10 +469,10 @@ cards, bridged to the concrete tool adapters.
   available authenticated session from a login probe, and privileged sibling paths from a
   short conventional-path list. `tools/run_engagement.py` loads the KB with `kb.load`,
   projects it with `capabilities.runnable_index`, and drives it; a live model-driven run
-  confirmed six genuine web-protocol-auth cards (JWT algorithm confusion and server-side
+  confirmed seven genuine web-protocol-auth cards (JWT algorithm confusion and server-side
   template injection at the cards' own critical severity, object- and function-level
-  authorization, boolean-blind SQL injection, and CORS misconfiguration), each verified on
-  a disjoint provider.
+  authorization, boolean-blind SQL injection, path traversal, and CORS misconfiguration),
+  each verified on a disjoint provider.
 
 ## Run
 
