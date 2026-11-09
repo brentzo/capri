@@ -96,6 +96,9 @@ class StubSandbox:
     def proofs_pass(self):
         return True
 
+    def guard_proof(self):
+        return {"pass": True}
+
     def snapshot(self):
         return "snap"
 

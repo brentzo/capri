@@ -88,11 +88,24 @@ class Session:
 class StubSandbox:
     def __init__(self, proofs=True):
         self._proofs = proofs
+        self._proof_checks = 0
         self.snaps = 0
         self.restores = []
 
+    def _next_proof(self):
+        proofs = self._proofs
+        if isinstance(proofs, (list, tuple)):
+            proofs = proofs[min(self._proof_checks, len(proofs) - 1)]
+            self._proof_checks += 1
+        if isinstance(proofs, Exception):
+            raise proofs
+        return proofs
+
     def proofs_pass(self):
-        return self._proofs
+        return self._next_proof()
+
+    def guard_proof(self):
+        return {"pass": self._next_proof()}
 
     def snapshot(self):
         self.snaps += 1
@@ -358,14 +371,83 @@ def test_passive_only_holds_leads_and_ships_nothing_confirmed():
     with tempfile.TemporaryDirectory() as root:
         conn, eng, disp, sandbox = _build(root, proofs=False,
                                           hits=[("10.10.0.5", "KB-TEST-SQLI-001")])
+        findings.emit_lead(conn, "F-passive", eng.id, SQLI, "web", "op",
+                           facts=TM["web"], repro=[{"target": "10.10.0.5"}])
         res = lp = Loop(conn, eng, kb_index=KB, dispatcher=disp, sandbox=sandbox,
                         planner=Planner([Pair("web", "KB-TEST-SQLI-001", "1.0.0")]),
                         operator=Operator("op", TM), verifier=Verifier("ver", conn)).run(TM)
         assert res.mode == "passive-only", res.mode
         held = findings.leads(conn, eng.id)
         assert len(held) == 1 and all(r["verdict"] == "needs_validation" for r in held)
+        assert _pe_count(conn, "10.10.0.5") == 0              # no active probe reached the dispatcher
         assert findings.confirmed(conn, eng.id) == []
         assert res.report["findings"] == []
+        assert "continuously proven sandbox containment" in res.report["method_summary"]
+        assert "active probing stopped" in res.report["method_summary"]
+        assert res.valid, res.errors
+
+
+def test_sandbox_proof_error_falls_back_without_dispatching():
+    with tempfile.TemporaryDirectory() as root:
+        conn, eng, disp, sandbox = _build(root, proofs=RuntimeError("proof unavailable"),
+                                          hits=[("10.10.0.5", "KB-TEST-SQLI-001")])
+        res = Loop(conn, eng, kb_index=KB, dispatcher=disp, sandbox=sandbox,
+                   planner=Planner([Pair("web", "KB-TEST-SQLI-001", "1.0.0")]),
+                   operator=Operator("op", TM), verifier=Verifier("ver", conn)).run(TM)
+        assert res.mode == "passive-only", res.mode
+        assert _pe_count(conn, "10.10.0.5") == 0
+        audit = conn.execute(
+            "SELECT category, decision FROM audit_log WHERE engagement_id=?",
+            (eng.id,)).fetchall()
+        assert any(r["category"] == "sandbox_proof" and r["decision"] == "passive-only"
+                   for r in audit)
+        assert res.valid, res.errors
+
+
+def test_mid_run_sandbox_proof_loss_stops_later_probes():
+    with tempfile.TemporaryDirectory() as root:
+        conn, eng, disp, sandbox = _build(root, proofs=[True, True, True, False])
+        pairs = [Pair("web", "KB-TEST-SQLI-001", "1.0.0"),
+                 Pair("db", "KB-TEST-SQLI-001", "1.0.0")]
+        res = Loop(conn, eng, kb_index=KB, dispatcher=disp, sandbox=sandbox,
+                   planner=Planner(pairs), operator=Operator("op", TM),
+                   verifier=Verifier("ver", conn)).run(TM)
+        assert res.mode == "passive-only", res.mode
+        assert _pe_count(conn, "10.10.0.5") == 1
+        assert _pe_count(conn, "10.10.0.6") == 0
+        assert _ledger_status(conn, eng, "db", "KB-TEST-SQLI-001") == "inconclusive"
+        assert res.valid, res.errors
+
+
+def test_proof_loss_before_verification_holds_new_lead():
+    with tempfile.TemporaryDirectory() as root:
+        conn, eng, disp, sandbox = _build(
+            root, proofs=[True, True, True, False],
+            hits=[("10.10.0.5", "KB-TEST-SQLI-001")])
+        res = Loop(conn, eng, kb_index=KB, dispatcher=disp, sandbox=sandbox,
+                   planner=Planner([Pair("web", "KB-TEST-SQLI-001", "1.0.0")]),
+                   operator=Operator("op", TM), verifier=Verifier("ver", conn)).run(TM)
+        assert res.mode == "passive-only", res.mode
+        held = findings.leads(conn, eng.id)
+        assert len(held) == 1 and held[0]["verdict"] == "needs_validation"
+        assert findings.confirmed(conn, eng.id) == []
+        assert _pe_count(conn, "10.10.0.5") == 1                # operator only, no verifier call
+        assert res.valid, res.errors
+
+
+def test_proof_loss_after_verifier_probe_prevents_confirmation():
+    with tempfile.TemporaryDirectory() as root:
+        conn, eng, disp, sandbox = _build(
+            root, proofs=[True, True, True, True, True, False],
+            hits=[("10.10.0.5", "KB-TEST-SQLI-001")])
+        res = Loop(conn, eng, kb_index=KB, dispatcher=disp, sandbox=sandbox,
+                   planner=Planner([Pair("web", "KB-TEST-SQLI-001", "1.0.0")]),
+                   operator=Operator("op", TM), verifier=Verifier("ver", conn)).run(TM)
+        assert res.mode == "passive-only", res.mode
+        held = findings.leads(conn, eng.id)
+        assert len(held) == 1 and held[0]["verdict"] == "needs_validation"
+        assert findings.confirmed(conn, eng.id) == []
+        assert _pe_count(conn, "10.10.0.5") == 2                # operator and verifier probes
         assert res.valid, res.errors
 
 

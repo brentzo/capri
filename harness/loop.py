@@ -29,7 +29,7 @@ from harness import report as reportmod
 from harness import roleio
 from harness.blackboard import CONFIRMED, PROVISIONAL, Blackboard
 from harness.dispatch import ProbeContext
-from harness.store import evidence, findings, ledger
+from harness.store import audit, evidence, findings, ledger
 
 GOLDEN = "golden"
 
@@ -175,20 +175,56 @@ class Loop:
         killed run re-driven over the same target reaches the same confirmed set
         (HC-AGENT-01 §8)."""
         self.target_model = target_model
-        self.passive_only = not self.sandbox.proofs_pass()     # HC-SUB-01 §8
-        mode = "passive-only" if self.passive_only else "sandboxed"
+        self.passive_only = not self._sandbox_proven(startup=True)  # HC-SUB-01 §8
 
-        if self.eng.objective:
-            self._run_objective()                              # HC-OBJ-01 §6 frontier loop
-        else:
-            self._run_coverage()                               # HC-AGENT-01 §4 coverage run
-            self.objective_outcome = {"id": None, "status": "not_applicable"}
+        if not self.passive_only:
+            if self.eng.objective:
+                self._run_objective()                          # HC-OBJ-01 §6 frontier loop
+            else:
+                self._run_coverage()                           # HC-AGENT-01 §4 coverage run
+                self.objective_outcome = {"id": None, "status": "not_applicable"}
+
+        if self.passive_only:
+            self._hold_unverified_leads()
+            if self.eng.objective:
+                if self.board is None:
+                    self.board = Blackboard(seed=self._seed_specs())
+                self._record_outcome("not_achieved")
+            else:
+                self.objective_outcome = {"id": None, "status": "not_applicable"}
+        mode = "passive-only" if self.passive_only else "sandboxed"
 
         report = self.reporter.render(self.conn, self.eng, mode=mode,
                                       kb_version=self.kb_version,
                                       objective=self.objective_outcome)
         status, errs = reportmod.validate_report(report, kbmod.known_pairs(self.kb_index))
         return RunResult(report, mode, status == "ok", errs, objective=self.objective_outcome)
+
+    def _sandbox_proven(self, *, startup=False):
+        """Run full proofs at startup and the lightweight guard proof during a run."""
+        if self.passive_only:
+            return False
+        error_type = None
+        try:
+            proof = self.sandbox.proofs_pass() if startup else self.sandbox.guard_proof()
+            proven = bool(proof) if startup else bool(proof.get("pass", False))
+        except Exception as exc:
+            proven = False
+            error_type = type(exc).__name__
+        if not proven:
+            audit.record(
+                self.conn, self.eng.id, "harness", "sandbox_proof",
+                decision="passive-only", reason="sandbox containment was not proven",
+                detail={"error_type": error_type} if error_type else {})
+            self.passive_only = True
+        return bool(proven)
+
+    def _hold_unverified_leads(self):
+        for row in findings.leads(self.conn, self.eng.id):
+            if row["verdict"] == "lead":
+                findings.transition(
+                    self.conn, row["id"], "needs_validation", by="harness",
+                    reason="passive-only: sandbox containment was not proven")
 
     def _run_coverage(self):
         """Today's batch run (HC-AGENT-01 §4): hunt every pending pair, then verify
@@ -197,11 +233,17 @@ class Loop:
         plan = self.planner.plan(self.target_model, candidates,
                                  ledger.summary(self.conn, self.eng.id))
         for pair in plan:
+            if self.passive_only:
+                break
             if ledger.done(self.conn, self.eng.id, pair.asset, pair.technique_id):
                 continue
             self._hunt(pair)
+            if self.passive_only:
+                break
         if not self.passive_only:
             for row in findings.leads(self.conn, self.eng.id):
+                if self.passive_only:
+                    break
                 self._verify(row)
 
     def _run_objective(self):
@@ -224,6 +266,8 @@ class Loop:
                 break
             pair = plan[0]
             fid = self._hunt(pair)
+            if self.passive_only:
+                break
             if fid is None:
                 continue                                       # no lead; the pair is marked, move on
             card = self.kb_index[(pair.technique_id, pair.technique_version)]
@@ -231,6 +275,8 @@ class Loop:
             if self.passive_only:
                 continue                                       # no confirm, no escalation (§6.3)
             self._verify(findings.current(self.conn, fid))
+            if self.passive_only:
+                break
             if findings.current(self.conn, fid)["verdict"] != "confirmed":
                 continue
             self._yield(pair, card, CONFIRMED, fid)            # only now can it open the next card
@@ -488,6 +534,9 @@ class Loop:
         if tier > self.eng.max_blast_tier:
             self._mark(pair, "blocked_by_policy")                # HC-SUB-01 §7 cap
             return None
+        if not self._sandbox_proven():
+            self._mark(pair, "inconclusive")
+            return None
 
         snap = self.sandbox.snapshot() if tier >= 2 else None    # §4.1 tier>=2 snapshot
         session = self.operator.begin(pair, facts)               # facts scope the hunt
@@ -509,6 +558,9 @@ class Loop:
                         outcome = "inconclusive"
                         break
                     continue
+                if not self._sandbox_proven():
+                    outcome = "inconclusive"
+                    break
                 obs = self.dispatcher.dispatch(
                     turn.request, self._ctx(pair, tier, "operator", "hunting",
                                             snap or GOLDEN, snap is not None))
@@ -553,6 +605,12 @@ class Loop:
         card = self.kb_index.get((pair.technique_id, pair.technique_version))
         tier = int(card.get("blast_tier", 0)) if card else 0
 
+        if not self._sandbox_proven():
+            findings.transition(
+                self.conn, fid, "needs_validation", by="harness",
+                reason="passive-only: sandbox containment was not proven")
+            return
+
         self.sandbox.restore(GOLDEN)                             # §4.2 golden, then fresh
         fresh = self.sandbox.snapshot()
         session = self.verifier.begin()
@@ -583,6 +641,11 @@ class Loop:
                 if invalid >= self.max_invalid:
                     break                                        # falls through to inconclusive
                 continue
+            if not self._sandbox_proven():
+                findings.transition(
+                    self.conn, fid, "needs_validation", by="harness",
+                    reason="passive-only: sandbox containment was not proven")
+                return
             obs = self.dispatcher.dispatch(
                 turn.request, self._ctx(pair, tier, "verifier", "verification", fresh, True))
             observations.append(obs)
@@ -597,6 +660,11 @@ class Loop:
                 reproduced = True
                 break
 
+        if not self._sandbox_proven():
+            findings.transition(
+                self.conn, fid, "needs_validation", by="harness",
+                reason="passive-only: sandbox containment was not proven")
+            return
         if reproduced and session.id != finding_row["found_by"]:
             findings.confirm(self.conn, fid, verified_by=session.id, events=pe_ids)
             self._mark(pair, "confirmed")

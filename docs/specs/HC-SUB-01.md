@@ -235,6 +235,9 @@ Every docker/nsenter call goes through an injected runner, so the provisioning a
 `restore` also serves the Verifier's per-run golden baseline (§4.2), so the backend drives a full engagement end to end: `tools/run_engagement.py` parses a contract, provisions the range, gates on `proofs_pass`, and runs the control loop with the live HTTP probe adapter `harness/sandbox/probe.py:DockerProbe`, which executes on the attacker container and reports the raw signals the harness triages into a lead; a run against a real range confirms an exposed-service finding with finder and verifier disjoint and produces a validated report, all under sandbox enforcement.
 A separate no-route gateway host further hardens G4, and a managed or cloud-provisioned range is an optional backend behind this same interface too, never a prerequisite for self-hosting.
 
+The control loop runs `sandbox.proofs_pass()` once at startup, then checks `sandbox.guard_proof()` before every dispatch and before confirming a finding; a failed or raised check halts hunting and verification, records the failure in the audit log, and leaves outstanding leads at `needs_validation`.
+The passive-only report explains that containment was not proven throughout the run and omits previously confirmed findings; those records remain in the store.
+
 ## 11. Failure modes
 
 | Condition | Response |

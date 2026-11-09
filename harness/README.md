@@ -104,9 +104,12 @@ the signal triage the harness owns on top of them.
   reads the probe_event's recorded `deterministic_signals` (`evidence.get_signals`)
   and applies the card's success-signal rule, so the Operator never sees the raw
   signal and an injected instruction cannot forge a lead. `signal_evaluator` is
-  the seam where Laya (HC-MODEL-02) replaces the deterministic default. With the
-  sandbox down the loop runs passive-only: every lead is held `needs_validation`
-  and the report ships nothing confirmed. The report ships only if
+  the seam where Laya (HC-MODEL-02) replaces the deterministic default. If
+  sandbox proofs fail or raise, the loop skips or halts active hunting and
+  verification, records the failure, and holds outstanding leads at
+  `needs_validation`. The passive-only report explains containment was not
+  proven throughout the run and omits previously confirmed findings without
+  changing stored records. The report ships only if
   `validate_report` passes.
 - `loop.py` (objective mode, HC-OBJ-01 §6) - when the contract carries an
   objective, `run` takes the capability-frontier path instead: it seeds a

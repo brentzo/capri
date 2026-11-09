@@ -81,6 +81,9 @@ class StubSandbox:
     def proofs_pass(self):
         return self._proofs
 
+    def guard_proof(self):
+        return {"pass": self._proofs}
+
     def snapshot(self):
         return "snap"
 
@@ -212,8 +215,12 @@ def test_passive_only_confirms_nothing_and_chains_nothing():
         assert res.mode == "passive-only"
         assert findings.confirmed(conn, eng.id) == []
         held = findings.leads(conn, eng.id)
-        assert len(held) == 1 and held[0]["technique_id"] == "KB-A"
+        assert held == []
+        assert conn.execute("SELECT COUNT(*) AS n FROM probe_event").fetchone()["n"] == 0
+        assert _ledger(conn, eng, "KB-A") is None
         assert _ledger(conn, eng, "KB-B") is None
+        assert res.objective["status"] == "not_achieved"
+        assert res.valid, res.errors
 
 
 def test_no_objective_takes_the_unchanged_coverage_path():

@@ -2,7 +2,7 @@
 
 **Requirement:** As an operator, I want the system to keep working but only passively when it cannot prove containment, so that it never does active harm it cannot contain, and it tells me plainly.
 
-**Implemented by:** HC-SUB-01 (passive-only fallback), HC-FIND-01 (mode in the report).
+**Implemented by:** HC-SUB-01 (sandbox proof gate), HC-AGENT-01 (passive-only orchestration), HC-FIND-01 (report mode and explanation).
 
 ## Acceptance scenarios
 

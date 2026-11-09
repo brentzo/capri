@@ -24,7 +24,8 @@ _LEAKY = re.compile(
 
 def build_report(conn, eng, *, mode="sandboxed", kb_version=None, generated_at=None,
                  objective=None):
-    vulns = [findings.to_record(conn, r) for r in findings.confirmed(conn, eng.id)]
+    confirmed = [] if mode == "passive-only" else findings.confirmed(conn, eng.id)
+    vulns = [findings.to_record(conn, r) for r in confirmed]
     hards = [findings.to_record(conn, r) for r in findings.hardening_notes(conn, eng.id)]
     cov = ledger.summary(conn, eng.id)
     return {
@@ -37,15 +38,19 @@ def build_report(conn, eng, *, mode="sandboxed", kb_version=None, generated_at=N
         "findings": vulns,
         "hardening_notes": hards,
         "objective_outcome": objective or {"id": None, "status": "not_applicable"},
-        "method_summary": _method_summary(cov, vulns, hards, kb_version),
+        "method_summary": _method_summary(cov, vulns, hards, kb_version, mode),
         "generated_at": generated_at or now(),
     }
 
 
-def _method_summary(cov, vulns, hards, kb_version):
+def _method_summary(cov, vulns, hards, kb_version, mode):
     attempted = sum(v for k, v in cov.items() if k not in ("pending",))
     kb = f", KB {kb_version}" if kb_version else ""
-    return (f"{attempted} technique/asset pairs evaluated{kb}; "
+    passive = ("Passive-only: this run did not have continuously proven sandbox containment; "
+               "active probing stopped at the first failed proof check. "
+               "Previously confirmed findings are omitted from this report. "
+               if mode == "passive-only" else "")
+    return (f"{passive}{attempted} technique/asset pairs evaluated{kb}; "
             f"{len(vulns)} confirmed vulnerabilities, {len(hards)} hardening notes.")
 
 

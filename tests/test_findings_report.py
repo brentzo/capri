@@ -259,8 +259,11 @@ def test_passive_only_mode_ships_nothing_confirmed():
         conn, eng = _confirmed_setup(root)
         rep = report.build_report(conn, eng, mode="passive-only")
         assert rep["mode"] == "passive-only"
+        assert rep["findings"] == []
+        assert len(findings.confirmed(conn, eng.id)) == 1  # keep stored evidence intact
+        assert "Previously confirmed findings are omitted" in rep["method_summary"]
         verdict, errs = report.validate_report(rep, {(CARD["id"], CARD["version"])})
-        assert verdict == "errors" and any("passive-only" in e for e in errs)
+        assert verdict == "ok", errs
 
 
 def test_finder_is_not_verifier_enforced_at_db():

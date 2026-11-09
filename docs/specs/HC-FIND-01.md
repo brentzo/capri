@@ -155,7 +155,7 @@ verify(lead):
   },
   "findings": [ /* classification: vulnerability */ ],
   "hardening_notes": [ /* classification: hardening_note */ ],
-  "method_summary": "phases run, techniques covered, KB version",
+  "method_summary": "phases run, techniques covered, KB version; passive-only reports explain containment was not proven and omit confirmed findings",
   "generated_at": "2026-11-08T23:40"
 }
 ```
