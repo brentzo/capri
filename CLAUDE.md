@@ -5,10 +5,13 @@ The orchestrator is code and owns the control loop; the model roles only ever pr
 
 ## Non-negotiables
 
-The harness core and its tests use only the Python 3.12 standard library.
-The CLI may use Textual and Rich for terminal UI; pin those dependencies in `pyproject.toml` and `uv.lock`.
-SQLite stands in for the production Postgres, and a content-addressed filesystem blob store stands in for object storage.
-Do not reach for a dependency or a running service to make something easier; the self-contained, egress-denied posture is the whole point of the design.
+The egress-denied, self-contained posture of the sandbox range is non-negotiable: the data plane where the agent runs attacks has no route off the host, and the containment guarantees gate active work.
+A library in the harness does not weaken that, so stdlib purity is not itself the point and is not a reason to starve the harness.
+
+Third-party dependencies are allowed, but each one is approved explicitly before it lands and pinned in `pyproject.toml` and `uv.lock`.
+Prefer the Python 3.12 standard library when it is not meaningfully worse; reach for a dependency when it is a genuine improvement whose weight is justified, not merely when it is more convenient.
+We simulate how a real attacker pentests an arbitrary app it knows nothing about, so the right tool for that job wins over purity; heavy attack tooling like a real browser or a crawler belongs in the attacker container, where nmap and chromium already live.
+SQLite stands in for the production Postgres, and a content-addressed filesystem blob store stands in for object storage, so the harness runs self-contained; swap either only with a reason.
 
 The specs under `docs/specs/` are the source of truth.
 `make materialize` regenerates `kb/` and `eval/`; `make features` regenerates `docs/requirements/features/`.
