@@ -145,11 +145,16 @@ def build_roles(conn, eng):
     op_route = os.environ.get("HC_OPERATOR_ROUTE", OPERATOR_ROUTE)
     ver_route = os.environ.get("HC_VERIFIER_ROUTE", VERIFIER_ROUTE)
     transport = BifrostTransport(base_url, {"vk-operator": op_secret, "vk-verifier": ver_secret})
-    vkeys = [VirtualKey("operator", [op_route], cache=False, fallback="within_set"),
-             VirtualKey("verifier", [ver_route], cache=False, fallback="none")]
-    plane = ModelPlane(vkeys, transport, conn, eng.id)       # diversity asserted here
+    # The engagement's model-token budget is a fail-closed cap: the plane stops serving once the
+    # run's total spend reaches it (and each role cannot exceed it alone), so a run is bounded
+    # rather than open-ended. Cost is counted in tokens (in + out) per call.
+    budget = eng.model_budget
+    vkeys = [VirtualKey("operator", [op_route], cache=False, fallback="within_set", budget=budget),
+             VirtualKey("verifier", [ver_route], cache=False, fallback="none", budget=budget)]
+    plane = ModelPlane(vkeys, transport, conn, eng.id, engagement_budget=budget)  # diversity asserted
     return (ModelOperator(plane), ModelVerifier(plane),
-            f"Bifrost at {base_url}  (operator={op_route}, verifier={ver_route})")
+            f"Bifrost at {base_url}  (operator={op_route}, verifier={ver_route}; "
+            f"budget={budget} model tokens)")
 
 
 def main(progress=None):
@@ -181,30 +186,33 @@ def main(progress=None):
             conn = db.connect(datadir.db_path())
             operator, verifier, plane_label = build_roles(conn, eng)
             emit(f"model plane: {plane_label}")
+            # The caller-supplied session (if any) rides on every HTTP adapter, so a probe
+            # reaches an auth-gated route rather than the login. The non-HTTP probe is exempt.
+            sess = eng.session_headers
             adapters = {"probe": DockerProbe(sb.attacker, eng.pinned),
-                        "nmap": NmapAdapter(sb.attacker, eng.pinned),
-                        "httpx": HttpxAdapter(sb.attacker, eng.pinned),
-                        "http": HttpRequestAdapter(sb.attacker, eng.pinned),
-                        "sqli": SqliAdapter(sb.attacker, eng.pinned),
-                        "idor": IdorAdapter(sb.attacker, eng.pinned),
-                        "bfla": BflaAdapter(sb.attacker, eng.pinned),
-                        "jwt": JwtAdapter(sb.attacker, eng.pinned),
-                        "ssti": SstiAdapter(sb.attacker, eng.pinned),
-                        "cors": CorsAdapter(sb.attacker, eng.pinned),
-                        "path": PathAdapter(sb.attacker, eng.pinned),
-                        "cmdi": CmdiAdapter(sb.attacker, eng.pinned),
-                        "cache": CacheAdapter(sb.attacker, eng.pinned),
-                        "sess": SessAdapter(sb.attacker, eng.pinned),
+                        "nmap": NmapAdapter(sb.attacker, eng.pinned, session_headers=sess),
+                        "httpx": HttpxAdapter(sb.attacker, eng.pinned, session_headers=sess),
+                        "http": HttpRequestAdapter(sb.attacker, eng.pinned, session_headers=sess),
+                        "sqli": SqliAdapter(sb.attacker, eng.pinned, session_headers=sess),
+                        "idor": IdorAdapter(sb.attacker, eng.pinned, session_headers=sess),
+                        "bfla": BflaAdapter(sb.attacker, eng.pinned, session_headers=sess),
+                        "jwt": JwtAdapter(sb.attacker, eng.pinned, session_headers=sess),
+                        "ssti": SstiAdapter(sb.attacker, eng.pinned, session_headers=sess),
+                        "cors": CorsAdapter(sb.attacker, eng.pinned, session_headers=sess),
+                        "path": PathAdapter(sb.attacker, eng.pinned, session_headers=sess),
+                        "cmdi": CmdiAdapter(sb.attacker, eng.pinned, session_headers=sess),
+                        "cache": CacheAdapter(sb.attacker, eng.pinned, session_headers=sess),
+                        "sess": SessAdapter(sb.attacker, eng.pinned, session_headers=sess),
                         "ssrf": SsrfAdapter(sb.attacker, eng.pinned,
                                             collaborator=sb.collaborator,
-                                            collab_addr=sb.collab_addr),
-                        "redirect": OpenRedirectAdapter(sb.attacker, eng.pinned),
-                        "clickjack": ClickjackAdapter(sb.attacker, eng.pinned),
-                        "csrf": CsrfAdapter(sb.attacker, eng.pinned),
-                        "wshijack": WsHijackAdapter(sb.attacker, eng.pinned),
-                        "cspexec": CspAdapter(sb.attacker, eng.pinned),
-                        "domclobber": DomClobberAdapter(sb.attacker, eng.pinned),
-                        "protopollute": ProtoPolluteAdapter(sb.attacker, eng.pinned)}
+                                            collab_addr=sb.collab_addr, session_headers=sess),
+                        "redirect": OpenRedirectAdapter(sb.attacker, eng.pinned, session_headers=sess),
+                        "clickjack": ClickjackAdapter(sb.attacker, eng.pinned, session_headers=sess),
+                        "csrf": CsrfAdapter(sb.attacker, eng.pinned, session_headers=sess),
+                        "wshijack": WsHijackAdapter(sb.attacker, eng.pinned, session_headers=sess),
+                        "cspexec": CspAdapter(sb.attacker, eng.pinned, session_headers=sess),
+                        "domclobber": DomClobberAdapter(sb.attacker, eng.pinned, session_headers=sess),
+                        "protopollute": ProtoPolluteAdapter(sb.attacker, eng.pinned, session_headers=sess)}
             disp = Dispatcher(conn, blobstore.BlobStore(root), eng, adapters,
                               ratelimit.RateLimiter(1000, now=lambda: 0.0))
             res = Loop(conn, eng, kb_index=KB, dispatcher=disp, sandbox=sb,

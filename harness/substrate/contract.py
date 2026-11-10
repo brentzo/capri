@@ -12,6 +12,29 @@ from harness import predicates, yamlmini
 
 BLAST_TIERS = (0, 1, 2, 3)
 
+# A conservative default on the model tokens a run may spend, applied when the contract names
+# none, so a live run is always bounded rather than open-ended.
+_DEFAULT_MODEL_BUDGET = 300_000
+
+
+def _session_headers(session):
+    """Normalize an optional `engagement.session` block into the request headers the harness
+    presents on every probe: `bearer` -> `Authorization: Bearer ...`, `cookie` -> `Cookie: ...`,
+    and `headers` merged verbatim. Returns a dict or None. Shape is validated separately."""
+    if not isinstance(session, dict):
+        return None
+    out = {}
+    extra = session.get("headers")
+    if isinstance(extra, dict):
+        out.update({str(k): str(v) for k, v in extra.items()})
+    bearer = session.get("bearer")
+    if isinstance(bearer, str) and bearer:
+        out["Authorization"] = f"Bearer {bearer}"
+    cookie = session.get("cookie")
+    if isinstance(cookie, str) and cookie:
+        out["Cookie"] = cookie
+    return out or None
+
 # Objective block (HC-OBJ-01 §4). Optional and additive: a contract with no
 # objective validates and runs exactly as before.
 OBJECTIVE_TYPES = ("capability", "canary", "reach")
@@ -50,6 +73,14 @@ class Engagement:
         # route, including the auth-gated ones a crawl can't reach); absent, recon stays
         # black-box. The operator has the source because Capri is run against its own app.
         self.source_root = e.get("source_root") or None
+        # A caller-supplied authenticated session the harness presents on every probe, so a
+        # probe reaches an auth-gated route instead of the login. Normalized to a header dict;
+        # it is a credential, so it stays off the target model, the logs, and the report.
+        self.session_headers = _session_headers(e.get("session"))
+        # The total model tokens a run may spend, a fail-closed cap on the model plane. Absent
+        # falls back to a conservative default, so every run is bounded, not only configured ones.
+        mb = e.get("model_budget")
+        self.model_budget = int(mb) if isinstance(mb, int) and mb > 0 else _DEFAULT_MODEL_BUDGET
         self.pinned = {}   # host -> ipaddress, set at provisioning (§4.3)
 
     def pin(self, host_to_ip):
@@ -146,6 +177,20 @@ def validate(raw, management_cidrs=None):
     sr = eng.get("source_root")
     if sr is not None and (not isinstance(sr, str) or not sr.strip()):
         errs.append("engagement.source_root must be a non-empty path string when present")
+    sess = eng.get("session")
+    if sess is not None:
+        if not isinstance(sess, dict):
+            errs.append("engagement.session must be a mapping when present")
+        else:
+            for f in ("bearer", "cookie"):
+                if f in sess and not isinstance(sess[f], str):
+                    errs.append(f"engagement.session.{f} must be a string")
+            if "headers" in sess and not (isinstance(sess["headers"], dict) and all(
+                    isinstance(v, str) for v in sess["headers"].values())):
+                errs.append("engagement.session.headers must be a map of string values")
+    mb = eng.get("model_budget")
+    if mb is not None and (not isinstance(mb, int) or isinstance(mb, bool) or mb <= 0):
+        errs.append("engagement.model_budget must be a positive integer when present")
 
     scope = raw.get("scope")
     if not isinstance(scope, dict):

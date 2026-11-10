@@ -656,6 +656,33 @@ only where a parameter can reach a dangerous one.
   classifier, the cross-file closure, the projection and the gate over a fixture app, with no
   network and no models.
 
+## What's here (caller session threading and the spend cap)
+
+An auth-gated app refuses an unauthenticated probe, and recon surfaces those routes but cannot
+confirm a finding on them without a session. This threads a caller-supplied session onto every
+probe, and caps what a run can spend.
+
+- `substrate/contract.py` - the engagement gains an optional `session` (`bearer` ->
+  `Authorization: Bearer`, `cookie` -> `Cookie`, and verbatim `headers`), normalized to
+  `eng.session_headers`, plus `model_budget` (total model tokens a run may spend, with a
+  conservative default so every run is bounded). The session is a credential, so it lives only
+  on `eng.session_headers` and never on the `{asset: facts}` model - it stays out of the recon
+  log, the report and the persisted run.
+- `sandbox/adapters.py` - `_Adapter` takes `session_headers` and merges them as base headers in
+  `_send_http`/`_send_http_full`, under any per-call header. So the injection adapters now reach
+  an auth-gated route, while an adapter that forges its own `Authorization` still wins. The
+  generic "attach to every probe" seam the per-adapter auth code lacked.
+- `tools/run_engagement.py` - hands `eng.session_headers` to every HTTP adapter, and wires
+  `eng.model_budget` into `build_roles` as the plane's engagement budget and each role's child
+  budget, so a run stops cleanly at the cap. The budget machinery already lived in
+  `modelplane.py`; it was simply never wired, so earlier runs were open-ended.
+- `infra/sandbox/noteapp.py` - a `/vault/notes` route that is 401 without the demo bearer and the
+  same boolean-blind SQLi with it, so a confirmed finding there proves the session reached the
+  probe. `tests/test_session.py` covers all of the above (no Docker, no models); the plane's
+  budget enforcement stays in `tests/test_modelplane.py`.
+- Out of scope here: standing the real React Router + Postgres dashboard up in the range (the
+  sandbox provisions only single-process targets today) and two-session IDOR confirmation.
+
 ## Run
 
 ```sh

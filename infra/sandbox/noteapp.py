@@ -14,6 +14,12 @@ command injection), so no adapter changes are needed. The landing page exposes e
 point as a real anchor, because the crawler follows links; a route reachable no other way would
 not be found, which is the honest limit of link-driven crawling.
 
+A fifth hole, `/vault/notes?tag`, is the same boolean SQL oracle but behind a bearer gate: it
+answers 401 without `Authorization: Bearer <demo-token>` and runs the injectable query with it.
+Its path and parameter are still link-discoverable, but a probe confirms the finding only when
+the engagement threads a caller-supplied session onto its requests, which is what proves the
+session-threading path end to end.
+
 Never deploy this anywhere reachable. Standard library only, so it runs on the tiny target base.
 """
 import os
@@ -35,6 +41,12 @@ _PUBDIR = "/tmp/hcnotes_pub"
 _CANARY_PATH = "/tmp/hc_canary.txt"
 _CANARY_MARKER = "HC-RANGE-CANARY-d41d8cd98f00b204"
 
+# The demo session the auth-gated route requires. The engagement supplies it as
+# `session.bearer`, the harness presents it as `Authorization: Bearer <this>` on every probe,
+# and only then does /vault/notes run its query instead of answering 401. A fixed opaque string
+# (not a real credential); it stands in for the operator token a real run would carry.
+_SESSION_TOKEN = "hc-demo-session-7f3a9c21"
+
 # A tiny in-memory catalog so the SQL-injectable endpoint has real rows to leak.
 _DB = sqlite3.connect(":memory:", check_same_thread=False)
 _DB.executescript(
@@ -46,6 +58,7 @@ _LINKS = ("<ul>"
           '<li><a href="/preview?body=hello">preview</a></li>'
           '<li><a href="/attachment?file=readme.txt">attachment</a></li>'
           '<li><a href="/net/trace?target=127.0.0.1">net trace</a></li>'
+          '<li><a href="/vault/notes?tag=1">vault notes (members only)</a></li>'
           "</ul>")
 
 
@@ -58,6 +71,22 @@ def _seed_files():
             fh.write(_CANARY_MARKER + "\n")
     except OSError:
         pass
+
+
+def _authorized(auth_header):
+    """Whether a request carries the demo session the gated route requires."""
+    return auth_header == f"Bearer {_SESSION_TOKEN}"
+
+
+def _notes_query(tag):
+    # VULNERABLE BY DESIGN: tag is concatenated into the query, so a boolean condition
+    # (AND 1=1 vs AND 1=2) changes the result set (boolean-blind SQLi). Shared by the open
+    # /notes route and the auth-gated /vault/notes route.
+    try:
+        rows = _DB.execute("SELECT body FROM notes WHERE id = " + tag).fetchall()
+        return "".join("<li>" + r[0] + "</li>" for r in rows) if rows else "no note"
+    except Exception:
+        return "query error"
 
 
 def _render(text):
@@ -88,14 +117,16 @@ class Handler(BaseHTTPRequestHandler):
         query = parse_qs(parts.query)
         if parts.path == "/notes":
             tag = (query.get("tag") or ["1"])[0]
-            # VULNERABLE BY DESIGN: tag is concatenated into the query, so a boolean
-            # condition (AND 1=1 vs AND 1=2) changes the result set (boolean-blind SQLi).
-            try:
-                rows = _DB.execute("SELECT body FROM notes WHERE id = " + tag).fetchall()
-                inner = "".join("<li>" + r[0] + "</li>" for r in rows) if rows else "no note"
-            except Exception:
-                inner = "query error"
-            self._respond(200, _PAGE + "<ul>" + inner + "</ul>")
+            self._respond(200, _PAGE + "<ul>" + _notes_query(tag) + "</ul>")
+        elif parts.path == "/vault/notes":
+            # AUTH-GATED BY DESIGN: without the bearer the route is 401, so a probe that does
+            # not carry the caller session sees no SQL at all. With it, the same boolean-blind
+            # SQLi runs - so a confirmed finding here proves the session reached the probe.
+            if not _authorized(self.headers.get("Authorization")):
+                self._respond(401, _PAGE + "<p>members only</p>")
+                return
+            tag = (query.get("tag") or ["1"])[0]
+            self._respond(200, _PAGE + "<ul>" + _notes_query(tag) + "</ul>")
         elif parts.path == "/preview":
             body = (query.get("body") or ["guest"])[0]
             # VULNERABLE BY DESIGN: body is rendered through the template engine, so an

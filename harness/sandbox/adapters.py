@@ -33,10 +33,14 @@ class _Adapter:
     """Shared base: resolve a pinned target name to the IP the scope guard enforces on,
     and run a command on the attacker container through the injected runner."""
 
-    def __init__(self, attacker, pinned, *, run=None):
+    def __init__(self, attacker, pinned, *, run=None, session_headers=None):
         self.attacker = attacker
         self.pinned = pinned
         self._run = run or default_run
+        # A caller-supplied authenticated session (e.g. an Authorization bearer or a Cookie)
+        # attached to every request this adapter makes, so a probe reaches an auth-gated route
+        # rather than bouncing off the login. None when the engagement supplies no session.
+        self.session_headers = dict(session_headers) if session_headers else None
 
     def _resolve(self, target):
         ip = self.pinned.get(target)
@@ -45,10 +49,17 @@ class _Adapter:
     def _exec(self, *argv, input=None):
         return self._run(["docker", "exec", self.attacker, *argv], input=input)
 
+    def _merge_headers(self, headers):
+        """The engagement session as base headers, with any per-call header overriding it, so an
+        adapter that sets its own Authorization (e.g. a forged JWT) still wins."""
+        merged = {**(self.session_headers or {}), **(headers or {})}
+        return merged or None
+
     def _send_http(self, url, method="GET", headers=None):
         """Issue one HTTP request from the attacker container and return (status, body).
-        Shared by the crafted-request, SQL-injection, and authorization adapters; optional
-        request headers (e.g. an Authorization bearer token) ride along as a JSON arg."""
+        Shared by the crafted-request, SQL-injection, and authorization adapters; the engagement
+        session plus any per-call headers ride along as a JSON arg."""
+        headers = self._merge_headers(headers)
         argv = ["python3", "-c", _HTTP_REQUEST, url, method]
         if headers:
             argv.append(json.dumps(headers))
@@ -58,6 +69,7 @@ class _Adapter:
     def _send_http_full(self, url, method="GET", headers=None):
         """Like `_send_http`, but also returns the response headers: (status, headers,
         body). Used where the signal is in a response header (e.g. a CORS allow-origin)."""
+        headers = self._merge_headers(headers)
         argv = ["python3", "-c", _HTTP_REQUEST_FULL, url, method]
         if headers:
             argv.append(json.dumps(headers))
@@ -925,8 +937,9 @@ class SsrfAdapter(_Adapter):
     and the address a target should fetch), like the attacker container and the pinned map;
     with no collaborator configured the adapter cannot confirm and reports no hit."""
 
-    def __init__(self, attacker, pinned, *, run=None, collaborator=None, collab_addr=None):
-        super().__init__(attacker, pinned, run=run)
+    def __init__(self, attacker, pinned, *, run=None, collaborator=None, collab_addr=None,
+                 session_headers=None):
+        super().__init__(attacker, pinned, run=run, session_headers=session_headers)
         self.collaborator = collaborator          # the collaborator container name
         self.collab_addr = collab_addr            # "ip:port" the target should fetch
 
@@ -1247,8 +1260,8 @@ class CmdiAdapter(_Adapter):
     pair against a fresh snapshot. The round-trip clock is injected so the timing logic is
     unit-tested without real sleeps; the live path measures the real wall clock."""
 
-    def __init__(self, attacker, pinned, *, run=None, clock=time.monotonic):
-        super().__init__(attacker, pinned, run=run)
+    def __init__(self, attacker, pinned, *, run=None, clock=time.monotonic, session_headers=None):
+        super().__init__(attacker, pinned, run=run, session_headers=session_headers)
         self._clock = clock
 
     def run(self, req):
