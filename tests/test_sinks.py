@@ -91,6 +91,15 @@ def test_ssti_eval_of_request_is_risky():
     assert sinks.classify_file("const y = eval('1+1');")["ssti"] == "absent"   # constant
 
 
+def test_generic_formdata_get_is_tainted_without_an_app_helper():
+    # no project-specific form helper, just the standard `form.get(...)` idiom
+    src = ("import { readFileSync } from 'fs';\n"
+           "const form = await request.formData();\n"
+           "const p = form.get('path');\n"
+           "return new Response(readFileSync('/data/' + p));\n")
+    assert sinks.classify_file(src)["path"] == "risky"
+
+
 # --- the import graph and the cross-file closure --------------------------------------------
 
 _PKG = '{"dependencies": {"@react-router/dev": "^7.0.0", "react-router": "^7.0.0"}}'
@@ -165,6 +174,27 @@ def test_import_graph_resolves_alias_and_drops_externals():
     assert bad in graph[cross]                              # `@/providers/bad.server` resolved
     path_route = os.path.join(_ROOT, "app", "routes", "pathtrav.tsx")
     assert graph[path_route] == set()                       # `fs` is external, an opaque leaf
+
+
+def test_alias_comes_from_tsconfig_not_a_hardcoded_convention():
+    # a project that aliases `~/ -> ./src/*` must resolve just like `@/ -> ./app/*`
+    root = tempfile.mkdtemp(prefix="hc-alias-")
+    try:
+        with open(os.path.join(root, "tsconfig.json"), "w") as fh:
+            fh.write('{\n  // paths\n  "compilerOptions": { "baseUrl": ".",\n'
+                     '    "paths": { "~/*": ["./src/*"] } },\n}\n')   # JSONC: comment + trailing comma
+        src = os.path.join(root, "src")
+        os.makedirs(os.path.join(src, "lib"))
+        with open(os.path.join(src, "handler.ts"), "w") as fh:
+            fh.write("import { q } from '~/lib/db';\nexport const loader = () => q();\n")
+        with open(os.path.join(src, "lib", "db.ts"), "w") as fh:
+            fh.write("export function q() { return pool.query(`SELECT * FROM t WHERE x = '${arg}'`); }\n")
+        graph, _content = sinks.build_import_graph(root)
+        handler = os.path.join(src, "handler.ts")
+        db = os.path.join(src, "lib", "db.ts")
+        assert db in graph[handler]                          # `~/lib/db` resolved via tsconfig
+    finally:
+        shutil.rmtree(root, True)
 
 
 def test_closure_reaches_a_sink_in_an_imported_module():

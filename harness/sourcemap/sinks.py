@@ -24,6 +24,7 @@ injection, and server-side template injection. SSRF, open redirect and IDOR are 
 Deterministic and standard-library only: the same source always yields the same verdict.
 """
 import os
+import json
 import re
 
 from harness.sourcemap.react_router import _read, _strip_comments
@@ -38,11 +39,18 @@ _PARAMS_ARRAY_OPS = (r"length|push|pop|shift|unshift|splice|slice|concat|map|joi
                      r"|forEach|filter|reduce|includes|find|some|every|flat|fill|sort"
                      r"|reverse|keys|values|entries")
 _TAINT = re.compile(
+    # framework-neutral web/React Router request inputs
     r"\bsearchParams\b|\bparams\.(?!(?:" + _PARAMS_ARRAY_OPS + r")\b)[A-Za-z_$]"
+    r"|\brequest\.(?:json|formData|url|text|body|arrayBuffer)\b|\breq\.(?:query|params|body)\b"
+    r"|\bformData\s*\(|\bgetRequestURL\b|\bgetQuery\s*\("
+    # common app-defined form helpers (extend here per project, not worked around)
     r"|\bformText\b|\bformNumber\b|\bformBool\b|\bformFile\b|\bentryText\b|\bbodyText\b"
     r"|\btoStringValue\b|\brequireValue\b"
-    r"|\brequest\.(?:json|formData|url|text|body)\b|\breq\.(?:query|params|body)\b"
 )
+# A value read from a request-bound container (`form.get('x')`, where the receiver was assigned
+# from formData()/searchParams). Catches the generic form-read idiom without an app helper name.
+_CONTAINER_ASSIGN = re.compile(r"\bformData\s*\(|\bsearchParams\b|\bURLSearchParams\b|new\s+URL\s*\(")
+_CONTAINER_GET = re.compile(r"([A-Za-z_$][\w$]*)\.(?:get|getAll)\s*\(")
 
 # ---------------------------------------------------------------------------
 # Import graph: route each import specifier to a file inside the app's own tree.
@@ -66,34 +74,79 @@ def _resolve_file(base):
     return None
 
 
-def _resolve(spec, importer_file, app_dir):
+def _strip_jsonc(text):
+    """Make a tsconfig/jsconfig (JSONC) parseable: drop comments and trailing commas."""
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    text = re.sub(r"(^|[^:])//[^\n]*", r"\1", text)
+    return re.sub(r",(\s*[}\]])", r"\1", text)
+
+
+def _load_aliases(source_root):
+    """The import aliases this project declares, as `[(prefix, [target_dirs])]`.
+
+    Read from `tsconfig.json`/`jsconfig.json` `compilerOptions.paths` (resolved against
+    `baseUrl`), so a project that aliases `~/`, `@app/` or `@/ -> ./src/*` resolves as well as
+    one using `@/ -> ./app/*`. When no config declares paths, fall back to the common `@/ ->
+    app/` convention if an `app/` directory exists, so a config-less app still resolves. A `*`
+    wildcard in a key or target is treated as a prefix."""
+    cfg = {}
+    for name in ("tsconfig.json", "jsconfig.json"):
+        p = os.path.join(source_root, name)
+        if os.path.isfile(p):
+            try:
+                cfg = json.loads(_strip_jsonc(_read(p)))
+            except (ValueError, OSError):
+                cfg = {}
+            break
+    co = cfg.get("compilerOptions", {}) if isinstance(cfg, dict) else {}
+    base_dir = os.path.normpath(os.path.join(source_root, co.get("baseUrl", ".") or "."))
+    aliases = []
+    for key, targets in (co.get("paths", {}) or {}).items():
+        prefix = key[:-1] if key.endswith("*") else key
+        dirs = [os.path.normpath(os.path.join(base_dir, (t[:-1] if t.endswith("*") else t)))
+                for t in (targets or []) if isinstance(t, str)]
+        if prefix and dirs:
+            aliases.append((prefix, dirs))
+    if not aliases and os.path.isdir(os.path.join(source_root, "app")):
+        aliases.append(("@/", [os.path.join(source_root, "app")]))
+    return aliases
+
+
+def _resolve(spec, importer_file, aliases):
     """Resolve one import specifier to an in-tree file, or None for external/bare packages."""
-    if spec.startswith("@/"):                       # the app alias, tsconfig `@/* -> ./app/*`
-        base = os.path.join(app_dir, spec[2:])
-    elif spec.startswith("."):
+    if spec.startswith("."):
         base = os.path.normpath(os.path.join(os.path.dirname(importer_file), spec))
-    else:
-        return None                                 # bare package: external, an opaque leaf
-    return _resolve_file(base)
+        return _resolve_file(base)
+    for prefix, dirs in aliases:                    # project path aliases (tsconfig `paths`)
+        if spec.startswith(prefix):
+            rest = spec[len(prefix):]
+            for base in dirs:
+                hit = _resolve_file(os.path.join(base, rest))
+                if hit:
+                    return hit
+            return None
+    return None                                     # bare package: external, an opaque leaf
+
+
+# Directories that never hold the app's own first-party source.
+_SKIP_DIRS = {"node_modules", ".git", "dist", "build", "out", ".next", ".turbo",
+              "coverage", "tmp", ".cache", "public", "vendor"}
 
 
 def build_import_graph(source_root):
-    """Scan the app's source once and return `(graph, content)`.
+    """Scan the project's source once and return `(graph, content)`.
 
     `graph[abs_file]` is the set of in-tree files it imports; `content[abs_file]` is its
-    comment-stripped source, cached so the closure scan never re-reads a file. External and
-    unresolvable imports are dropped (opaque leaves), so the closure stays inside the app's own
-    code - which is where its sink call sites are written even when the driver (pg, react-router)
-    is third-party.
+    comment-stripped source, cached so the closure scan never re-reads a file. The whole project
+    tree is walked (not just `app/`), with build/output directories skipped, so a module imported
+    from `src/` or `lib/` is still part of the closure. External and unresolvable imports are
+    dropped (opaque leaves), so the closure stays inside the project's own code - which is where
+    its sink call sites are written even when the driver (pg, react-router) is third-party.
     """
-    app_dir = os.path.join(source_root, "app")
-    if not os.path.isdir(app_dir):
-        app_dir = source_root
+    aliases = _load_aliases(source_root)
     graph, content = {}, {}
-    for root, dirs, files in os.walk(app_dir):
-        if "node_modules" in root.split(os.sep):
-            dirs[:] = []
-            continue
+    for root, dirs, files in os.walk(source_root):
+        dirs[:] = [d for d in dirs if d not in _SKIP_DIRS and not d.startswith(".")]
         for name in files:
             if not name.endswith(_SRC_EXTS):
                 continue
@@ -102,7 +155,7 @@ def build_import_graph(source_root):
             content[f] = src
             deps = set()
             for m in _IMPORT_RE.finditer(src):
-                r = _resolve(m.group(1), f, app_dir)
+                r = _resolve(m.group(1), f, aliases)
                 if r:
                     deps.add(r)
             graph[f] = deps
@@ -155,12 +208,23 @@ def _call_arg(src, start):
     return "".join(buf)
 
 
+def _reads_request(text, src):
+    """Whether an expression reads request input: the taint vocabulary directly, or `x.get('..')`
+    on a receiver assigned from a request-bound container (`formData()`, `searchParams`)."""
+    if _TAINT.search(text):
+        return True
+    for recv in _CONTAINER_GET.findall(text):
+        if any(_CONTAINER_ASSIGN.search(rhs) for rhs in _assignment_rhs(recv, src)):
+            return True
+    return False
+
+
 def _arg_tainted(arg, src):
     """Whether a call argument carries request input, directly or one same-file assignment back."""
-    if _TAINT.search(arg):
+    if _reads_request(arg, src):
         return True
     for name in set(re.findall(r"[A-Za-z_$][\w$]*", arg)):
-        if any(_TAINT.search(rhs) for rhs in _assignment_rhs(name, src)):
+        if any(_reads_request(rhs, src) for rhs in _assignment_rhs(name, src)):
             return True
     return False
 

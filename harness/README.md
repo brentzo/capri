@@ -631,8 +631,9 @@ parameters are worth probing by reading how each handler reaches its sinks, so a
 only where a parameter can reach a dangerous one.
 
 - `sourcemap/sinks.py` - the per-handler sink analyzer. `build_import_graph` scans the app's
-  source once and resolves its imports (relative and the `@/` alias) into a graph of the app's
-  own files; `reachable_files` takes each handler's transitive closure over it, since a route's
+  source once and resolves its imports (relative, plus project path aliases read from
+  `tsconfig.json`/`jsconfig.json` rather than a hardcoded convention) into a graph of the
+  project's own files; `reachable_files` takes each handler's transitive closure over it, since a route's
   taps and its sinks usually sit in different files (route -> facade -> provider). Each file is
   classified on its own text into four sink classes - SQL injection, path traversal, OS command
   injection, server-side template injection - and a class is risky for the handler when any
