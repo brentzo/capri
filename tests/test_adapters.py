@@ -1163,7 +1163,13 @@ def test_cspexec_renders_in_a_headless_browser_against_the_resolved_ip():
         {"tool": "cspexec", "target": "t1.sandbox.local", "port": 8080,
          "args": {"path": "/widget", "param": "html"}})
     argv = fake.calls[0]
-    assert "chromium" in argv and "--dump-dom" in argv       # a real browser rendered it
+    assert any("chromium" in a for a in argv) and any("--dump-dom" in a for a in argv)       # a real browser rendered it
+    script = next(a for a in argv if "chromium" in a)
+    # the render is bounded in-container, so a wedged browser cannot hold the captured pipe
+    # open and hang the engagement, and helpers are killed by process name, never by a
+    # cmdline match (`-f`) that would also match this very shell and kill it mid-render
+    assert script.index("timeout ") < script.index("chromium")
+    assert "pkill -9 chromium" in script and "pkill -9 -f" not in script
     url = next(a for a in argv if a.startswith("http"))
     assert "10.90.0.3" in url and "t1.sandbox.local" not in url
 
@@ -1208,7 +1214,7 @@ def test_domclobber_injects_named_markup_and_renders_in_a_browser():
         {"tool": "domclobber", "target": "t1.sandbox.local", "port": 8080,
          "args": {"path": "/clobber", "param": "html"}})
     argv = fake.calls[0]
-    assert "chromium" in argv and "--dump-dom" in argv
+    assert any("chromium" in a for a in argv) and any("--dump-dom" in a for a in argv)
     url = next(a for a in argv if a.startswith("http"))
     assert "10.90.0.3" in url and "HCCFG" in url             # the harness-injected named markup
 
@@ -1257,7 +1263,7 @@ def test_protopollute_sends_a_proto_key_and_renders_in_a_browser():
         {"tool": "protopollute", "target": "t1.sandbox.local", "port": 8080,
          "args": {"path": "/profile", "pollute_key": "__proto__.hcxpoll"}})
     argv = fake.calls[0]
-    assert "chromium" in argv and "--dump-dom" in argv
+    assert any("chromium" in a for a in argv) and any("--dump-dom" in a for a in argv)
     url = next(a for a in argv if a.startswith("http"))
     assert "10.90.0.3" in url and "__proto__" in urlparse(url).query
 

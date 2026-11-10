@@ -68,12 +68,26 @@ class _Adapter:
         """Load a URL in headless chromium, run its JavaScript, and return the serialized
         DOM. The client-side DOM adapters read a harness marker out of this rendered DOM,
         so a vulnerability that only manifests after script execution is observable. A fresh
-        per-call profile avoids a stale singleton lock, and a virtual-time budget bounds the
-        render so a page's timers cannot hang the probe."""
+        per-call profile avoids a stale singleton lock, and a virtual-time budget bounds page
+        timers.
+
+        The render runs under an in-container `timeout`, which is what keeps a stuck render
+        from hanging the whole engagement. The virtual-time budget bounds the page, not the
+        browser: if chromium itself wedges (gpu init, a crashpad child) it never returns, and
+        the host-side `docker exec` capture would then block forever, because killing the exec
+        client leaves the in-container chromium holding the captured pipe open past its own
+        subprocess timeout. The `timeout` guarantees the command returns, so the cleanup below
+        always runs and the pipe always closes. Cleanup kills helper processes by name (`pkill`
+        without `-f`, so it matches the chromium processes and not this shell, whose argv
+        contains the word), and the attacker's init reaps the remnants, so a render leaves no
+        lingering processes to starve the scope-guard proof's own exec."""
         profile = "/tmp/cr-" + secrets.token_hex(6)
-        r = self._exec("chromium", "--headless", "--no-sandbox", "--disable-gpu",
-                       "--disable-dev-shm-usage", f"--user-data-dir={profile}",
-                       "--virtual-time-budget=5000", "--dump-dom", url)
+        flags = ("timeout -k 2 20 chromium --headless --no-sandbox --disable-gpu "
+                 "--disable-dev-shm-usage --disable-crash-reporter --disable-breakpad "
+                 "--disable-background-networking "
+                 f"--user-data-dir={profile} --virtual-time-budget=5000 --dump-dom \"$1\"")
+        script = f'{flags}; rc=$?; pkill -9 chromium >/dev/null 2>&1; rm -rf {profile}; exit $rc'
+        r = self._exec("sh", "-c", script, "_", url)
         return r.out or ""
 
 

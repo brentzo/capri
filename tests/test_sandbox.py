@@ -92,6 +92,8 @@ class FakeRunner:
             while argv[i].startswith("-"):
                 i += 1
             name, rest = argv[i], argv[i + 1:]
+            if rest[:1] == ["timeout"]:            # a probe bounded by the container's timeout
+                rest = rest[2:]
             if rest[:2] == ["sh", "-c"]:
                 cmd = rest[2]
                 if cmd.startswith("echo "):                    # echo <content> > <path>
@@ -171,6 +173,7 @@ def test_provision_builds_an_internal_network_and_an_unprivileged_attacker():
     attacker_run = next(c for c in run.calls
                         if c[:2] == ["docker", "run"] and "hc-range-attacker" in c)
     assert "NET_ADMIN" not in attacker_run and "--privileged" not in attacker_run
+    assert "--init" in attacker_run        # reaps the headless browser's orphaned helpers
     # the guard is installed by the HOST into the attacker netns, not by the agent
     assert run.ran("nsenter", "-t", "4242", "-n", "nft", "-f", "-")
     assert eng.pinned["t1.sandbox.local"].compressed == "10.90.0.3"   # .1 oos, .2 attacker, .3 target

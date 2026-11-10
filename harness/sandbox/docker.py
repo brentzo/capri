@@ -34,9 +34,18 @@ from harness.substrate import scope
 GOLDEN = "golden"   # the per-run baseline snapshot id the loop restores before verifying (§4.2)
 
 # Probes the attacker container runs; stdlib python3 only, so the node image stays tiny.
+# The guard runs default-deny DROP, so a connection to a blocked destination never gets a
+# refusal, it just goes silent: the probe waits out its bound, and that silence IS the
+# "blocked" answer. The guard proof runs before every operator and verifier step, so these
+# probes are a hot path, and an unbounded wait on a blocked destination would dominate the
+# run. The TCP probe self-bounds with a socket timeout. The DNS probe cannot: getaddrinfo is
+# a blocking C call that honours neither the socket timeout nor a Python alarm, so it is
+# bounded from outside by `_dns` running it under the container's `timeout`. Either bound is
+# generous against a reachable destination, which answers in well under a second, so a probe
+# is only cut off when the destination is truly silent, never when egress is in fact open.
 _TCP_PROBE = (
     "import socket,sys\n"
-    "s=socket.socket(); s.settimeout(3)\n"
+    "s=socket.socket(); s.settimeout(1)\n"
     "try:\n"
     "    s.connect((sys.argv[1], int(sys.argv[2]))); print('CONNECTED')\n"
     "except Exception as e: print('BLOCKED:'+type(e).__name__)\n"
@@ -159,7 +168,7 @@ class DockerSandbox(Sandbox):
         attacker_ip = str(next(hosts))                         # .2
         self._docker("network", "create", "--internal",
                      "--subnet", str(self.subnet), self.network)
-        self._docker(*self._run_args(self.attacker, attacker_ip, self.attacker_image))
+        self._docker(*self._run_args(self.attacker, attacker_ip, self.attacker_image, init=True))
 
         if self.collaborator_app:                              # in-range OOB collaborator (§SSRF)
             collab_ip = str(next(hosts))                       # consumes .3; targets start at .4
@@ -344,11 +353,15 @@ class DockerSandbox(Sandbox):
         return True
 
     # --- helpers --------------------------------------------------------
-    def _run_args(self, name, ip, image):
+    def _run_args(self, name, ip, image, *, init=False):
         """`docker run` args for a range container, under the hardened runtime when one
         is present, so a container escape is contained in gVisor's user-space kernel
-        rather than the host kernel (§6.2, G4)."""
+        rather than the host kernel (§6.2, G4). `init` adds an init process that reaps
+        orphaned children, which the attacker needs because the headless browser it runs
+        leaves helper processes behind that would otherwise accumulate as zombies."""
         args = ["run", "-d", "--name", name, "--network", self.network, "--ip", ip]
+        if init:
+            args.append("--init")
         if self._runtime:
             args += ["--runtime", self._runtime]
         return [*args, image]
@@ -397,5 +410,7 @@ class DockerSandbox(Sandbox):
         return "CONNECTED" in out
 
     def _dns(self, name):
-        out = self._exec_attacker("python3", "-c", _DNS_PROBE, str(name)).out
+        # getaddrinfo blocks in libc past any in-process timeout, so bound it from outside:
+        # `timeout` kills the probe if the lookup has not returned, which reads as "refused".
+        out = self._exec_attacker("timeout", "2", "python3", "-c", _DNS_PROBE, str(name)).out
         return "RESOLVED" in out

@@ -449,6 +449,16 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   boolean-blind-SQLi, broken-object-level-authorization, broken-function-level-
   authorization, and JWT-algorithm-confusion findings alongside the baseline probe, the
   Operator proposing each probe and the Verifier reproducing on a disjoint provider.
+- Two hot-path waits are bounded so a full run finishes instead of stalling. A headless
+  render that wedges never returns, and killing its `docker exec` would leave chromium
+  holding the captured pipe open past the subprocess timeout and hang the whole run, so the
+  render runs under an in-container `timeout`, kills its helpers by name, and the attacker
+  runs with an init that reaps them. The scope-guard proof runs before every step, and its
+  probes to blocked destinations each waited out a full timeout; the TCP probe self-bounds
+  with a one-second socket timeout and the DNS probe is bounded by the container's `timeout`
+  (getaddrinfo honours neither the socket timeout nor an alarm), so the per-step containment
+  check no longer dominates a long run. A full deterministic engagement runs to completion
+  and confirms seventeen of the eighteen web and client-side cards on the sandbox range.
 
 ## What's here (the capri CLI and model-plane setup)
 
