@@ -38,7 +38,8 @@ from harness.recon import phase_recon                          # noqa: E402
 from harness.roles import ModelOperator, ModelVerifier         # noqa: E402
 from harness.sandbox.adapters import (                         # noqa: E402
     BflaAdapter, CacheAdapter, CmdiAdapter, CorsAdapter, HttpRequestAdapter, HttpxAdapter,
-    IdorAdapter, JwtAdapter, NmapAdapter, PathAdapter, SessAdapter, SqliAdapter, SstiAdapter)
+    IdorAdapter, JwtAdapter, NmapAdapter, PathAdapter, SessAdapter, SqliAdapter, SsrfAdapter,
+    SstiAdapter)
 from harness.sandbox.docker import DockerSandbox               # noqa: E402
 from harness.sandbox.probe import DockerProbe                  # noqa: E402
 from harness.store import blobstore, db                        # noqa: E402
@@ -71,6 +72,12 @@ KB = capabilities.runnable_index(FULL_KB)
 # reflected-XSS technique has a real hole to find; it never leaves the egress-denied range.
 with open(os.path.join(ROOT, "infra", "sandbox", "vulnweb.py"), encoding="utf-8") as _f:
     VULNWEB = _f.read()
+
+# The in-range out-of-band collaborator (harness infrastructure, never in scope): a target
+# can reach it on the internal network so SSRF is confirmed by the hit it records, which
+# the harness reads over docker exec; the attacker cannot reach it through the scope guard.
+with open(os.path.join(ROOT, "infra", "sandbox", "collaborator.py"), encoding="utf-8") as _f:
+    COLLABORATOR = _f.read()
 
 
 class Operator:
@@ -151,7 +158,7 @@ def main():
     if errs:
         print("contract invalid:", errs)
         return 1
-    sb = DockerSandbox(listener_app=VULNWEB)
+    sb = DockerSandbox(listener_app=VULNWEB, collaborator_app=COLLABORATOR)
     try:
         desc = sb.provision(eng)
         print(f"provisioned {desc['range_id']}  pinned={desc['pinned_targets']}")
@@ -179,7 +186,10 @@ def main():
                         "path": PathAdapter(sb.attacker, eng.pinned),
                         "cmdi": CmdiAdapter(sb.attacker, eng.pinned),
                         "cache": CacheAdapter(sb.attacker, eng.pinned),
-                        "sess": SessAdapter(sb.attacker, eng.pinned)}
+                        "sess": SessAdapter(sb.attacker, eng.pinned),
+                        "ssrf": SsrfAdapter(sb.attacker, eng.pinned,
+                                            collaborator=sb.collaborator,
+                                            collab_addr=sb.collab_addr)}
             disp = Dispatcher(conn, blobstore.BlobStore(root), eng, adapters,
                               ratelimit.RateLimiter(1000, now=lambda: 0.0))
             res = Loop(conn, eng, kb_index=KB, dispatcher=disp, sandbox=sb,

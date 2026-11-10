@@ -18,6 +18,9 @@ harness has real web vulnerabilities to find and independently confirm:
   - /portal + /portal/login + /portal/me is a cookie session that does not rotate the
                  session id on authentication, so a pre-auth id stays valid and becomes
                  authenticated after login (session fixation).
+  - /fetch?url=  makes a server-side request to the caller's url with no allowlist, so it
+                 can be pointed at an in-range host (server-side request forgery). Egress is
+                 denied by the range, so the only reachable callee is the range collaborator.
 It is seeded into a target container at provision time (not baked into the golden image)
 and is never reachable off the range.
 
@@ -33,6 +36,7 @@ import secrets
 import sqlite3
 import subprocess
 import sys
+import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -254,6 +258,21 @@ class Handler(BaseHTTPRequestHandler):
         elif parts.path == "/portal/me":
             user = _SESSIONS.get(self._req_sid())
             self._respond(200, ("me: user %s" % user) if user else "me: anonymous", "text/plain")
+        elif parts.path == "/fetch":
+            url = (query.get("url") or [""])[0]
+            # VULNERABLE BY DESIGN: the server fetches the caller's url with no allowlist,
+            # so it can be aimed at an internal host (server-side request forgery). Egress
+            # is denied by the range, so the only thing it can actually reach is the range
+            # collaborator, which records the hit for the harness to confirm out of band.
+            fetched = "no url"
+            if url:
+                try:
+                    with urllib.request.urlopen(url, timeout=3) as r:
+                        r.read(1024)
+                    fetched = "fetched " + url
+                except Exception:
+                    fetched = "fetch failed"
+            self._respond(200, fetched, "text/plain")
         elif parts.path == "/greet":
             name = (query.get("name") or ["guest"])[0]
             # VULNERABLE BY DESIGN: the name is rendered through the template engine, so
@@ -274,7 +293,7 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
         else:
             self._respond(200, _PAGE + "<p>Try /search?q=... /item?id=... /account?id=..."
-                               " /download?file=readme.txt</p>")
+                               " /download?file=readme.txt /fetch?url=http://x</p>")
 
 
 def main():

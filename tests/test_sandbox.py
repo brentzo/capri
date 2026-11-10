@@ -186,6 +186,29 @@ def test_provision_seeds_and_runs_a_custom_listener_app_when_configured():
     assert not run.ran("http.server")                            # replaced, not added
 
 
+def test_provision_starts_an_in_range_collaborator_when_configured():
+    run = FakeRunner()
+    sb = DockerSandbox(run=run, collaborator_app="print('collab')")
+    eng = _eng()
+    sb.provision(eng)
+    # the collaborator is created on an in-range address and runs its own seeded app
+    assert run.ran("run", "-d", "--name", "hc-range-collaborator")
+    assert run.ran("exec", "-i", "sh", "-c", "cat > /tmp/app.py")
+    assert sb.collab_addr == "10.90.0.3:8080"                  # .1 oos, .2 attacker, .3 collaborator
+    assert eng.pinned["t1.sandbox.local"].compressed == "10.90.0.4"   # target shifted to .4
+    # the collaborator is never added to the pinned set, so the scope guard never allows the
+    # attacker to reach it; the harness reads its log over docker exec instead
+    assert "10.90.0.3" not in {ip.compressed for ip in eng.pinned.values()}
+
+
+def test_provision_without_a_collaborator_keeps_the_target_at_the_third_address():
+    run = FakeRunner()
+    eng = _eng()
+    DockerSandbox(run=run).provision(eng)
+    assert not run.ran("run", "-d", "--name", "hc-range-collaborator")
+    assert eng.pinned["t1.sandbox.local"].compressed == "10.90.0.3"
+
+
 def test_guard_proof_passes_only_when_the_range_enforces_scope():
     eng = _eng()
     # a correctly enforcing range: only the pinned in-scope target:port connects

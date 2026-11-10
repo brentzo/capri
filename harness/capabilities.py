@@ -33,6 +33,7 @@ CAPABILITIES = {
     "KB-WEB-CACHE-POISON-001": ("cache", {"path": "/promo"}),
     "KB-WEB-SESS-FIX-001": ("sess", {"path": "/portal", "login_path": "/portal/login",
                                      "me_path": "/portal/me", "login_user": "1"}),
+    "KB-WEB-INJ-SSRF-001": ("ssrf", {"path": "/fetch", "param": "url"}),
 }
 
 

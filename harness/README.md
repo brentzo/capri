@@ -406,7 +406,11 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   proves session fixation: it obtains a pre-auth session id, logs in reusing it, and fires
   only when the login issues no fresh id and the pre-auth id is authenticated afterward;
   recon emits the login endpoint as a second asset so this card has a login-typed asset to
-  apply over.
+  apply over. `SsrfAdapter` (`ssrf`) proves server-side request forgery with a denied-egress
+  range: the range runs an in-range out-of-band collaborator (never in scope), the adapter
+  points the target's fetch parameter at a collaborator URL carrying a random token, and it
+  fires only when the collaborator was hit for that token from the target, read out of band
+  over docker exec rather than through the scope guard.
   The attacker container runs the toolchain image (`infra/sandbox/Dockerfile.attacker`,
   built for amd64 and arm64, httpx checksum-pinned) while targets stay the minimal node
   image, and the attacker still holds no `NET_ADMIN`, so the host-owned scope guard
@@ -480,11 +484,11 @@ cards, bridged to the concrete tool adapters.
   conventional-path list, a cache header on a conventional cacheable path, and a
   cookie-session login endpoint emitted as a second asset. `tools/run_engagement.py` loads
   the KB with `kb.load`, projects it with `capabilities.runnable_index`, and drives it; a
-  live model-driven run confirmed ten genuine web-protocol-auth cards (JWT algorithm
+  live model-driven run confirmed eleven genuine web-protocol-auth cards (JWT algorithm
   confusion, server-side template injection, and OS command injection at the cards' own
   critical severity, object- and function-level authorization, boolean-blind SQL injection,
-  path traversal, web cache poisoning, session fixation, and CORS misconfiguration), each
-  verified on a disjoint provider.
+  path traversal, server-side request forgery, web cache poisoning, session fixation, and
+  CORS misconfiguration), each verified on a disjoint provider.
 
 ## Run
 

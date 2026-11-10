@@ -79,13 +79,24 @@ class DockerSandbox(Sandbox):
                  attacker_image="hc-attacker:golden",
                  subnet="10.90.0.0/24", internet_canary=("1.1.1.1", 443),
                  public_name="example.com", unrelated_net_ip="172.17.0.1",
-                 kill_budget_ms=10000, listener_app=None, clock=now):
+                 kill_budget_ms=10000, listener_app=None, collaborator_app=None,
+                 clock=now):
         self._run = run or default_run
         self.node_image = node_image              # minimal base for target containers
         # When set, a python source string seeded into each target and run as its
         # listener instead of a bare `http.server`, so a range can carry a real app
         # (e.g. a deliberately vulnerable one) without baking it into the golden image.
         self.listener_app = listener_app
+        # When set, a python source string run on a dedicated in-range collaborator
+        # container (harness infrastructure, not a target and never in scope): a target can
+        # reach it on the internal network, the attacker cannot reach it through the scope
+        # guard, and the harness reads its log over docker exec. It is how SSRF is confirmed
+        # out of band while egress stays denied. Created once at provision, torn down at the
+        # end; snapshot/restore/kill never touch it, so its hit log persists across a run.
+        self.collaborator_app = collaborator_app
+        self.collaborator = f"{network}-collaborator"
+        self.collab_port = 8080
+        self.collab_addr = None                    # "ip:port" a target should fetch, set at provision
         # The attacker container carries the pentest toolchain (nmap, ...); it still has
         # no NET_ADMIN and no nft/ip tooling, so the agent can run tools within scope but
         # cannot reach the host-installed scope guard. Targets stay on the minimal image.
@@ -149,6 +160,12 @@ class DockerSandbox(Sandbox):
         self._docker("network", "create", "--internal",
                      "--subnet", str(self.subnet), self.network)
         self._docker(*self._run_args(self.attacker, attacker_ip, self.attacker_image))
+
+        if self.collaborator_app:                              # in-range OOB collaborator (§SSRF)
+            collab_ip = str(next(hosts))                       # consumes .3; targets start at .4
+            self._docker(*self._run_args(self.collaborator, collab_ip, self.node_image))
+            self._start_listeners(self.collaborator, [self.collab_port], app=self.collaborator_app)
+            self.collab_addr = f"{collab_ip}:{self.collab_port}"
 
         pinned, pinned_ports = {}, []
         for host in engagement.in_scope_hosts:
@@ -313,8 +330,8 @@ class DockerSandbox(Sandbox):
         """Destroy the range entirely: remove the attacker and every target, drop the
         network, and delete the snapshot and forensics images. Best-effort and
         idempotent, so it doubles as pre-provision cleanup."""
-        names = [self.attacker, *[f"{self.network}-tgt-{i}"
-                                  for i in range(max(len(self._targets), 8))]]
+        names = [self.attacker, self.collaborator,
+                 *[f"{self.network}-tgt-{i}" for i in range(max(len(self._targets), 8))]]
         for name in names:
             self._run(["docker", "rm", "-f", name])
         self._run(["docker", "network", "rm", self.network])
@@ -322,6 +339,7 @@ class DockerSandbox(Sandbox):
         for image in images + self._forensics:
             self._run(["docker", "rmi", "-f", image])
         self._attacker_pid = None
+        self.collab_addr = None
         self._targets, self._target_ports, self._snapshots, self._forensics = {}, {}, {}, []
         return True
 
@@ -344,14 +362,15 @@ class DockerSandbox(Sandbox):
         toks = r.out.split() if r.rc == 0 else []
         return toks[toks.index("src") + 1] if "src" in toks else None
 
-    def _start_listeners(self, name, ports):
+    def _start_listeners(self, name, ports, app=None):
         # A custom app (seeded over stdin so it never touches the golden image), or the
         # plain http.server stand-in. Re-seeded here so restore and kill bring it back.
-        if self.listener_app:
-            self._docker("exec", "-i", name, "sh", "-c", "cat > /tmp/app.py",
-                         input=self.listener_app)
+        # `app` overrides the target listener, so the collaborator runs its own app.
+        app = app if app is not None else self.listener_app
+        if app:
+            self._docker("exec", "-i", name, "sh", "-c", "cat > /tmp/app.py", input=app)
         for port in ports:
-            if self.listener_app:
+            if app:
                 self._docker("exec", "-d", name, "python3", "/tmp/app.py", str(port))
             else:
                 self._docker("exec", "-d", name, "python3", "-m", "http.server", str(port))

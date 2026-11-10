@@ -17,8 +17,9 @@ from urllib.parse import parse_qs, urlparse                              # noqa:
 import base64                                                            # noqa: E402
 from harness.sandbox.adapters import (                                   # noqa: E402
     BflaAdapter, CacheAdapter, CmdiAdapter, CorsAdapter, HttpRequestAdapter, HttpxAdapter,
-    IdorAdapter, JwtAdapter, NmapAdapter, PathAdapter, SessAdapter, SqliAdapter, SstiAdapter,
-    _RANGE_CANARY, _parse_http_full, _parse_http_response, _parse_httpx, _parse_nmap_services)
+    IdorAdapter, JwtAdapter, NmapAdapter, PathAdapter, SessAdapter, SqliAdapter, SsrfAdapter,
+    SstiAdapter, _RANGE_CANARY, _parse_http_full, _parse_http_response, _parse_httpx,
+    _parse_nmap_services)
 from harness.sandbox.base import RunResult                               # noqa: E402
 
 # Real `nmap -sV -Pn -p 8080 -oX -` output (captured live), trimmed to the shape we parse.
@@ -841,6 +842,67 @@ def test_sess_reuses_the_preauth_cookie_through_login_and_me():
     cookies = {h.get("Cookie") for _, h in later}
     assert len(cookies) == 1 and next(iter(cookies)) == "sid=sid1"
     assert all("10.90.0.3" in u for u, _ in later)            # resolved to the guarded IP
+
+
+class SsrfRunner:
+    """Simulates the target plus the in-range collaborator. When the target fetches the
+    collaborator url (vulnerable), the collaborator records the requested path and the
+    target's address; the adapter then reads that log over docker exec. A safe target with
+    an allowlist never fetches it, so the log stays empty."""
+
+    def __init__(self, *, vulnerable=True):
+        self.vulnerable = vulnerable
+        self.hits = []
+        self.calls = []
+
+    def __call__(self, argv, input=None, timeout=None):
+        self.calls.append(argv)
+        if argv[:2] == ["docker", "exec"] and "cat" in argv and "/tmp/hits.log" in argv:
+            return RunResult(0, "\n".join(self.hits) + ("\n" if self.hits else ""), "")
+        url = next((a for a in argv if a.startswith("http")), "")
+        inner = (parse_qs(urlparse(url).query).get("url") or [""])[0]   # the collaborator url
+        if self.vulnerable and inner:
+            self.hits.append(f"{urlparse(inner).path} {urlparse(url).hostname}")  # server-side fetch
+        return RunResult(0, "STATUS 200\n---BODY---\nfetched", "")
+
+
+def test_ssrf_confirms_when_the_collaborator_is_hit_from_the_target():
+    res = SsrfAdapter("atk", PINNED, run=SsrfRunner(),
+                      collaborator="hc-collab", collab_addr="10.90.0.9:8080").run(
+        {"tool": "ssrf", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/fetch", "param": "url"}})
+    sig = res["deterministic_signals"]
+    assert res["status"] == "ok"
+    assert sig["hit"] is True and sig["ssrf"] is True and sig["oob_fired"] is True
+
+
+def test_ssrf_no_callback_is_not_a_hit():
+    res = SsrfAdapter("atk", PINNED, run=SsrfRunner(vulnerable=False),
+                      collaborator="hc-collab", collab_addr="10.90.0.9:8080").run(
+        {"tool": "ssrf", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/fetch", "param": "url"}})
+    assert res["deterministic_signals"]["hit"] is False      # the target never fetched it
+
+
+def test_ssrf_points_the_target_at_the_collaborator_token_url_and_reads_the_log():
+    fake = SsrfRunner()
+    SsrfAdapter("atk", PINNED, run=fake,
+                collaborator="hc-collab", collab_addr="10.90.0.9:8080").run(
+        {"tool": "ssrf", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/fetch", "param": "url"}})
+    fetch = next(c for c in fake.calls if any(a.startswith("http") for a in c))
+    url = next(a for a in fetch if a.startswith("http"))
+    assert "10.90.0.3" in url                                # the target, resolved from the pin
+    inner = parse_qs(urlparse(url).query)["url"][0]
+    assert inner.startswith("http://10.90.0.9:8080/hcoob")   # collaborator + random token
+    assert any(c[:2] == ["docker", "exec"] and "/tmp/hits.log" in c for c in fake.calls)
+
+
+def test_ssrf_without_a_collaborator_cannot_confirm():
+    res = SsrfAdapter("atk", PINNED, run=SsrfRunner()).run(   # no collaborator configured
+        {"tool": "ssrf", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/fetch", "param": "url"}})
+    assert res["deterministic_signals"]["hit"] is False      # nothing to confirm against
 
 
 def test_parse_http_full_splits_status_headers_and_body():
