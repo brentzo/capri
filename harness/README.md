@@ -472,6 +472,9 @@ for the sandbox; the harness itself stays dependency-free and is handed a gatewa
   excludes the Operator's provider), reads keys with no echo, and calls the gateway
   bring-up with a live progress display. It requires both selected provider keys before
   starting Docker or writing state. The TUI uses Back/Next and masks key entry.
+  Searching updates a visible result list immediately; Down focuses the first result,
+  arrows move the highlighted provider/model, and Down from the final result focuses Next.
+  Enter selects without opening a dropdown, and Tab moves through the footer buttons.
 - `tools/modelplane.py` - the gateway mechanics the TUI and CLI share. `bring_up`
   generates the Bifrost config from the chosen pairing, seeds a Docker-managed volume
   with it over stdin (surviving Docker Desktop file sharing and odd `/tmp` setups) and

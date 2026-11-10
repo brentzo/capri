@@ -1,9 +1,10 @@
 from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.events import Resize
-from textual.widgets import Button, Footer, Header, Input, OptionList, Select, Static
+from textual.widgets import Button, Footer, Input, OptionList, Select, Static
 
 from cli import terminal
 from cli.setup import _launch, model_choices
@@ -12,6 +13,30 @@ from tools import catalog, modelplane
 
 STEP_LABELS = ("Operator model", "Operator API key", "Verifier model",
                "Verifier API key", "Review and start")
+
+
+class ModelSearchInput(Input):
+    BINDINGS = [Binding("down", "focus_results", show=False, priority=True)]
+
+    def action_focus_results(self) -> None:
+        results = self.app.query_one("#model-results", OptionList)
+        if results.display and results.option_count:
+            results.focus()
+            results.action_first()
+
+
+class ModelOptionList(OptionList):
+    def action_cursor_down(self) -> None:
+        if self.highlighted == self.option_count - 1:
+            self.app.query_one("#next", Button).focus()
+        else:
+            super().action_cursor_down()
+
+    def action_cursor_up(self) -> None:
+        if self.highlighted == 0:
+            self.app.query_one("#search", Input).focus()
+        else:
+            super().action_cursor_up()
 
 
 class SetupApp(App):
@@ -74,6 +99,12 @@ class SetupApp(App):
         color: ansi_bright_white;
     }
 
+    #model-results > .option-list--option-highlighted {
+        background: ansi_bright_cyan;
+        color: ansi_black;
+        text-style: bold;
+    }
+
     #model {
         margin: 1 2 0 2;
     }
@@ -121,14 +152,13 @@ class SetupApp(App):
         self.saved_env = modelplane.load_env(modelplane.state_dir(args))
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=False)
         yield Static(terminal.ART, id="wordmark")
         yield Static("MODEL SETUP", id="screen-title")
         yield Static("", id="step-count")
         yield Static("", id="role-summary")
         yield Static("", id="prompt")
-        yield Input(placeholder="Search, then press Enter to choose", id="search")
-        yield OptionList(id="model-results", markup=False)
+        yield ModelSearchInput(placeholder="Search providers and models", id="search")
+        yield ModelOptionList(id="model-results", markup=False)
         yield Select([], allow_blank=True, prompt="Choose a provider and model", id="model")
         yield Input(placeholder="Or type a model ID", id="custom-model")
         yield AsteriskInput(placeholder="API key (input is masked)", password=True, id="api-key")
