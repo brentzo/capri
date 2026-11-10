@@ -40,7 +40,7 @@ dropped, pinned in-scope allowed), prints each, and tears the range down.
 
 This backend needs only Docker and nftables, so it runs on any commodity Linux host
 and inside Docker Desktop's Linux VM on macOS/Windows. Stronger escape-containment
-(G4) via gVisor or a separate gateway host plugs in behind the same `Sandbox`
-interface; the snapshot round-trip (G3), escape-attempt (G4), and kill-switch (G5)
-drills are the following slices, and until all five guarantees prove, the harness
-stays in passive-only.
+(G4) via gVisor is auto-detected when the host offers the `runsc` runtime, and the
+snapshot round-trip (G3), escape-attempt (G4), and kill-switch (G5) drills are
+implemented on this backend. `proofs_pass` runs all five, and the harness leaves
+passive-only only when every guarantee holds.

@@ -1,8 +1,19 @@
-# KB tooling
+# tools
 
-The reference implementation of the technique-card validator specified in
-[HC-KB-01 §9](../docs/specs/HC-KB-01.md) and its acceptance behavior in HC-KB-01 §12.
-Pure Python standard library, no third-party dependency, runnable in CI.
+Two kinds of tooling, both pure Python standard library, no third-party dependency.
+
+**KB build tooling** - the reference implementation of the technique-card validator
+specified in [HC-KB-01 §9](../docs/specs/HC-KB-01.md) and its acceptance behavior in
+HC-KB-01 §12 (`validate_kb.py`, `materialize_kb.py`, `taxonomy.py`, `gen_features.py`),
+runnable in CI and documented below.
+
+**Runtime and setup tooling** - the live-engagement runner and the self-host setup,
+documented in [`../harness/README.md`](../harness/README.md) and [`../infra/`](../infra):
+`run_engagement.py` (provision the Docker range, gate on the sandbox proofs, recon, and
+drive the control loop), `sandbox_selftest.py` (prove the sandbox guarantees on your
+host), and `setup.py` / `modelplane.py` / `catalog.py` / `terminal.py` (the `capri setup`
+terminal UI, the Bifrost gateway mechanics, the provider catalog, and shared terminal
+helpers).
 
 ## Files
 

@@ -56,8 +56,9 @@ the specs insist on are enforced in the database itself, not only the app:
 ## What's here (dispatch, the propose-and-dispose chokepoint)
 
 The single gate every proposed action passes through (HC-AGENT-01 §5.2), wiring
-the M0 guards to the M1 store. The real tool adapters and the sandbox are
-infrastructure (injected), so this is the decision logic, not the tools.
+the M0 guards to the M1 store. The tool adapters and the sandbox are injected
+through a seam (their real backends now live in `sandbox/`, below), so this file
+is the decision logic, not the tools themselves.
 
 - `dispatch.py` - `Dispatcher.dispatch(req, ctx)` runs the four guards in order
   (unknown_tool, out_of_scope, blast_denied, rate/budget), short-circuits with a
@@ -92,8 +93,9 @@ The verdict-to-report path of HC-FIND-01, as pure-stdlib code.
 
 The engine of HC-AGENT-01 §4: the deterministic loop that drives a run through
 plan -> hunt -> verify -> report. The four roles, the sandbox, and the model
-plane (Bifrost) are infrastructure, injected here; this is the orchestration and
-the signal triage the harness owns on top of them.
+plane are injected through seams, with their backends in this package (`roles.py`,
+`sandbox/`, `modelplane.py`) and in `infra/`; this is the orchestration and the
+signal triage the harness owns on top of them.
 
 - `loop.py` - `Loop.run(target_model)` runs `phase_threat_model` (assets x
   applicable KB cards, via the applicability DSL), lets the injected Planner
@@ -548,12 +550,22 @@ python3 -m harness.substrate.contract harness/substrate/examples/engagement.exam
 
 ## Not here yet
 
-Provisioning, snapshot/restore, the gateway, the guard-proof self-tests as live
-probes, and the kill switch (infrastructure). The Bifrost and Tavily transports
-(`bifrost.py`, `tavily.py`) are here and contract-tested against mocks, but
-pointing them at a running gateway and the real Tavily API with real secrets is
-deployment, and wiring enrichment into live recon and threat modeling remains. On
-the model plane, a Reporter LLM over the deterministic reporter and the
-reasoning-model planner that would replace the deterministic one remain, as does
-the live `phase_recon` that produces the target model. What is here is the policy
-core, the orchestration, and the transport clients those plug into.
+The sandbox substrate (provisioning, snapshot/restore, the five guard proofs, and
+the kill switch) and the model gateway now ship as self-hostable backends
+(`sandbox/`, `infra/`, and `capri setup`), and live `phase_recon` produces the
+target model, so these are no longer stubs. What remains:
+
+- Coverage: the live run drives the whole web-protocol-auth class (all eleven
+  cards) plus several client-side cards; wiring the other KB classes (ai-llm,
+  cloud, supply-chain, rpc, dos, data, memory-binary, mobile, and the DOM-only
+  client-side cards) to concrete adapters is the next work, and the DOM-based and
+  fuzzy-judgment cards wait on the Laya decision layer (HC-MODEL-02).
+- Model plane: the Planner and Reporter are still the deterministic stand-ins; a
+  reasoning-model Planner and an LLM Reporter swap in behind the same seams, and a
+  stronger Verifier is the HC-MODEL-01 bake-off.
+- Enrichment: Tavily is built and contract-tested against a mock but not yet wired
+  into live recon and threat modeling, and pointing it at the real Tavily API with
+  a key is deployment.
+
+What stays out of repo is your own provider and Tavily API keys and the host you
+run the backends on.

@@ -6,7 +6,7 @@ Capri drives an LLM agent through a real pentest against a disposable sandbox ta
 
 The governing rule is **the harness is code, the agent is prompted**: safety-critical logic is deterministic, and the model only proposes what to try, never what runs.
 
-This repository is the harness. The sandbox and model gateway are infrastructure you point it at. It has zero third-party dependencies, and the whole decision layer is tested against stubbed infrastructure, so `make check` runs in seconds.
+This repository holds the whole system: the dependency-free Python harness, plus self-hostable backends for the two things it drives - an isolated Docker sandbox range and a Bifrost model gateway you bring up on your own machine. The harness itself has zero third-party dependencies, and its decision layer is tested against stubbed infrastructure, so `make check` runs in seconds without Docker or a network.
 
 ## Highlights
 
@@ -58,13 +58,16 @@ Untrusted target output enters a role's context only as delimited data, never as
 
 | Path | What lives there |
 |------|------------------|
+| `capri` | The CLI a self-hoster runs: `capri setup` (pick models, start the gateway), `capri run` (run an engagement). |
 | `SPEC.md` | The design spec and dated decision log. |
 | `docs/specs/` | The component specs (`HC-*`), the source of truth. |
-| `harness/` | The running system: control loop, roles, dispatch, model plane, blackboard, findings, report, and the SQLite + blob store. |
+| `harness/` | The running system: control loop, roles, dispatch, model plane, blackboard, recon, findings, report, and the SQLite + blob store. |
 | `harness/substrate/` | The safety-critical layer: contract parser, scope guard, blast-tier gate. |
+| `harness/sandbox/` | The sandbox backends: the interface, the passive-only default, and the self-hostable Docker range with its live tool adapters. |
+| `infra/` | Host-side setup for the two self-hosted backends: the Docker sandbox range and the Bifrost model gateway. |
 | `kb/` | The 107 technique cards, by target class. Generated. |
 | `eval/` | Ground-truth manifests for the eval harness. Generated. |
-| `tools/` | The KB validator, materializer, and feature generator. |
+| `tools/` | KB build tooling (validator, materializer) plus the live-engagement runner and the model-plane setup. |
 | `tests/` | Self-test suites, run in CI. |
 
 `kb/`, `eval/`, and `docs/requirements/features/` are generated from the specs; run `make materialize` / `make features` instead of editing them by hand.
@@ -123,7 +126,7 @@ The objective is proven by the harness (a canary hash match or an in-sandbox mar
 
 ## Running a live engagement
 
-The harness runs against injected seams, so you supply three things:
+A live engagement needs three things, all self-hostable on your own machine:
 
 1. **An isolated sandbox lab** meeting the five substrate guarantees (scope, no egress, reproducibility, containment, killability). The self-hostable reference backend is Docker plus an nftables scope guard, with no nested virtualization, so it runs on any Linux host or inside Docker Desktop on macOS/Windows; prove all five guarantees on your host with `python3 tools/sandbox_selftest.py` (see the [sandbox host notes](infra/sandbox/)). Firecracker microVMs plug in behind the same interface for stronger isolation. See the [sandbox substrate spec](docs/specs/HC-SUB-01.md).
 2. **A Bifrost model gateway** with one virtual key per role, the Operator and Verifier on disjoint providers, and no provider credential in any role. Set it up on your own machine, no cloud account:
