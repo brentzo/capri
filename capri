@@ -6,6 +6,7 @@ One command for the whole workflow:
     capri setup              choose your models and start the gateway (a terminal UI)
     capri run                run an engagement against the sandbox range
     capri gateway <cmd>      the model-plane gateway: status | env | down | destroy | up | keys
+    capri dashboard          browse your past runs in a local web view
     capri help               show this message
 
 Set up once with `capri setup`, then `capri run`. The harness stays standard-library
@@ -70,6 +71,7 @@ def _help():
                            ("gateway env", "print shell exports"),
                            ("gateway down", "stop the gateway"),
                            ("gateway destroy", "remove gateway data")]),
+        group("Report", [("dashboard", "browse your past runs in a local web view")]),
         group("Help", [("help", "show this message")]),
     ))
     return (f"\n{terminal.render_banner(color=color)}\n\n"
@@ -164,6 +166,9 @@ def main(argv):
             return 2
         from tools import modelplane
         return modelplane.main(rest)
+    if cmd == "dashboard":
+        from cli import dashboard
+        return dashboard.main(rest)
     sys.stderr.write(f"capri: unknown command {cmd!r}\n")
     print(_help())
     return 2

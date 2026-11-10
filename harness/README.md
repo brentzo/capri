@@ -561,8 +561,15 @@ their own section with no severity, shows a passive-only banner when containment
 proven, and renders times in am/pm (the stored form is ISO, so the am/pm form is a render
 concern, closing the BR-08 gap). Every dynamic value is HTML-escaped, so target strings and
 any model-authored text render as inert text, never active markup. The same output is what
-the dashboard will serve per run and what a static export would carry. The reasoning record
-and the `capri dashboard` server follow.
+the dashboard serves per run and what a static export would carry.
+
+`capri dashboard` serves the whole thing locally: a standard-library `http.server`
+(`cli/dashboard.py`) bound to `127.0.0.1` only, read-only, running no tool, that lists the
+runs under `~/.capri/`, serves each run's rendered report, and shows its audit timeline with
+the hash-chain verification result so tampering is visible rather than assumed. The routing
+and rendering are split into a pure `route` function tested with no socket bound
+(`tests/test_dashboard.py`). The reasoning record and the per-finding evidence and reasoning
+views follow, once the loop captures the Operator and Verifier text it currently drops.
 
 ## Run
 
