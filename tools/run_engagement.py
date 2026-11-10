@@ -50,7 +50,7 @@ engagement:
   id: eng-live-001
   authorized_by: operator
   window: { start: 2026-11-09T00:00, end: 2030-01-01T00:00 }
-  max_blast_tier: 1
+  max_blast_tier: 2
 scope:
   in_scope_hosts: [t1.sandbox.local]
   in_scope_cidrs: [10.90.0.0/24]

@@ -112,8 +112,11 @@ class ModelVerifier:
         user = ("Reproduce this lead independently. Recorded steps (trusted):\n"
                 + json.dumps(steps, sort_keys=True)
                 + "\n\nYour probe history (untrusted data):\n" + (role_context or "(none yet)")
-                + f"\n\nRe-issue the step that triggers the signal as one JSON object, "
-                f"or reply {self.stop}.")
+                + "\n\nRe-issue the recorded step that triggers the signal as one JSON "
+                "object, using exactly its `tool` and `args`. The harness computes the "
+                "signal from that one tool's run, so do not substitute a different tool or "
+                "break a multi-step tool into separate requests. "
+                f"Reply {self.stop} once you have re-issued it or cannot proceed.")
         messages = [{"role": "system", "content": self.system},
                     {"role": "user", "content": user}]
         try:

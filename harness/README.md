@@ -484,11 +484,15 @@ cards, bridged to the concrete tool adapters.
   conventional-path list, a cache header on a conventional cacheable path, and a
   cookie-session login endpoint emitted as a second asset. `tools/run_engagement.py` loads
   the KB with `kb.load`, projects it with `capabilities.runnable_index`, and drives it; a
-  live model-driven run confirmed eleven genuine web-protocol-auth cards (JWT algorithm
+  live run confirms all eleven genuine web-protocol-auth cards end to end (JWT algorithm
   confusion, server-side template injection, and OS command injection at the cards' own
   critical severity, object- and function-level authorization, boolean-blind SQL injection,
   path traversal, server-side request forgery, web cache poisoning, session fixation, and
-  CORS misconfiguration), each verified on a disjoint provider.
+  CORS misconfiguration), found_by distinct from verified_by on each. Under the disjoint
+  model plane ten of the eleven confirm; the lightweight Verifier model does not reproduce
+  the session-fixation probe, so the harness holds that one inconclusive rather than confirm
+  it (the finder-is-not-verifier guarantee refusing an unreproduced lead). A stronger
+  Verifier is the HC-MODEL-01 bake-off.
 
 ## Run
 
