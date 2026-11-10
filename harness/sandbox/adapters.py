@@ -598,6 +598,81 @@ class CorsAdapter(_Adapter):
         }
 
 
+# A request that does NOT follow redirects, so an adapter can read a 3xx status and its
+# Location header (the baseline send follows them, which would chase the target off the
+# range). Prints "STATUS n" and "LOCATION <value>".
+_HTTP_NOFOLLOW = (
+    "import sys,urllib.request,urllib.error\n"
+    "url=sys.argv[1]\n"
+    "class NR(urllib.request.HTTPRedirectHandler):\n"
+    "    def redirect_request(self,*a,**k): return None\n"
+    "op=urllib.request.build_opener(NR)\n"
+    "try:\n"
+    "    r=op.open(url,timeout=8); code=r.status; loc=r.headers.get('Location','')\n"
+    "except urllib.error.HTTPError as e:\n"
+    "    code=e.code; loc=e.headers.get('Location','')\n"
+    "except Exception as e:\n"
+    "    print('ERR',type(e).__name__); sys.exit(0)\n"
+    "sys.stdout.write('STATUS %d\\nLOCATION %s\\n'%(code, loc or ''))\n"
+)
+
+
+def _parse_redirect(out_text):
+    """Split the no-follow request output into (status_code, location). Tolerant: (0, "")
+    on an error line or unparseable output."""
+    code, loc = 0, ""
+    for line in (out_text or "").splitlines():
+        if line.startswith("STATUS "):
+            tail = line.split(" ", 1)[1].strip()
+            code = int(tail) if tail.isdigit() else 0
+        elif line.startswith("LOCATION "):
+            loc = line[len("LOCATION "):]
+    return code, loc
+
+
+# The attacker origin an open-redirect / framing probe tries to reach. In-range and never
+# served by the target, so a redirect that honors it, or a page that frames under it,
+# proves the target did not confine the destination; the harness chose it, not the model.
+_FOREIGN_ORIGIN = "https://evil.range.local"
+
+
+class OpenRedirectAdapter(_Adapter):
+    """Open redirect against a pinned in-scope target. Registered as `redirect`.
+
+    The harness sets the redirect parameter to an attacker origin and reports an open
+    redirect only when the response is a 3xx whose Location points at that exact foreign
+    origin, which proves the destination was not confined to the same origin or an
+    allowlist. The request does not follow the redirect (a safe target would keep it on its
+    own origin, and the foreign origin is unreachable on the range anyway); the origin is
+    the harness's, so a model cannot force it, and the Verifier repeats it."""
+
+    def run(self, req):
+        ip = self._resolve(req["target"])
+        port = int(req["port"])
+        args = req.get("args") or {}
+        scheme = args.get("scheme") or ("https" if port in (443, 8443) else "http")
+        path = args.get("path", "/redirect")
+        param = args.get("param", "url")
+        qs = urllib.parse.urlencode({param: _FOREIGN_ORIGIN})
+        url = f"{scheme}://{ip}:{port}{path}?{qs}"
+        r = self._exec("python3", "-c", _HTTP_NOFOLLOW, url)
+        status_code, location = _parse_redirect(r.out or "")
+        redirected = 300 <= status_code < 400 and location.startswith(_FOREIGN_ORIGIN)
+        return {
+            "status": "ok" if redirected else "error",
+            "parsed": {"status_code": status_code, "location": location},
+            "request_bytes": f"redirect {url}".encode("utf-8"),
+            "response_bytes": f"STATUS {status_code}\nLOCATION {location}".encode("utf-8", "replace"),
+            "deterministic_signals": {
+                "hit": redirected,
+                "open_redirect": redirected,
+                "status_code": status_code,
+                "location": location,
+                "confidence": 0.95 if redirected else 0.0,
+            },
+        }
+
+
 # The range canary marker the deliberately-vulnerable target writes outside its public
 # download dir (infra/sandbox/vulnweb.py). A path-traversal response that carries this
 # exact sentinel proves the read escaped the public dir and reached a file on disk; the

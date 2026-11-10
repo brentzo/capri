@@ -17,9 +17,9 @@ from urllib.parse import parse_qs, urlparse                              # noqa:
 import base64                                                            # noqa: E402
 from harness.sandbox.adapters import (                                   # noqa: E402
     BflaAdapter, CacheAdapter, CmdiAdapter, CorsAdapter, HttpRequestAdapter, HttpxAdapter,
-    IdorAdapter, JwtAdapter, NmapAdapter, PathAdapter, SessAdapter, SqliAdapter, SsrfAdapter,
-    SstiAdapter, _RANGE_CANARY, _parse_http_full, _parse_http_response, _parse_httpx,
-    _parse_nmap_services)
+    IdorAdapter, JwtAdapter, NmapAdapter, OpenRedirectAdapter, PathAdapter, SessAdapter,
+    SqliAdapter, SsrfAdapter, SstiAdapter, _FOREIGN_ORIGIN, _RANGE_CANARY, _parse_http_full,
+    _parse_http_response, _parse_httpx, _parse_nmap_services)
 from harness.sandbox.base import RunResult                               # noqa: E402
 
 # Real `nmap -sV -Pn -p 8080 -oX -` output (captured live), trimmed to the shape we parse.
@@ -903,6 +903,52 @@ def test_ssrf_without_a_collaborator_cannot_confirm():
         {"tool": "ssrf", "target": "t1.sandbox.local", "port": 8080,
          "args": {"path": "/fetch", "param": "url"}})
     assert res["deterministic_signals"]["hit"] is False      # nothing to confirm against
+
+
+class RedirectRunner:
+    """Simulates the /redirect endpoint via the no-follow request script: when vulnerable
+    it 302s to whatever `url` it is given (so the foreign origin comes back in Location); a
+    safe server confines the destination to its own origin."""
+
+    def __init__(self, *, confine=False):
+        self.confine = confine
+        self.calls = []
+
+    def __call__(self, argv, input=None, timeout=None):
+        self.calls.append(argv)
+        url = next((a for a in argv if a.startswith("http")), "")
+        dest = (parse_qs(urlparse(url).query).get("url") or [""])[0]
+        loc = "/" if self.confine else dest                  # safe: stays on its own origin
+        return RunResult(0, f"STATUS 302\nLOCATION {loc}\n", "")
+
+
+def test_redirect_confirms_open_redirect_to_a_foreign_origin():
+    res = OpenRedirectAdapter("atk", PINNED, run=RedirectRunner()).run(
+        {"tool": "redirect", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/redirect", "param": "url"}})
+    sig = res["deterministic_signals"]
+    assert res["status"] == "ok"
+    assert sig["hit"] is True and sig["open_redirect"] is True
+    assert sig["location"] == _FOREIGN_ORIGIN
+
+
+def test_redirect_confined_to_same_origin_is_not_a_hit():
+    res = OpenRedirectAdapter("atk", PINNED, run=RedirectRunner(confine=True)).run(
+        {"tool": "redirect", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/redirect", "param": "url"}})
+    assert res["deterministic_signals"]["hit"] is False      # destination stayed on-origin
+
+
+def test_redirect_sends_the_foreign_origin_to_the_resolved_ip_without_following():
+    fake = RedirectRunner()
+    OpenRedirectAdapter("atk", PINNED, run=fake).run(
+        {"tool": "redirect", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/redirect", "param": "url"}})
+    argv = fake.calls[0]
+    url = next(a for a in argv if a.startswith("http"))
+    assert "10.90.0.3" in url and "t1.sandbox.local" not in url
+    assert "evil.range.local" in url                         # the harness-chosen foreign origin
+    assert "redirect_request" in " ".join(argv)              # the no-follow handler script
 
 
 def test_parse_http_full_splits_status_headers_and_body():

@@ -21,6 +21,8 @@ harness has real web vulnerabilities to find and independently confirm:
   - /fetch?url=  makes a server-side request to the caller's url with no allowlist, so it
                  can be pointed at an in-range host (server-side request forgery). Egress is
                  denied by the range, so the only reachable callee is the range collaborator.
+  - /redirect?url= 302-redirects to the caller's url with no same-origin or allowlist check,
+                 so it sends a victim to any attacker origin (open redirect).
 It is seeded into a target container at provision time (not baked into the golden image)
 and is never reachable off the range.
 
@@ -273,6 +275,14 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:
                     fetched = "fetch failed"
             self._respond(200, fetched, "text/plain")
+        elif parts.path == "/redirect":
+            dest = (query.get("url") or ["/"])[0]
+            # VULNERABLE BY DESIGN: redirects to the caller's url with no same-origin or
+            # allowlist check, so it sends a victim to any attacker origin (open redirect).
+            self.send_response(302)
+            self.send_header("Location", dest)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
         elif parts.path == "/greet":
             name = (query.get("name") or ["guest"])[0]
             # VULNERABLE BY DESIGN: the name is rendered through the template engine, so

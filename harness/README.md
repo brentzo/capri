@@ -410,7 +410,11 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   range: the range runs an in-range out-of-band collaborator (never in scope), the adapter
   points the target's fetch parameter at a collaborator URL carrying a random token, and it
   fires only when the collaborator was hit for that token from the target, read out of band
-  over docker exec rather than through the scope guard.
+  over docker exec rather than through the scope guard. `OpenRedirectAdapter` (`redirect`),
+  the first client-side card, sets the redirect parameter to a harness-chosen attacker
+  origin and fires only when the response is a 3xx whose Location points at that exact
+  foreign origin (a dedicated in-container opener disables redirect-following so the probe
+  reads the 3xx instead of chasing it off the range).
   The attacker container runs the toolchain image (`infra/sandbox/Dockerfile.attacker`,
   built for amd64 and arm64, httpx checksum-pinned) while targets stay the minimal node
   image, and the attacker still holds no `NET_ADMIN`, so the host-owned scope guard

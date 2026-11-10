@@ -34,6 +34,7 @@ CAPABILITIES = {
     "KB-WEB-SESS-FIX-001": ("sess", {"path": "/portal", "login_path": "/portal/login",
                                      "me_path": "/portal/me", "login_user": "1"}),
     "KB-WEB-INJ-SSRF-001": ("ssrf", {"path": "/fetch", "param": "url"}),
+    "KB-CLIENT-REDIRECT-OPEN-001": ("redirect", {"path": "/redirect", "param": "url"}),
 }
 
 
