@@ -76,6 +76,10 @@ jobs:
         run: python3 tests/test_cli.py
       - name: Durable run persistence and dashboard read API
         run: python3 tests/test_engagements_store.py
+      - name: Report renderer (HC-REPORT-01)
+        run: python3 tests/test_report_render.py
+      - name: Local run dashboard (HC-REPORT-01)
+        run: python3 tests/test_dashboard.py
       - name: Example engagement contract parses
         run: python3 -m harness.substrate.contract harness/substrate/examples/engagement.example.yaml
       - name: Business-requirement features are valid and in sync
