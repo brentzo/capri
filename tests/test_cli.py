@@ -9,19 +9,19 @@ sys.path.insert(0, str(ROOT))
 from tools import terminal
 
 
-def test_banner_renders_without_color_by_default():
+def test_original_banner_renders_without_color_by_default():
     banner = terminal.render_banner()
-    assert banner.isascii()
+    assert "██████╗ █████╗ ██████╗" in banner
     assert "\033[" not in banner
     assert banner.splitlines()[0].strip()
 
 
-def test_print_banner_keeps_plain_output_ascii():
+def test_print_banner_keeps_plain_output_uncolored():
     output = io.StringIO()
     terminal.print_banner("MODEL SETUP", "Choose two providers.", stream=output)
     assert "MODEL SETUP" in output.getvalue()
     assert "\033[" not in output.getvalue()
-    assert output.getvalue().isascii()
+    assert "██████╗ █████╗ ██████╗" in output.getvalue()
 
 
 def test_command_uses_a_windows_friendly_invocation_on_windows():
@@ -31,7 +31,8 @@ def test_command_uses_a_windows_friendly_invocation_on_windows():
 
 def test_help_shows_branded_commands_and_windows_invocation():
     result = subprocess.run([sys.executable, str(ROOT / "capri"), "help"],
-                            cwd=ROOT, capture_output=True, text=True, check=True)
+                            cwd=ROOT, capture_output=True, text=True,
+                            encoding="utf-8", check=True)
     assert "Commands" in result.stdout
     assert "gateway destroy" in result.stdout
     assert ("python .\\capri setup" if sys.platform == "win32" else "capri setup") in result.stdout

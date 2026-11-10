@@ -15,6 +15,11 @@ Python; `capri` just dispatches to the tools in this repo, so it also works as
 import os
 import sys
 
+# The original CAPRI banner uses box-drawing characters that Windows cp1252
+# cannot encode. Keep branded CLI output readable in modern UTF-8 terminals.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 # realpath, so running capri through a PATH symlink still finds the repo it lives in.
 ROOT = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, ROOT)
