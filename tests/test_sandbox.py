@@ -520,6 +520,45 @@ def test_phase_recon_marks_an_unreachable_target_and_omits_service_type():
     assert "asset.type" not in model["t1"]
 
 
+class _FakeCrawler:
+    """Stands in for the in-container black-box crawler: returns a fixed surface map."""
+
+    def __init__(self, surface):
+        self.surface = surface
+        self.calls = []
+
+    def crawl(self, target, port, **kw):
+        self.calls.append((target, port))
+        return self.surface
+
+
+def test_phase_recon_merges_crawler_discovered_endpoints_as_assets():
+    from harness.recon import phase_recon
+    pages = {"/": (200, "home")}
+    run = _recon_runner(open_ports=[("10.90.0.3", 8080)], http=[("10.90.0.3", 8080)], pages=pages)
+    crawler = _FakeCrawler({"endpoints": [
+        {"path": "/search", "method": "GET", "params": ["q"], "status": 200, "renders_html": True},
+        {"path": "/health", "method": "GET", "params": []}]})   # no param: not an injection asset
+    model = phase_recon("hc-range-attacker", _pinned_eng(), run=run, crawler=crawler)
+    assert "t1" in model                                        # host asset still produced
+    assert "t1::/search?q" in model                             # endpoint projected as its own asset
+    ep = model["t1::/search?q"]
+    assert ep["asset.type"] == "http_endpoint"
+    assert ep["asset.path"] == "/search" and ep["asset.param"] == "q"
+    assert ep["open_ports"] == [8080]                           # port the Operator probes on
+    assert ep["addr"] == "10.90.0.3"
+    assert not any(k.startswith("t1::/health") for k in model)  # a no-parameter endpoint is skipped
+    assert crawler.calls == [("10.90.0.3", 8080)]               # crawled the pinned ip:port
+
+
+def test_phase_recon_without_a_crawler_is_unchanged():
+    from harness.recon import phase_recon
+    pages = {"/": (200, "Try /item?id=...")}
+    run = _recon_runner(open_ports=[("10.90.0.3", 8080)], http=[("10.90.0.3", 8080)], pages=pages)
+    model = phase_recon("a", _pinned_eng(), run=run)            # no crawler passed
+    assert set(model) == {"t1"}                                 # only the host asset, as before
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

@@ -62,6 +62,12 @@ jobs:
         run: python3 tests/test_adapters.py
       - name: Capability registry (HC-AGENT-01, HC-KB-01)
         run: python3 tests/test_capabilities.py
+      - name: Recon-derived probe binding (HC-AGENT-01)
+        run: python3 tests/test_bind.py
+      - name: Black-box crawl adapter (HC-AGENT-01)
+        run: python3 tests/test_crawler.py
+      - name: Source-aware surface extraction (HC-AGENT-01)
+        run: python3 tests/test_sourcemap.py
       - name: Provider catalog (HC-MODEL-01)
         run: python3 tests/test_catalog.py
       - name: Model-plane gateway bring-up config (HC-MODEL-01)

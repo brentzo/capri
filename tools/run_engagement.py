@@ -41,6 +41,7 @@ from harness.sandbox.adapters import (                         # noqa: E402
     CsrfAdapter, DomClobberAdapter, HttpRequestAdapter, HttpxAdapter, IdorAdapter, JwtAdapter,
     NmapAdapter, OpenRedirectAdapter, PathAdapter, ProtoPolluteAdapter, SessAdapter, SqliAdapter,
     SsrfAdapter, SstiAdapter, WsHijackAdapter)
+from harness.sandbox.crawler import CrawlerAdapter             # noqa: E402
 from harness.sandbox.docker import DockerSandbox               # noqa: E402
 from harness.sandbox.probe import DockerProbe                  # noqa: E402
 from harness.store import blobstore, datadir, db, engagements  # noqa: E402
@@ -169,7 +170,12 @@ def main(progress=None):
             return 1
         emit("all five guarantees proved; running the engagement under sandbox enforcement")
 
-        target_model = phase_recon(sb.attacker, eng)           # live recon, not hand-built
+        if eng.source_root:                                    # the operator has the app's source
+            target_model = phase_recon(sb.attacker, eng, source_root=eng.source_root)
+            emit(f"recon: source-aware surface from {eng.source_root}")
+        else:
+            crawler = CrawlerAdapter(sb.attacker, eng.pinned)  # black-box endpoint discovery
+            target_model = phase_recon(sb.attacker, eng, crawler=crawler)   # live recon, not hand-built
         emit(f"recon: {target_model}")
         with contextlib.nullcontext(datadir.blob_root()) as root:  # persist, not a temp dir
             conn = db.connect(datadir.db_path())

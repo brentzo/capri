@@ -45,6 +45,11 @@ class Engagement:
         self.tier3_techniques = list(p.get("tier3_techniques", []))
         self.lateral_movement = p.get("lateral_movement", False) is True  # HC-OBJ-01 §8
         self.objective = raw.get("objective")   # validated objective block, or None
+        # Optional path to the target app's own source on the operator host. When present,
+        # source-aware recon reads it to enumerate the full HTTP surface (every registered
+        # route, including the auth-gated ones a crawl can't reach); absent, recon stays
+        # black-box. The operator has the source because Capri is run against its own app.
+        self.source_root = e.get("source_root") or None
         self.pinned = {}   # host -> ipaddress, set at provisioning (§4.3)
 
     def pin(self, host_to_ip):
@@ -138,6 +143,9 @@ def validate(raw, management_cidrs=None):
     mbt = eng.get("max_blast_tier")
     if mbt is not None and (not isinstance(mbt, int) or mbt not in BLAST_TIERS):
         errs.append("engagement.max_blast_tier must be an integer 0..3")
+    sr = eng.get("source_root")
+    if sr is not None and (not isinstance(sr, str) or not sr.strip()):
+        errs.append("engagement.source_root must be a non-empty path string when present")
 
     scope = raw.get("scope")
     if not isinstance(scope, dict):

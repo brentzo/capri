@@ -23,6 +23,7 @@ every lead is held `needs_validation` and the report ships nothing confirmed.
 import json
 import uuid
 
+from harness import bind
 from harness import kb as kbmod
 from harness import predicates
 from harness import report as reportmod
@@ -527,6 +528,10 @@ class Loop:
             self._mark(pair, "not_applicable")
             return None
         facts = self._effective_facts(pair.asset, card)          # own host + any permitted foothold
+        card = bind.bind_probe_args(card, facts)                 # route the probe from recon facts
+        if card is None:                                         # not routable over this asset
+            self._mark(pair, "not_applicable")                   # (e.g. a recon-routed card with
+            return None                                          # no discovered endpoint here)
         if not self._preconditions_met(card, facts):
             self._mark(pair, "not_applicable")
             return None

@@ -61,6 +61,24 @@ def test_window_start_after_end_fails():
     assert e is None and any("before end" in x for x in errs)
 
 
+def test_source_root_absent_is_none():
+    assert eng().source_root is None       # optional: a contract without it is black-box
+
+
+def test_source_root_parses_when_present():
+    text = VALID.replace("  max_blast_tier: 2",
+                         "  max_blast_tier: 2\n  source_root: /srv/app")
+    e, errs = contract.parse(text)
+    assert errs == [] and e.source_root == "/srv/app"
+
+
+def test_source_root_must_be_a_nonempty_string():
+    text = VALID.replace("  max_blast_tier: 2",
+                         '  max_blast_tier: 2\n  source_root: ""')
+    e, errs = contract.parse(text)
+    assert e is None and any("source_root" in x for x in errs)
+
+
 def test_invalid_cidr_fails():
     e, errs = contract.parse(VALID.replace("10.13.0.0/24", "10.13.0.0/99"))
     assert e is None and errs

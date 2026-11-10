@@ -51,13 +51,26 @@ def _tcp_open(run, attacker, ip, port):
     return "OPEN" in (r.out or "")
 
 
-def phase_recon(attacker, eng, *, run=None):
+def phase_recon(attacker, eng, *, run=None, crawler=None, source_root=None):
     """Probe the pinned in-scope targets and return `{asset: facts}`.
 
     For each pinned host, scan its allowed ports, record which are open, and on the
     first port that speaks HTTP mark it an http endpoint with its status and run the
     light web discovery the technique cards gate on. `reachable` is true when any
-    allowed port is open, so the threat model can gate on a live target."""
+    allowed port is open, so the threat model can gate on a live target.
+
+    The endpoint surface comes from one of two sources, both projected into the same
+    endpoint-as-asset entries (see `project_surface`) so the recon-derived injection
+    techniques route at real parameters rather than literals:
+
+    - `source_root` (preferred when given): the target app's own source is read to
+      enumerate the complete registered surface, including the auth-gated routes a crawl
+      can never reach. Capri is run against its own app, so the operator has the source.
+    - `crawler`: a black-box crawl of the running app, the corroboration layer when there
+      is no source (or to confirm what the source claims). When both are given, the source
+      is authoritative and the crawler is not run, to avoid the blind fan-out.
+
+    With neither, only the host asset and its conventional-path facts are produced."""
     run = run or default_run
     probe = DockerProbe(attacker, eng.pinned, run=run)
     http = HttpRequestAdapter(attacker, eng.pinned, run=run)
@@ -84,7 +97,121 @@ def phase_recon(attacker, eng, *, run=None):
         model[base_key] = facts
         for suffix, sub in extra.items():
             model[f"{base_key}-{suffix}"] = sub
+        if http_status:
+            if source_root is not None:
+                model.update(phase_source_recon(source_root, host=host, addr=ip,
+                                                port=http_port))
+            elif crawler is not None:
+                surface = crawler.crawl(ip, http_port)
+                model.update(project_surface(surface, host, ip, http_port))
     return model
+
+
+# A benign value a path parameter is concretized to when it stands in the probe path for
+# a *different* injection point (e.g. probing `?search=` on `/api/accounts/:id/transactions`
+# needs a value for `:id`). It is deliberately innocuous: recon never attacks the path here.
+_PATH_PARAM_DEFAULT = "1"
+# Matches a `:name` path parameter or a `*` splat segment produced by the source extractor.
+_PATH_HOLE_RE = re.compile(r":[A-Za-z_]\w*|\*")
+
+
+def _concretize(path):
+    """Replace `:param` / `*` holes in a source route with a benign default, so the path is a
+    literal one the probe adapters (which append `?param=payload` to a concrete path) can hit."""
+    return _PATH_HOLE_RE.sub(_PATH_PARAM_DEFAULT, path)
+
+
+def project_surface(surface, host, ip, port=None):
+    """Project a surface map into endpoint-as-asset target-model entries.
+
+    The map may come from a black-box crawl (the endpoints a crawler reached) or from
+    source-aware extraction (`harness.sourcemap.extract_surface`, the complete registered
+    surface including auth-gated routes a crawl can never reach). Either way this projects it
+    into the `{asset: facts}` shape the threat-model phase consumes: each (endpoint, parameter)
+    pair becomes its own asset keyed `<base>::<path>?<param>`, carrying the per-endpoint facts
+    the recon-derived injection cards route over (`asset.path`, `asset.param`, `asset.params`),
+    so the probe is aimed at a parameter recon discovered rather than one named in the registry.
+
+    Query and form parameters are directly injectable: the adapters append `?param=payload` to
+    `asset.path`, so a route's `:id`/`*` holes are concretized to a benign default first (recon
+    never attacks the path value here) and `asset.path` is always literal. A path parameter is a
+    real injection point too (IDOR / path SQLi on `:id`), but the current adapters inject only in
+    the query string, so each path parameter becomes its own asset tagged `asset.inject_in:
+    "path"` carrying the `{name}` template in `asset.path_template` and the concretized default in
+    `asset.path`, and deliberately *without* `asset.param`; a path-injection card binds it in a
+    later slice, while the existing query-injection cards' `{asset.param}` template resolves to
+    None and the binder skips them rather than probing the wrong place. An endpoint with neither
+    kind of parameter has no injection point and is skipped here; it stays visible to other phases
+    on the host asset `phase_recon` builds.
+
+    When the source extractor reports a route as auth-gated, each asset carries
+    `asset.auth_required: True`; confirming a probe against such a route needs a session, which a
+    later slice supplies, so the flag travels with the asset rather than silently dropping the
+    route from the defensive map.
+
+    `open_ports` carries the pinned port the surface was taken against, so the Operator reads the
+    same connection fact on an endpoint asset that it reads on the host asset; without it the
+    Operator cannot form a probe and the hunt stalls before dispatch."""
+    base_key = host.split(".")[0]
+    model = {}
+    for ep in surface.get("endpoints") or []:
+        path = ep.get("path")
+        if not path:
+            continue
+        method = str(ep.get("method") or "GET").upper()
+        status = ep.get("status")
+        renders_html = bool(ep.get("renders_html"))
+        auth_required = bool(ep.get("auth"))
+        path_params = [p for p in (ep.get("path_params") or []) if p]
+        concrete = _concretize(path)
+
+        def _base_facts():
+            facts = {"host": host, "addr": ip, "reachable": True,
+                     "asset.type": "http_endpoint", "http_status": status,
+                     "asset.path": concrete, "asset.method": method}
+            if port is not None:
+                facts["open_ports"] = [port]
+            if renders_html:
+                facts["asset.renders_html"] = True
+            if auth_required:
+                facts["asset.auth_required"] = True
+            return facts
+
+        for param in sorted({p for p in (ep.get("params") or []) if p}):
+            facts = _base_facts()
+            facts["asset.params"] = [param]
+            facts["asset.param"] = param
+            model[f"{base_key}::{concrete}?{param}"] = facts
+        for param in sorted(set(path_params)):
+            facts = _base_facts()
+            facts["asset.inject_in"] = "path"
+            facts["asset.path_param"] = param
+            # The target hole becomes a `{name}` template slot; the other holes concretize to
+            # the benign default, so a path-injection card fills one segment and nothing else.
+            protected = path.replace(":" + param, "\x00", 1)
+            facts["asset.path_template"] = _concretize(protected).replace("\x00", "{%s}" % param)
+            model[f"{base_key}::{path}${param}"] = facts
+    return model
+
+
+def phase_source_recon(source_root, *, host, addr, port=None):
+    """Source-aware recon: read the app's own source to enumerate its full HTTP surface.
+
+    Capri is run against an app whose source the operator has, so recon reads that source
+    rather than crawling a running app blind. `harness.sourcemap.extract_surface` detects the
+    framework and returns every registered route, method, parameter and auth flag - including
+    the auth-gated routes behind a login a crawl can never reach - and `project_surface` turns
+    that into the same endpoint-as-asset model the rest of the pipeline already consumes, so
+    the probe-routing spine is unchanged; only the source of the surface differs.
+
+    This reads files on the operator host and executes nothing: no range, no running app, no
+    model credits. It returns `{asset: facts}` for the endpoints; the live host facts (open
+    ports, server headers) still come from `phase_recon` against the provisioned target, and
+    the two models merge when a run both has the source and provisions the app."""
+    from harness.sourcemap import extract_surface
+
+    surface = extract_surface(source_root)
+    return project_surface(surface, host, addr, port)
 
 
 def _enrich_web(facts, http, ip, port):

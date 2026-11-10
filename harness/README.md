@@ -571,6 +571,45 @@ and rendering are split into a pure `route` function tested with no socket bound
 (`tests/test_dashboard.py`). The reasoning record and the per-finding evidence and reasoning
 views follow, once the loop captures the Operator and Verifier text it currently drops.
 
+## What's here (source-aware recon)
+
+Capri is run against an app whose source the operator has, so recon reads that source to
+enumerate the full HTTP surface rather than crawling a running app blind. Blind crawling is
+the wrong model: the real target gates its whole surface behind a login, so a link-crawler
+reaches almost none of it, and it then sprays every technique across every endpoint it does
+reach. Source analysis reaches all of it, including the auth-gated, admin-only and
+interaction-gated routes where the dangerous bugs live, and it reaches them precisely.
+
+- `sourcemap/` - the deterministic surface extractor. `extract_surface(source_root)` detects
+  the framework (`detect.py`) and dispatches to an adapter; the React Router file-based
+  (`flatRoutes`) adapter (`react_router.py`) ships first. Route paths and path parameters
+  decode from the filename convention purely (`api.accounts.$id.transactions.tsx` ->
+  `/api/accounts/:id/transactions`, path param `id`), and a comment-stripped scan of each
+  handler reads the exports (`loader` -> GET, `action` -> a mutation, `default` -> page vs
+  resource), the input taps (`searchParams.get`, `formData`/`formText`, a JSON body), and the
+  auth gate (a `requireSession`-style call, or membership in the `_dashboard` subtree). It
+  executes nothing, so the same source always yields the same surface and a construct it
+  cannot resolve is an explicit gap, not a guess. A new stack is a new adapter, never a change
+  to the spine.
+- `recon.py:project_surface` turns that surface into the same endpoint-as-asset entries the
+  probe-routing spine already consumes, so `bind.py` and the templated injection cards are
+  unchanged. Each query or form parameter becomes a directly injectable asset over a path
+  whose `:id`/`*` holes are concretized to a benign literal (the adapters append
+  `?param=payload` to a concrete path). Each path parameter becomes its own path-injection
+  asset carrying the `{name}` template in `asset.path_template`, and deliberately no
+  `asset.param`, so the current query-injection cards skip it rather than probe the wrong
+  place; a path-aware card binds it in a later slice. A route's auth requirement rides along
+  as `asset.auth_required` instead of dropping the route from the map.
+- `recon.py:phase_source_recon` is the static entry point (reads files, runs no range and
+  spends no credits); `phase_recon` takes an optional `source_root` and, when the contract
+  carries one, builds the surface from the source and demotes the black-box crawler
+  (`sandbox/crawler.py`) to the corroboration path it uses only when there is no source. The
+  contract's optional `source_root` (`substrate/contract.py`) is the seam. On the real
+  dashboard's source this recovers the complete route, parameter and auth inventory a crawl
+  cannot. `tests/test_sourcemap.py` covers the filename decode, the handler scan, and the
+  projection over a fixture route tree, with no network and no models; confirming a candidate
+  on an auth-gated route still needs a session and the app provisioned, a later slice.
+
 ## Run
 
 ```sh

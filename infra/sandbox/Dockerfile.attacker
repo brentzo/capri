@@ -1,31 +1,46 @@
 # Attacker image for the Docker sandbox range (HC-SUB-01, HC-AGENT-01 §5.3).
 # This is the container where the agent's tool adapters run. It carries the pentest
-# toolchain on top of the same tiny base the targets use; the tools let the agent probe
-# and exploit in-scope targets, never escape scope.
+# toolchain; the tools let the agent probe and exploit in-scope targets, never escape scope.
 #
 # It deliberately has NO NET_ADMIN (set at `docker run`) and NO nft / ip tooling, so the
 # agent cannot see or reconfigure the scope guard the helper installs into this container's
 # network namespace. The guard - default-deny egress, allowing only pinned in-scope
 # IPs:ports - is enforced in this network namespace regardless of what tools live here, so
-# nmap and friends can only reach what scope already allows.
+# nmap, chromium and the crawler can only reach what scope already allows.
+#
+# The base is Debian-slim (glibc), not Alpine (musl): the black-box crawler drives a real
+# browser through Playwright, whose browser builds are glibc, so Playwright is first-class
+# here. The harness itself never imports Playwright; it drives the crawler over `docker exec`,
+# so this dependency lives only in the attacker image, like nmap and httpx.
 #
 # Build (on the range host, not a laptop):  docker build -t hc-attacker:golden -f Dockerfile.attacker .
-# Builds on amd64 and arm64 (Apple Silicon Docker Desktop is a self-host target), so the
-# httpx binary is selected by TARGETARCH and checksum-pinned to the release.
-FROM alpine:3.20
-# chromium is the headless browser the client-side DOM adapters drive (DOM clobbering,
-# prototype pollution, a CSP-bypassing inline marker): a real browser tool in the image,
-# like nmap and httpx, run one-shot with `--dump-dom` and never a harness dependency, so
-# the harness stays standard-library only. It executes page JavaScript and serializes the
-# resulting DOM, which is what makes a DOM-only vulnerability observable.
-RUN apk add --no-cache \
-      python3 \
-      nmap nmap-scripts \
-      chromium
+# Builds on amd64 and arm64; the httpx binary is selected by TARGETARCH and checksum-pinned.
+FROM python:3.12-slim-bookworm
 
-# ProjectDiscovery httpx (web recon and fingerprinting): a CGO-free static Go binary that
-# runs on musl with no extra libraries. Pinned by version and verified against the
-# release checksum before it is installed, so a tampered download fails the build.
+# System toolchain. nmap: service/version detection. chromium: the headless browser the
+# client-side DOM adapters drive one-shot with `--dump-dom` (DOM clobbering, prototype
+# pollution, a CSP-bypassing inline marker); a real browser tool like nmap, never a harness
+# dependency. procps: provides `pkill`, which `_render_dom` uses to reap wedged chromium
+# helpers after each render - the Debian base does not bundle it the way Alpine's busybox did,
+# and without it the --dump-dom hang guard regresses. coreutils `timeout` (also used there) is
+# in the base already. wget/unzip/ca-certificates: used only to fetch and verify httpx.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      nmap \
+      chromium \
+      procps \
+      wget unzip ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Playwright drives a real browser for the black-box crawler (recon endpoint discovery). It
+# is container tooling, pinned, installed with its own chromium and that browser's OS deps.
+# The harness stays standard-library only and reaches the crawler over `docker exec`.
+ARG PLAYWRIGHT_VERSION=1.47.0
+RUN pip install --no-cache-dir "playwright==${PLAYWRIGHT_VERSION}" \
+    && playwright install --with-deps chromium
+
+# ProjectDiscovery httpx (web recon and fingerprinting): a CGO-free static Go binary. Pinned
+# by version and verified against the release checksum before it is installed, so a tampered
+# download fails the build.
 ARG TARGETARCH
 ARG HTTPX_VERSION=1.12.0
 ARG HTTPX_SHA256_amd64=9d8439e8b6c9aa7d1e2314817a392e00d5178da3af5652f7475f88868f418f76
@@ -38,12 +53,15 @@ RUN set -eux; \
       *) echo "unsupported TARGETARCH: $arch" >&2; exit 1 ;; \
     esac; \
     zip="httpx_${HTTPX_VERSION}_linux_${arch}.zip"; \
-    apk add --no-cache --virtual .httpx-build unzip wget; \
     wget -qO /tmp/httpx.zip "https://github.com/projectdiscovery/httpx/releases/download/v${HTTPX_VERSION}/${zip}"; \
     echo "${sha}  /tmp/httpx.zip" | sha256sum -c -; \
     unzip -oq /tmp/httpx.zip httpx -d /usr/local/bin; \
     chmod 0755 /usr/local/bin/httpx; \
     rm /tmp/httpx.zip; \
-    apk del .httpx-build; \
     httpx -version
+
+# The black-box crawler, driven over `docker exec` by the recon phase. It needs Playwright
+# (installed above); the harness copies nothing at runtime, so it is baked in here.
+COPY crawl.py /opt/hc/crawl.py
+
 CMD ["sleep", "infinity"]

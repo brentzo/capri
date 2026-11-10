@@ -20,16 +20,22 @@ configured; a later slice derives them from recon instead of naming them here.
 # adapter proves the technique the card actually describes; the timing-oracle SQLi variant
 # (KB-WEB-INJ-SQLI-002), for instance, is not mapped to the boolean `sqli` adapter.
 CAPABILITIES = {
-    "KB-WEB-INJ-SQLI-001": ("sqli", {"path": "/item", "sqli_param": "id"}),
+    # The injection techniques are routed from recon: their path and parameter are templates
+    # (`{asset.path}`, `{asset.param}`) that `harness.bind.bind_probe_args` resolves against
+    # the endpoint-as-asset facts the crawler discovers, so the probe aims at a real endpoint
+    # on an arbitrary app rather than a literal baked in here. The remaining cards still carry
+    # literal args pending their own recon-derived slice.
+    "KB-WEB-INJ-SQLI-001": ("sqli", {"path": "{asset.path}", "sqli_param": "{asset.param}"}),
     "KB-WEB-AUTH-IDOR-001": ("idor", {"path": "/account", "id_param": "id",
                                       "login_path": "/login", "own_id": "1"}),
     "KB-WEB-AUTH-BFLA-001": ("bfla", {"path": "/admin", "login_path": "/login",
                                       "login_user": "1"}),
     "KB-WEB-AUTH-JWT-001": ("jwt", {"path": "/account", "params": {"id": "1"}}),
-    "KB-WEB-INJ-SSTI-001": ("ssti", {"path": "/greet", "param": "name"}),
+    "KB-WEB-INJ-SSTI-001": ("ssti", {"path": "{asset.path}", "param": "{asset.param}"}),
     "KB-WEB-PROTO-CORS-001": ("cors", {"path": "/api/data"}),
-    "KB-WEB-INJ-PATH-001": ("path", {"path": "/download", "param": "file"}),
-    "KB-WEB-INJ-CMDI-001": ("cmdi", {"path": "/ping", "param": "host", "delay_s": 5}),
+    "KB-WEB-INJ-PATH-001": ("path", {"path": "{asset.path}", "param": "{asset.param}"}),
+    "KB-WEB-INJ-CMDI-001": ("cmdi", {"path": "{asset.path}", "param": "{asset.param}",
+                                     "delay_s": 5}),
     "KB-WEB-CACHE-POISON-001": ("cache", {"path": "/promo"}),
     "KB-WEB-SESS-FIX-001": ("sess", {"path": "/portal", "login_path": "/portal/login",
                                      "me_path": "/portal/me", "login_user": "1"}),
