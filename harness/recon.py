@@ -98,7 +98,10 @@ def _enrich_web(facts, http, ip, port):
     def fetch_full(path):
         return http._send_http_full(f"http://{ip}:{port}{path}")  # (status, headers, body)
 
-    _, home = fetch("/")
+    _, home_headers, home = fetch_full("/")
+    ctype = {k.lower(): v for k, v in (home_headers or {}).items()}.get("content-type", "")
+    if "text/html" in ctype.lower():
+        facts["asset.renders_html"] = True                 # the DOM-based client cards gate on this
     params = sorted(set(_PARAM_RE.findall(home or "")))
     if params:
         facts["asset.params"] = params

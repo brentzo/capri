@@ -39,6 +39,7 @@ CAPABILITIES = {
     "KB-CLIENT-CSRF-001": ("csrf", {"path": "/portal", "login_path": "/portal/login",
                                     "action_path": "/portal/email", "action_param": "to"}),
     "KB-CLIENT-WS-HIJACK-001": ("wshijack", {"path": "/portal", "login_path": "/portal/login"}),
+    "KB-CLIENT-CSP-WEAK-001": ("cspexec", {"path": "/widget", "param": "html"}),
 }
 
 

@@ -64,6 +64,18 @@ class _Adapter:
         r = self._exec(*argv)
         return _parse_http_full(r.out or "")
 
+    def _render_dom(self, url):
+        """Load a URL in headless chromium, run its JavaScript, and return the serialized
+        DOM. The client-side DOM adapters read a harness marker out of this rendered DOM,
+        so a vulnerability that only manifests after script execution is observable. A fresh
+        per-call profile avoids a stale singleton lock, and a virtual-time budget bounds the
+        render so a page's timers cannot hang the probe."""
+        profile = "/tmp/cr-" + secrets.token_hex(6)
+        r = self._exec("chromium", "--headless", "--no-sandbox", "--disable-gpu",
+                       "--disable-dev-shm-usage", f"--user-data-dir={profile}",
+                       "--virtual-time-budget=5000", "--dump-dom", url)
+        return r.out or ""
+
 
 class NmapAdapter(_Adapter):
     """Service and version detection with `nmap -sV`. Registered as the `nmap` tool.
@@ -673,6 +685,46 @@ class ClickjackAdapter(_Adapter):
                 "csp_frame_ancestors": frame_ancestors,
                 "status_code": status_code,
                 "confidence": 0.9 if framable else 0.0,
+            },
+        }
+
+
+class CspAdapter(_Adapter):
+    """Missing or bypassable Content-Security-Policy, proven by inline execution. Registered
+    as `cspexec`.
+
+    The harness injects an inline script that writes a computed marker into the page title,
+    renders the page in a real headless browser, and reports the flaw only when that marker
+    appears in the resulting DOM, which proves the inline script executed and the page's CSP
+    did not block it. The marker is computed in the browser (a token concatenated with an
+    arithmetic result), so the reflected script source alone never contains the contiguous
+    marker, only an execution does; a restrictive CSP blocks the script and the marker never
+    appears, and the Verifier reruns with its own token."""
+
+    def run(self, req):
+        ip = self._resolve(req["target"])
+        port = int(req["port"])
+        args = req.get("args") or {}
+        scheme = args.get("scheme") or ("https" if port in (443, 8443) else "http")
+        path = args.get("path", "/widget")
+        param = args.get("param", "html")
+        token = secrets.token_hex(4)
+        expected = token + "42"
+        payload = "<script>document.title=%r+String(21*2)</script>" % token
+        qs = urllib.parse.urlencode({param: payload})
+        url = f"{scheme}://{ip}:{port}{path}?{qs}"
+        dom = self._render_dom(url)
+        executed = expected in dom
+        return {
+            "status": "ok" if executed else "error",
+            "parsed": {"executed": executed, "dom_len": len(dom)},
+            "request_bytes": f"cspexec {url}".encode("utf-8"),
+            "response_bytes": dom.encode("utf-8", "replace")[:4096],
+            "deterministic_signals": {
+                "hit": executed,
+                "csp_bypass": executed,
+                "client_exec": executed,
+                "confidence": 0.95 if executed else 0.0,
             },
         }
 

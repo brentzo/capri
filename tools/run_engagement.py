@@ -37,9 +37,10 @@ from harness.planner import DeterministicPlanner               # noqa: E402
 from harness.recon import phase_recon                          # noqa: E402
 from harness.roles import ModelOperator, ModelVerifier         # noqa: E402
 from harness.sandbox.adapters import (                         # noqa: E402
-    BflaAdapter, CacheAdapter, ClickjackAdapter, CmdiAdapter, CorsAdapter, CsrfAdapter,
-    HttpRequestAdapter, HttpxAdapter, IdorAdapter, JwtAdapter, NmapAdapter, OpenRedirectAdapter,
-    PathAdapter, SessAdapter, SqliAdapter, SsrfAdapter, SstiAdapter, WsHijackAdapter)
+    BflaAdapter, CacheAdapter, ClickjackAdapter, CmdiAdapter, CorsAdapter, CspAdapter,
+    CsrfAdapter, HttpRequestAdapter, HttpxAdapter, IdorAdapter, JwtAdapter, NmapAdapter,
+    OpenRedirectAdapter, PathAdapter, SessAdapter, SqliAdapter, SsrfAdapter, SstiAdapter,
+    WsHijackAdapter)
 from harness.sandbox.docker import DockerSandbox               # noqa: E402
 from harness.sandbox.probe import DockerProbe                  # noqa: E402
 from harness.store import blobstore, db                        # noqa: E402
@@ -193,7 +194,8 @@ def main():
                         "redirect": OpenRedirectAdapter(sb.attacker, eng.pinned),
                         "clickjack": ClickjackAdapter(sb.attacker, eng.pinned),
                         "csrf": CsrfAdapter(sb.attacker, eng.pinned),
-                        "wshijack": WsHijackAdapter(sb.attacker, eng.pinned)}
+                        "wshijack": WsHijackAdapter(sb.attacker, eng.pinned),
+                        "cspexec": CspAdapter(sb.attacker, eng.pinned)}
             disp = Dispatcher(conn, blobstore.BlobStore(root), eng, adapters,
                               ratelimit.RateLimiter(1000, now=lambda: 0.0))
             res = Loop(conn, eng, kb_index=KB, dispatcher=disp, sandbox=sb,

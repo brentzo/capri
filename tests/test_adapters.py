@@ -15,12 +15,13 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from urllib.parse import parse_qs, urlparse                              # noqa: E402
 import base64                                                            # noqa: E402
+import re                                                                # noqa: E402
 from harness.sandbox.adapters import (                                   # noqa: E402
     BflaAdapter, CacheAdapter, ClickjackAdapter, CmdiAdapter, CorsAdapter, CsrfAdapter,
     HttpRequestAdapter, HttpxAdapter, IdorAdapter, JwtAdapter, NmapAdapter, OpenRedirectAdapter,
-    PathAdapter, SessAdapter, SqliAdapter, SsrfAdapter, SstiAdapter, WsHijackAdapter,
-    _FOREIGN_ORIGIN, _RANGE_CANARY, _parse_http_full, _parse_http_response, _parse_httpx,
-    _parse_nmap_services)
+    CspAdapter, PathAdapter, SessAdapter, SqliAdapter, SsrfAdapter, SstiAdapter,
+    WsHijackAdapter, _FOREIGN_ORIGIN, _RANGE_CANARY, _parse_http_full, _parse_http_response,
+    _parse_httpx, _parse_nmap_services)
 from harness.sandbox.base import RunResult                               # noqa: E402
 
 # Real `nmap -sV -Pn -p 8080 -oX -` output (captured live), trimmed to the shape we parse.
@@ -1115,6 +1116,56 @@ def test_wshijack_opens_the_handshake_with_the_foreign_origin_and_session_cookie
     assert ws[-4] == "10.90.0.3"                             # resolved target ip
     assert ws[-2] == _FOREIGN_ORIGIN                         # the harness-chosen foreign origin
     assert ws[-1].startswith("sid=")                         # the victim's session cookie
+
+
+class CspRunner:
+    """Simulates headless chromium rendering the /widget page. Vulnerable: the injected
+    inline script runs, so document.title becomes the computed marker and appears in the
+    serialized DOM. Safe (`csp_blocks`): a restrictive CSP blocks the inline script, so the
+    title marker never appears, only the reflected (un-executed) script source."""
+
+    def __init__(self, *, csp_blocks=False):
+        self.csp_blocks = csp_blocks
+        self.calls = []
+
+    def __call__(self, argv, input=None, timeout=None):
+        self.calls.append(argv)
+        url = next((a for a in argv if a.startswith("http")), "")
+        html = (parse_qs(urlparse(url).query).get("html") or [""])[0]
+        title = ""
+        if not self.csp_blocks:
+            m = re.search(r"document\.title='([0-9a-f]+)'", html)   # execute title=token+42
+            if m:
+                title = m.group(1) + "42"
+        dom = f"<html><head><title>{title}</title></head><body><div id=out></div>{html}</body></html>"
+        return RunResult(0, dom, "")
+
+
+def test_cspexec_confirms_inline_execution_with_a_weak_csp():
+    res = CspAdapter("atk", PINNED, run=CspRunner()).run(
+        {"tool": "cspexec", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/widget", "param": "html"}})
+    sig = res["deterministic_signals"]
+    assert res["status"] == "ok"
+    assert sig["hit"] is True and sig["csp_bypass"] is True and sig["client_exec"] is True
+
+
+def test_cspexec_restrictive_csp_blocks_execution_is_not_a_hit():
+    res = CspAdapter("atk", PINNED, run=CspRunner(csp_blocks=True)).run(
+        {"tool": "cspexec", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/widget", "param": "html"}})
+    assert res["deterministic_signals"]["hit"] is False      # inline script blocked by CSP
+
+
+def test_cspexec_renders_in_a_headless_browser_against_the_resolved_ip():
+    fake = CspRunner()
+    CspAdapter("atk", PINNED, run=fake).run(
+        {"tool": "cspexec", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/widget", "param": "html"}})
+    argv = fake.calls[0]
+    assert "chromium" in argv and "--dump-dom" in argv       # a real browser rendered it
+    url = next(a for a in argv if a.startswith("http"))
+    assert "10.90.0.3" in url and "t1.sandbox.local" not in url
 
 
 def test_parse_http_full_splits_status_headers_and_body():

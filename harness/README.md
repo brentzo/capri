@@ -425,9 +425,14 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   a foreign Origin carrying the session cookie and fires only when the handshake is accepted
   and the socket returns the session's own data, proving the server did not validate the
   handshake Origin (recon marks `asset.has_websocket` from a 426 on a conventional ws path).
-  Those four are the browserless client-side cards; the other six (CSP execution, DOM
-  clobbering, DOM-based XSS, postMessage, prototype pollution, web-storage token) need a
-  headless-browser tool in the attacker image, which does not exist yet.
+  Those four are the browserless client-side cards. The DOM-only ones need a real browser,
+  so the attacker image now carries chromium (a tool, run one-shot with `--dump-dom`, not a
+  harness dependency) and a shared `_render_dom` loads a URL headless, runs its JS, and
+  returns the serialized DOM. `CspAdapter` (`cspexec`) injects an inline script that writes a
+  computed marker into the title and fires only when that marker appears in the rendered DOM,
+  proving the inline script executed (a restrictive CSP blocks it). DOM clobbering and
+  prototype pollution follow on the same driver; web-storage token (needs JS evaluation),
+  postMessage (needs a second origin), and DOM-based XSS (needs Laya) stay out of reach.
   The attacker container runs the toolchain image (`infra/sandbox/Dockerfile.attacker`,
   built for amd64 and arm64, httpx checksum-pinned) while targets stay the minimal node
   image, and the attacker still holds no `NET_ADMIN`, so the host-owned scope guard

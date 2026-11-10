@@ -13,9 +13,15 @@
 # Builds on amd64 and arm64 (Apple Silicon Docker Desktop is a self-host target), so the
 # httpx binary is selected by TARGETARCH and checksum-pinned to the release.
 FROM alpine:3.20
+# chromium is the headless browser the client-side DOM adapters drive (DOM clobbering,
+# prototype pollution, a CSP-bypassing inline marker): a real browser tool in the image,
+# like nmap and httpx, run one-shot with `--dump-dom` and never a harness dependency, so
+# the harness stays standard-library only. It executes page JavaScript and serializes the
+# resulting DOM, which is what makes a DOM-only vulnerability observable.
 RUN apk add --no-cache \
       python3 \
-      nmap nmap-scripts
+      nmap nmap-scripts \
+      chromium
 
 # ProjectDiscovery httpx (web recon and fingerprinting): a CGO-free static Go binary that
 # runs on musl with no extra libraries. Pinned by version and verified against the
