@@ -8,6 +8,7 @@ library only.
 """
 import json
 
+from harness.store import reasoning as _reasoning
 from harness.store.audit import verify_chain
 
 
@@ -62,6 +63,12 @@ def audit(conn, engagement_id):
     return {"rows": [dict(r) for r in rows],
             "chain_ok": status == "ok",
             "broken_seq": broken_seq}
+
+
+def reasoning(conn, engagement_id):
+    """The role-turn reasoning records for a run, in loop order (HC-REPORT-01 §3), for
+    the dashboard. The write side lives in `harness.store.reasoning`; this is read-only."""
+    return _reasoning.for_run(conn, engagement_id)
 
 
 def _summary(row):

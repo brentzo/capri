@@ -30,7 +30,7 @@ from harness import report as reportmod
 from harness import roleio
 from harness.blackboard import CONFIRMED, PROVISIONAL, Blackboard
 from harness.dispatch import ProbeContext
-from harness.store import audit, evidence, findings, ledger
+from harness.store import audit, evidence, findings, ledger, reasoning
 
 GOLDEN = "golden"
 
@@ -550,7 +550,7 @@ class Loop:
         outcome = "attempted"
         lead_fid = None
         try:
-            for _ in range(self.budget):
+            for step in range(self.budget):
                 raw = self.operator.propose_next(session, card,
                                                  roleio.role_context(observations))
                 if raw is None:                                  # role gives up
@@ -559,17 +559,21 @@ class Loop:
                 if turn.rejection is not None:                   # unparseable turn (§5.1)
                     invalid += 1
                     observations.append(turn.rejection.as_observation())  # re-prompt (§9)
+                    self._record_turn("operator", session, pair, step, raw, turn, None)
                     if invalid >= self.max_invalid:
                         outcome = "inconclusive"
                         break
                     continue
                 if not self._sandbox_proven():
                     outcome = "inconclusive"
+                    self._record_turn("operator", session, pair, step, raw, turn, None)
                     break
                 obs = self.dispatcher.dispatch(
                     turn.request, self._ctx(pair, tier, "operator", "hunting",
                                             snap or GOLDEN, snap is not None))
                 observations.append(obs)
+                self._record_turn("operator", session, pair, step, raw, turn,
+                                  obs.get("probe_event_id"))
                 if obs.get("disposition") == "deny":             # a denial is data (§5.2)
                     denied += 1
                     if denied >= self.max_denied:
@@ -634,7 +638,7 @@ class Loop:
         observations, pe_ids = [], []
         denied = invalid = 0
         reproduced = False
-        for _ in range(self.budget):
+        for step in range(self.budget):
             raw = self.verifier.propose_next(session, vinput,
                                              roleio.role_context(observations))
             if raw is None:
@@ -643,10 +647,12 @@ class Loop:
             if turn.rejection is not None:                       # unparseable turn (§5.1)
                 invalid += 1
                 observations.append(turn.rejection.as_observation())  # re-prompt (§9)
+                self._record_turn("verifier", session, pair, step, raw, turn, None)
                 if invalid >= self.max_invalid:
                     break                                        # falls through to inconclusive
                 continue
             if not self._sandbox_proven():
+                self._record_turn("verifier", session, pair, step, raw, turn, None)
                 findings.transition(
                     self.conn, fid, "needs_validation", by="harness",
                     reason="passive-only: sandbox containment was not proven")
@@ -654,6 +660,8 @@ class Loop:
             obs = self.dispatcher.dispatch(
                 turn.request, self._ctx(pair, tier, "verifier", "verification", fresh, True))
             observations.append(obs)
+            self._record_turn("verifier", session, pair, step, raw, turn,
+                              obs.get("probe_event_id"))
             if obs.get("disposition") == "deny":
                 denied += 1
                 if denied >= self.max_denied:
@@ -706,3 +714,14 @@ class Loop:
 
     def _mark(self, pair, status, detail=None):
         ledger.mark(self.conn, self.eng.id, pair.asset, pair.technique_id, status, detail=detail)
+
+    def _record_turn(self, role, session, pair, step, raw, turn, probe_event_id):
+        """Persist one role proposal for the reasoning view (HC-REPORT-01 §3). Write-only:
+        the text is captured for later display and is never read back into any role, which
+        leaves the finder-is-not-verifier boundary untouched."""
+        reasoning.record(
+            self.conn, engagement_id=self.eng.id, role=role, session_id=session.id,
+            asset=pair.asset, technique_id=pair.technique_id, step=step, raw=raw,
+            parsed=turn.request,
+            rejection=turn.rejection.reason if turn.rejection is not None else None,
+            probe_event_id=probe_event_id)

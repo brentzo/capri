@@ -4,8 +4,9 @@
 The dashboard's routing and rendering are a pure function of the persisted store, split from
 the socket I/O, so these drive `route` directly against a real on-disk SQLite file in a temp
 dir (no server bound, no network): the index lists runs, a run page renders its report with
-back-navigation, the audit page shows the rows and the hash-chain status, and unknown runs or
-paths are 404. Read-only throughout.
+back-navigation, the reasoning page shows each role's verbatim proposal as escaped text, the
+audit page shows the rows and the hash-chain status, and unknown runs or paths are 404.
+Read-only throughout.
 
 Zero-dependency: `python3 tests/test_dashboard.py`.
 """
@@ -17,7 +18,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from cli import dashboard  # noqa: E402
-from harness.store import audit, db, engagements  # noqa: E402
+from harness.store import audit, db, engagements, reasoning  # noqa: E402
 
 
 def _report(eid, mode="sandboxed"):
@@ -44,6 +45,16 @@ def _seed(path):
     engagements.save(c, _report("eng-new"), started_at="2026-11-10T20:00:00+00:00")
     audit.record(c, "eng-new", "harness", "sandbox_proof", decision="ok")
     audit.record(c, "eng-new", "dispatcher", "probe", decision="allow", reason="in scope")
+    reasoning.record(c, engagement_id="eng-new", role="operator", session_id="vk-op-a",
+                     asset="t1", technique_id="KB-WEB-INJ-SQLI-001", step=0,
+                     raw="I'll test the login form with <script>alert('x')</script>.",
+                     parsed={"tool": "sqli", "intent": "probe", "target": "t1",
+                             "port": 80, "args": {}}, probe_event_id="pe_001")
+    reasoning.record(c, engagement_id="eng-new", role="verifier", session_id="vk-vf-b",
+                     asset="t1", technique_id="KB-WEB-INJ-SQLI-001", step=0,
+                     raw="Reproduced the tautology on a fresh snapshot.",
+                     parsed={"tool": "sqli", "intent": "verify", "target": "t1",
+                             "port": 80, "args": {}}, probe_event_id="pe_002")
     return c
 
 
@@ -64,7 +75,28 @@ def test_run_page_renders_the_report_with_back_nav():
         assert status == 200
         assert "KB-WEB-INJ-SQLI-001" in body and "reads rows" in body
         assert 'href="/"' in body and 'href="/run/eng-new/audit"' in body
+        assert 'href="/run/eng-new/reasoning"' in body          # links to the reasoning view
         assert body.strip().startswith("<!doctype html>")
+
+
+def test_reasoning_page_shows_both_roles_as_escaped_text():
+    with tempfile.TemporaryDirectory() as d:
+        c = _seed(os.path.join(d, "e.db"))
+        status, body = dashboard.route(c, "/run/eng-new/reasoning")
+        assert status == 200
+        assert "operator" in body and "verifier" in body         # both sessions shown, distinct
+        assert "vk-op-a" in body and "vk-vf-b" in body
+        assert "Reproduced the tautology" in body                # the verbatim proposal text
+        # model-authored markup is inert: escaped on the page, never a live tag
+        assert "&lt;script&gt;" in body and "<script>alert" not in body
+
+
+def test_reasoning_page_for_a_run_without_turns_is_friendly():
+    with tempfile.TemporaryDirectory() as d:
+        c = db.connect(os.path.join(d, "e.db"))
+        engagements.save(c, _report("eng-x"))
+        status, body = dashboard.route(c, "/run/eng-x/reasoning")
+        assert status == 200 and "No role turns" in body
 
 
 def test_audit_page_shows_rows_and_chain_intact():

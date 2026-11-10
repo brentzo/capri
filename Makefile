@@ -48,6 +48,7 @@ test:
 	python3 tests/test_modelplane_setup.py
 	python3 tests/test_cli.py
 	python3 tests/test_engagements_store.py
+	python3 tests/test_reasoning_store.py
 	python3 tests/test_report_render.py
 	python3 tests/test_dashboard.py
 

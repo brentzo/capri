@@ -119,6 +119,30 @@ CREATE TRIGGER IF NOT EXISTS label_no_update
 CREATE TRIGGER IF NOT EXISTS label_no_delete
   BEFORE DELETE ON label BEGIN SELECT RAISE(ABORT, 'label is append-only'); END;
 
+-- raw role proposals, captured write-only for the reasoning view (HC-REPORT-01 §3).
+-- This is the model's own narrative: untrusted, display-only text. It is never read
+-- back into a role, never crosses finder -> verifier, and the dashboard HTML-escapes
+-- every field on render. Append-only, like the evidence it sits beside.
+CREATE TABLE IF NOT EXISTS role_turn (
+  seq            INTEGER PRIMARY KEY AUTOINCREMENT,
+  engagement_id  TEXT NOT NULL,
+  role           TEXT NOT NULL CHECK (role IN ('operator','verifier')),
+  session_id     TEXT,
+  asset          TEXT,
+  technique_id   TEXT,
+  step           INTEGER NOT NULL,          -- 0-based turn index within the hunt/verify loop
+  raw            TEXT,                       -- the role's verbatim proposal (display-only)
+  parsed         TEXT,                       -- JSON {tool,intent,target,port,args} or NULL
+  rejection      TEXT,                       -- rejection reason code when unparseable, else NULL
+  probe_event_id TEXT,                       -- the dispatched probe this turn produced, when any
+  at             TEXT NOT NULL               -- ISO-8601 UTC
+);
+CREATE INDEX IF NOT EXISTS ix_role_turn_engagement ON role_turn (engagement_id);
+CREATE TRIGGER IF NOT EXISTS role_turn_no_update
+  BEFORE UPDATE ON role_turn BEGIN SELECT RAISE(ABORT, 'role_turn is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS role_turn_no_delete
+  BEFORE DELETE ON role_turn BEGIN SELECT RAISE(ABORT, 'role_turn is append-only'); END;
+
 -- coverage ledger drives the loop and the report coverage summary (HC-DATA-01 §4.4)
 CREATE TABLE IF NOT EXISTS coverage_ledger (
   engagement_id TEXT NOT NULL,

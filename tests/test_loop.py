@@ -27,7 +27,7 @@ from harness import loop, ratelimit, roleio                    # noqa: E402
 from harness.dispatch import Dispatcher                        # noqa: E402
 from harness.loop import Loop, Pair                            # noqa: E402
 from harness.planner import DeterministicPlanner               # noqa: E402
-from harness.store import blobstore, db, findings              # noqa: E402
+from harness.store import blobstore, db, findings, reasoning   # noqa: E402
 from harness.substrate import contract                         # noqa: E402
 
 CONTRACT = """
@@ -298,6 +298,25 @@ def test_confirmed_run_ships_valid_report():
         assert conf[0]["found_by"] == "op-strong" and conf[0]["verified_by"] == "ver-disjoint"
         assert len(res.report["findings"]) == 1
         assert _ledger_status(conn, eng, "web", "KB-TEST-SQLI-001") == "confirmed"
+
+
+def test_confirmed_run_captures_the_reasoning_of_both_roles():
+    with tempfile.TemporaryDirectory() as root:
+        conn, eng, disp, sandbox = _build(root, hits=[("10.10.0.5", "KB-TEST-SQLI-001")])
+        lp = Loop(conn, eng, kb_index=KB, dispatcher=disp, sandbox=sandbox,
+                  planner=Planner([Pair("web", "KB-TEST-SQLI-001", "1.0.0")]),
+                  operator=Operator("op-strong", TM),
+                  verifier=Verifier("ver-disjoint", conn))
+        lp.run(TM)
+        turns = reasoning.for_run(conn, eng.id)
+        roles = {t["role"] for t in turns}
+        assert roles == {"operator", "verifier"}, roles        # both sessions recorded
+        op = next(t for t in turns if t["role"] == "operator")
+        vf = next(t for t in turns if t["role"] == "verifier")
+        assert op["session_id"] == "op-strong" and vf["session_id"] == "ver-disjoint"
+        assert op["session_id"] != vf["session_id"]            # finder != verifier in the record too
+        # a dispatched turn links its probe; the raw proposal is kept verbatim
+        assert any(t["probe_event_id"] and t["raw"] for t in turns)
 
 
 def test_finder_is_not_verifier_refused_at_the_loop():

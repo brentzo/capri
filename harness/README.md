@@ -568,8 +568,21 @@ the dashboard serves per run and what a static export would carry.
 runs under `~/.capri/`, serves each run's rendered report, and shows its audit timeline with
 the hash-chain verification result so tampering is visible rather than assumed. The routing
 and rendering are split into a pure `route` function tested with no socket bound
-(`tests/test_dashboard.py`). The reasoning record and the per-finding evidence and reasoning
-views follow, once the loop captures the Operator and Verifier text it currently drops.
+(`tests/test_dashboard.py`).
+
+The reasoning record captures what the agent actually proposed. The control loop used to take
+each Operator and Verifier turn's raw text, parse it into an action, and drop the text; it now
+persists that text first, as a `role_turn` row written through `harness/store/reasoning.py`,
+so an operator can read step by step what the agent said and why it acted. The capture covers
+every proposal, whether it dispatched a probe, was denied, or was unparseable, and links the
+probe it produced. The record is write-only from the loop and read-only from the dashboard,
+which keeps the finder-is-not-verifier guarantee intact: capturing the Operator's words for
+later display never places them in front of the Verifier. It is untrusted, display-only data,
+rendered escaped at `GET /run/{id}/reasoning` with the two roles shown as the distinct sessions
+they are, never merged into one voice. The `role_turn` table is append-only, so a captured turn
+is never rewritten. `tests/test_reasoning_store.py` proves the roundtrip and immutability,
+`tests/test_loop.py` proves a confirmed run records both roles, and `tests/test_dashboard.py`
+proves model-authored markup renders inert. The per-finding raw-evidence view follows.
 
 ## What's here (source-aware recon)
 
