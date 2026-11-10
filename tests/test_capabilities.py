@@ -12,7 +12,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from harness import capabilities, kb                                      # noqa: E402
 
-_ADAPTERS = {"probe", "nmap", "httpx", "http", "sqli", "idor", "bfla", "jwt", "ssti", "cors"}
+_ADAPTERS = {"probe", "nmap", "httpx", "http", "sqli", "idor", "bfla", "jwt", "ssti",
+             "cors", "path", "cmdi", "cache", "sess", "ssrf"}
 _KB = kb.load()
 _ID_TO_VER = {cid: ver for (cid, ver) in _KB}
 

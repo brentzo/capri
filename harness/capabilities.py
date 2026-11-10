@@ -28,6 +28,12 @@ CAPABILITIES = {
     "KB-WEB-AUTH-JWT-001": ("jwt", {"path": "/account", "params": {"id": "1"}}),
     "KB-WEB-INJ-SSTI-001": ("ssti", {"path": "/greet", "param": "name"}),
     "KB-WEB-PROTO-CORS-001": ("cors", {"path": "/api/data"}),
+    "KB-WEB-INJ-PATH-001": ("path", {"path": "/download", "param": "file"}),
+    "KB-WEB-INJ-CMDI-001": ("cmdi", {"path": "/ping", "param": "host", "delay_s": 5}),
+    "KB-WEB-CACHE-POISON-001": ("cache", {"path": "/promo"}),
+    "KB-WEB-SESS-FIX-001": ("sess", {"path": "/portal", "login_path": "/portal/login",
+                                     "me_path": "/portal/me", "login_user": "1"}),
+    "KB-WEB-INJ-SSRF-001": ("ssrf", {"path": "/fetch", "param": "url"}),
 }
 
 

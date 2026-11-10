@@ -16,9 +16,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from urllib.parse import parse_qs, urlparse                              # noqa: E402
 import base64                                                            # noqa: E402
 from harness.sandbox.adapters import (                                   # noqa: E402
-    BflaAdapter, CorsAdapter, HttpRequestAdapter, HttpxAdapter, IdorAdapter,
-    JwtAdapter, NmapAdapter, SqliAdapter, SstiAdapter,
-    _parse_http_full, _parse_http_response, _parse_httpx, _parse_nmap_services)
+    BflaAdapter, CacheAdapter, CmdiAdapter, CorsAdapter, HttpRequestAdapter, HttpxAdapter,
+    IdorAdapter, JwtAdapter, NmapAdapter, PathAdapter, SessAdapter, SqliAdapter, SsrfAdapter,
+    SstiAdapter, _RANGE_CANARY, _parse_http_full, _parse_http_response, _parse_httpx,
+    _parse_nmap_services)
 from harness.sandbox.base import RunResult                               # noqa: E402
 
 # Real `nmap -sV -Pn -p 8080 -oX -` output (captured live), trimmed to the shape we parse.
@@ -610,6 +611,298 @@ def test_cors_strict_origin_is_not_a_hit():
     res = CorsAdapter("atk", PINNED, run=CorsRunner(reflect=False)).run(
         {"tool": "cors", "target": "t1.sandbox.local", "port": 8080, "args": {"path": "/api/data"}})
     assert res["deterministic_signals"]["hit"] is False
+
+
+class TraversalRunner:
+    """Simulates the vulnerable /download endpoint: it joins the `file` parameter to a
+    public dir with no containment check, so a `../` payload reads the canary file and its
+    marker comes back. A safe server (`contained`) refuses to leave the dir, so the marker
+    never appears."""
+
+    def __init__(self, *, contained=False):
+        self.contained = contained
+        self.calls = []
+
+    def __call__(self, argv, input=None, timeout=None):
+        self.calls.append(argv)
+        url = next((a for a in argv if a.startswith("http")), "")
+        fname = (parse_qs(urlparse(url).query).get("file") or [""])[0]
+        if ".." in fname and not self.contained:
+            return RunResult(0, f"STATUS 200\n---BODY---\n{_RANGE_CANARY}\n", "")
+        if ".." in fname:                                    # contained: traversal refused
+            return RunResult(0, "STATUS 404\n---BODY---\nnot found", "")
+        return RunResult(0, "STATUS 200\n---BODY---\nhc-shop public downloads", "")
+
+
+def test_path_confirms_traversal_when_the_canary_marker_is_read():
+    res = PathAdapter("atk", PINNED, run=TraversalRunner()).run(
+        {"tool": "path", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/download", "param": "file"}})
+    sig = res["deterministic_signals"]
+    assert res["status"] == "ok"
+    assert sig["hit"] is True and sig["path_traversal"] is True and sig["file_read"] is True
+
+
+def test_path_contained_download_is_not_a_hit():
+    res = PathAdapter("atk", PINNED, run=TraversalRunner(contained=True)).run(
+        {"tool": "path", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/download", "param": "file"}})
+    assert res["deterministic_signals"]["hit"] is False      # the app stays inside its dir
+
+
+def test_path_walks_out_of_the_public_dir_against_the_resolved_ip():
+    fake = TraversalRunner()
+    PathAdapter("atk", PINNED, run=fake).run(
+        {"tool": "path", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/download", "param": "file"}})
+    url = next(a for a in fake.calls[0] if a.startswith("http"))
+    assert url.startswith("http://10.90.0.3:8080/download?")  # resolved IP + endpoint
+    assert "t1.sandbox.local" not in url
+    assert "..%2F" in url or "../" in url                     # a traversal payload
+
+
+class CmdiRunner:
+    """Simulates the /ping endpoint: it always answers 200. The timing that distinguishes
+    an injectable from a safe server is modelled by the injected clock, not the runner, so
+    the adapter's own delta computation is what the test exercises."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, argv, input=None, timeout=None):
+        self.calls.append(argv)
+        return RunResult(0, "STATUS 200\n---BODY---\npinging 127.0.0.1", "")
+
+
+def _clock(*ticks):
+    return iter(ticks).__next__                               # one value per call, in order
+
+
+def test_cmdi_confirms_injection_when_the_sleep_dominates_the_round_trip():
+    # baseline ~0.01s, injected ~5.01s: the delta clears half the 5s sleep
+    fake = CmdiRunner()
+    res = CmdiAdapter("atk", PINNED, run=fake, clock=_clock(0.0, 0.01, 0.02, 5.03)).run(
+        {"tool": "cmdi", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/ping", "param": "host", "delay_s": 5}})
+    sig = res["deterministic_signals"]
+    assert res["status"] == "ok"
+    assert sig["hit"] is True and sig["cmdi"] is True
+    assert sig["delta_ms"] >= 2500
+
+
+def test_cmdi_no_delay_is_not_a_hit():
+    # both requests return in the same time: a server that does not shell out
+    res = CmdiAdapter("atk", PINNED, run=CmdiRunner(), clock=_clock(0.0, 0.01, 0.02, 0.03)).run(
+        {"tool": "cmdi", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/ping", "param": "host", "delay_s": 5}})
+    assert res["deterministic_signals"]["hit"] is False
+
+
+def test_cmdi_appends_a_sleep_to_the_param_against_the_resolved_ip():
+    fake = CmdiRunner()
+    CmdiAdapter("atk", PINNED, run=fake, clock=_clock(0.0, 0.01, 0.02, 5.03)).run(
+        {"tool": "cmdi", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/ping", "param": "host", "delay_s": 5}})
+    urls = [next(a for a in c if a.startswith("http")) for c in fake.calls]
+    assert len(urls) == 2                                     # baseline, then injected
+    assert all("10.90.0.3" in u for u in urls) and all("t1.sandbox.local" not in u for u in urls)
+    assert "sleep+5" in urls[1] or "sleep%205" in urls[1]     # the appended shell command
+
+
+class CachePoisonRunner:
+    """Simulates the /promo cache. Vulnerable: it keys the cache on path+query only and
+    reflects X-Forwarded-Host, so a value injected on the miss is served to a later clean
+    request for the same key. Safe (`keyed_on_header`): the header is part of the key, so a
+    clean request is a different key and never gets the poisoned entry."""
+
+    def __init__(self, *, keyed_on_header=False):
+        self.keyed_on_header = keyed_on_header
+        self.store = {}
+        self.calls = []
+
+    def __call__(self, argv, input=None, timeout=None):
+        self.calls.append(argv)
+        url, headers = _call_url_headers(argv)
+        parts = urlparse(url)
+        xfh = headers.get("X-Forwarded-Host", "promo.hc-shop")
+        key = parts.path + "?" + parts.query + (("|" + xfh) if self.keyed_on_header else "")
+        if key not in self.store:
+            self.store[key] = f'<link href="http://{xfh}/promo">'    # miss: reflect + cache
+        return RunResult(0, f"STATUS 200\n---BODY---\n{self.store[key]}", "")
+
+
+def test_cache_confirms_poisoning_when_a_clean_request_is_served_the_injected_marker():
+    res = CacheAdapter("atk", PINNED, run=CachePoisonRunner()).run(
+        {"tool": "cache", "target": "t1.sandbox.local", "port": 8080, "args": {"path": "/promo"}})
+    sig = res["deterministic_signals"]
+    assert res["status"] == "ok"
+    assert sig["hit"] is True and sig["cache_poison"] is True
+    assert sig["reflected"] is True and sig["served_from_cache"] is True
+
+
+def test_cache_header_keyed_cache_is_not_a_hit():
+    res = CacheAdapter("atk", PINNED, run=CachePoisonRunner(keyed_on_header=True)).run(
+        {"tool": "cache", "target": "t1.sandbox.local", "port": 8080, "args": {"path": "/promo"}})
+    sig = res["deterministic_signals"]
+    assert sig["reflected"] is True                          # the miss still reflects
+    assert sig["served_from_cache"] is False                 # but the clean request is a clean key
+    assert sig["hit"] is False
+
+
+def test_cache_injects_an_unkeyed_header_only_on_the_first_request():
+    fake = CachePoisonRunner()
+    CacheAdapter("atk", PINNED, run=fake).run(
+        {"tool": "cache", "target": "t1.sandbox.local", "port": 8080, "args": {"path": "/promo"}})
+    hdrs = [_call_url_headers(c)[1] for c in fake.calls]
+    assert len(hdrs) == 2
+    assert "X-Forwarded-Host" in hdrs[0] and "X-Forwarded-Host" not in hdrs[1]
+    urls = [_call_url_headers(c)[0] for c in fake.calls]
+    assert urls[0] == urls[1] and "10.90.0.3" in urls[0]     # same cache-buster URL, victim's view
+
+
+class SessionRunner:
+    """Simulates the cookie-session portal. Vulnerable: /portal/login authenticates the
+    existing session id in place without issuing a new one, so the pre-auth id is valid and
+    authenticated afterward. Safe (`rotate_on_login`): login issues a fresh id and leaves
+    the pre-auth id anonymous. Emits the header-returning format the session adapter reads."""
+
+    def __init__(self, *, rotate_on_login=False):
+        self.rotate_on_login = rotate_on_login
+        self.sessions = {}
+        self.calls = []
+        self._seq = 0
+
+    def _issue(self):
+        self._seq += 1
+        return f"sid{self._seq}"
+
+    def __call__(self, argv, input=None, timeout=None):
+        self.calls.append(argv)
+        url, headers = _call_url_headers(argv)
+        parts = urlparse(url)
+        sid = None
+        for part in headers.get("Cookie", "").split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == "sid":
+                sid = v
+        set_cookie = None
+        body = ""
+        if parts.path == "/portal":
+            if not sid or sid not in self.sessions:
+                sid = self._issue()
+                self.sessions[sid] = None
+                set_cookie = f"sid={sid}; Path=/"
+            user = self.sessions.get(sid)
+            body = "portal session %s: %s" % (sid, ("user %s" % user) if user else "anonymous")
+        elif parts.path == "/portal/login":
+            uid = (parse_qs(parts.query).get("user") or ["1"])[0]
+            if self.rotate_on_login:
+                self.sessions.setdefault(sid, None)          # old id stays anonymous
+                new = self._issue()
+                self.sessions[new] = uid
+                set_cookie = f"sid={new}; Path=/"
+                body = "logged in as %s (rotated)" % uid
+            else:
+                self.sessions[sid] = uid                     # authenticate in place, no rotation
+                body = "logged in as %s on session %s" % (uid, sid)
+        elif parts.path == "/portal/me":
+            user = self.sessions.get(sid)
+            body = ("me: user %s" % user) if user else "me: anonymous"
+        hdr = {"Set-Cookie": set_cookie} if set_cookie else {}
+        return RunResult(0, "STATUS 200\n" + json.dumps(hdr) + "\n---BODY---\n" + body, "")
+
+
+def test_sess_confirms_fixation_when_the_preauth_id_stays_authenticated():
+    res = SessAdapter("atk", PINNED, run=SessionRunner()).run(
+        {"tool": "sess", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/portal", "login_path": "/portal/login", "me_path": "/portal/me"}})
+    sig = res["deterministic_signals"]
+    assert res["status"] == "ok"
+    assert sig["hit"] is True and sig["session_fixation"] is True
+    assert sig["pre_auth_id_authenticated"] is True and sig["rotated_on_login"] is False
+
+
+def test_sess_rotated_id_on_login_is_not_a_hit():
+    res = SessAdapter("atk", PINNED, run=SessionRunner(rotate_on_login=True)).run(
+        {"tool": "sess", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/portal", "login_path": "/portal/login", "me_path": "/portal/me"}})
+    sig = res["deterministic_signals"]
+    assert sig["rotated_on_login"] is True                    # login issued a fresh id
+    assert sig["pre_auth_id_authenticated"] is False          # the pre-auth id is anonymous
+    assert sig["hit"] is False
+
+
+def test_sess_reuses_the_preauth_cookie_through_login_and_me():
+    fake = SessionRunner()
+    SessAdapter("atk", PINNED, run=fake).run(
+        {"tool": "sess", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/portal", "login_path": "/portal/login", "me_path": "/portal/me"}})
+    # the first call establishes the session; login and me must carry that same sid cookie
+    later = [_call_url_headers(c) for c in fake.calls[1:]]
+    cookies = {h.get("Cookie") for _, h in later}
+    assert len(cookies) == 1 and next(iter(cookies)) == "sid=sid1"
+    assert all("10.90.0.3" in u for u, _ in later)            # resolved to the guarded IP
+
+
+class SsrfRunner:
+    """Simulates the target plus the in-range collaborator. When the target fetches the
+    collaborator url (vulnerable), the collaborator records the requested path and the
+    target's address; the adapter then reads that log over docker exec. A safe target with
+    an allowlist never fetches it, so the log stays empty."""
+
+    def __init__(self, *, vulnerable=True):
+        self.vulnerable = vulnerable
+        self.hits = []
+        self.calls = []
+
+    def __call__(self, argv, input=None, timeout=None):
+        self.calls.append(argv)
+        if argv[:2] == ["docker", "exec"] and "cat" in argv and "/tmp/hits.log" in argv:
+            return RunResult(0, "\n".join(self.hits) + ("\n" if self.hits else ""), "")
+        url = next((a for a in argv if a.startswith("http")), "")
+        inner = (parse_qs(urlparse(url).query).get("url") or [""])[0]   # the collaborator url
+        if self.vulnerable and inner:
+            self.hits.append(f"{urlparse(inner).path} {urlparse(url).hostname}")  # server-side fetch
+        return RunResult(0, "STATUS 200\n---BODY---\nfetched", "")
+
+
+def test_ssrf_confirms_when_the_collaborator_is_hit_from_the_target():
+    res = SsrfAdapter("atk", PINNED, run=SsrfRunner(),
+                      collaborator="hc-collab", collab_addr="10.90.0.9:8080").run(
+        {"tool": "ssrf", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/fetch", "param": "url"}})
+    sig = res["deterministic_signals"]
+    assert res["status"] == "ok"
+    assert sig["hit"] is True and sig["ssrf"] is True and sig["oob_fired"] is True
+
+
+def test_ssrf_no_callback_is_not_a_hit():
+    res = SsrfAdapter("atk", PINNED, run=SsrfRunner(vulnerable=False),
+                      collaborator="hc-collab", collab_addr="10.90.0.9:8080").run(
+        {"tool": "ssrf", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/fetch", "param": "url"}})
+    assert res["deterministic_signals"]["hit"] is False      # the target never fetched it
+
+
+def test_ssrf_points_the_target_at_the_collaborator_token_url_and_reads_the_log():
+    fake = SsrfRunner()
+    SsrfAdapter("atk", PINNED, run=fake,
+                collaborator="hc-collab", collab_addr="10.90.0.9:8080").run(
+        {"tool": "ssrf", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/fetch", "param": "url"}})
+    fetch = next(c for c in fake.calls if any(a.startswith("http") for a in c))
+    url = next(a for a in fetch if a.startswith("http"))
+    assert "10.90.0.3" in url                                # the target, resolved from the pin
+    inner = parse_qs(urlparse(url).query)["url"][0]
+    assert inner.startswith("http://10.90.0.9:8080/hcoob")   # collaborator + random token
+    assert any(c[:2] == ["docker", "exec"] and "/tmp/hits.log" in c for c in fake.calls)
+
+
+def test_ssrf_without_a_collaborator_cannot_confirm():
+    res = SsrfAdapter("atk", PINNED, run=SsrfRunner()).run(   # no collaborator configured
+        {"tool": "ssrf", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/fetch", "param": "url"}})
+    assert res["deterministic_signals"]["hit"] is False      # nothing to confirm against
 
 
 def test_parse_http_full_splits_status_headers_and_body():

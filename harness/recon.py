@@ -28,6 +28,13 @@ _PARAM_RE = re.compile(r"[?&]([A-Za-z_]\w*)=")
 # locations: a login endpoint to read the auth scheme from, and privileged areas.
 _LOGIN_PATHS = ("/login",)
 _ADMIN_PATHS = ("/admin",)
+# Conventional cacheable endpoints, probed for a cache header so the cache-poisoning card
+# has the `asset.cacheable` fact it gates on.
+_CACHE_PATHS = ("/promo",)
+_CACHE_HEADERS = ("cache-control", "x-cache", "age")
+# Conventional cookie-session entry points, probed for a Set-Cookie so the session-fixation
+# card (which gates on an `asset.type == "login_endpoint"` asset) has one to apply over.
+_SESSION_PATHS = ("/portal",)
 
 
 def _tcp_open(run, attacker, ip, port):
@@ -59,26 +66,44 @@ def phase_recon(attacker, eng, *, run=None):
                     http_status, http_port = code, port
         facts = {"host": host, "addr": ip, "reachable": bool(open_ports),
                  "open_ports": open_ports}
+        base_key = host.split(".")[0]
+        extra = {}
         if http_status:
             facts["asset.type"] = "http_endpoint"
             facts["http_status"] = http_status
-            _enrich_web(facts, http, ip, http_port)
-        model[host.split(".")[0]] = facts
+            extra = _enrich_web(facts, http, ip, http_port)
+        model[base_key] = facts
+        for suffix, sub in extra.items():
+            model[f"{base_key}-{suffix}"] = sub
     return model
 
 
 def _enrich_web(facts, http, ip, port):
     """Light web discovery, reading state only: the parameters the landing page exposes,
-    a JWT auth scheme if a login endpoint hands one back, and privileged sibling paths
-    from the conventional-path list. These are exactly the facts the web technique cards
-    gate their applicability on, so recon reports them and the cards decide."""
+    a JWT auth scheme if a login endpoint hands one back, privileged sibling paths from the
+    conventional-path list, cacheability from a cache header, and a cookie-session login
+    endpoint. These are exactly the facts the web technique cards gate their applicability
+    on, so recon reports them and the cards decide. Returns extra assets (keyed by a
+    suffix) that live on the same host but are a distinct asset type, such as a login
+    endpoint, which the session card applies over rather than the http endpoint."""
     def fetch(path):
         return http._send_http(f"http://{ip}:{port}{path}")   # (status, body)
+
+    def fetch_full(path):
+        return http._send_http_full(f"http://{ip}:{port}{path}")  # (status, headers, body)
 
     _, home = fetch("/")
     params = sorted(set(_PARAM_RE.findall(home or "")))
     if params:
         facts["asset.params"] = params
+    for cpath in _CACHE_PATHS:
+        status, headers, _ = fetch_full(cpath)
+        low = {k.lower(): v for k, v in (headers or {}).items()}
+        if status == 200 and any(h in low for h in _CACHE_HEADERS):
+            facts["asset.cacheable"] = True
+            facts["cacheable_endpoint"] = True
+            facts["asset.cache_path"] = cpath
+            break
     for login in _LOGIN_PATHS:
         status, body = fetch(login + "?user=1")
         if status == 200 and (body or "").strip().count(".") == 2:
@@ -91,3 +116,26 @@ def _enrich_web(facts, http, ip, port):
     siblings = [path for path in _ADMIN_PATHS if fetch(path)[0] in (200, 401, 403)]
     if siblings:
         facts["asset.privileged_siblings"] = siblings
+    extra = {}
+    for spath in _SESSION_PATHS:
+        status, headers, _ = fetch_full(spath)
+        cookie = _set_cookie_name(headers)
+        if status == 200 and cookie:
+            extra["login"] = {"host": facts["host"], "addr": ip, "reachable": True,
+                              "asset.type": "login_endpoint", "asset.session_cookie": cookie,
+                              "login_endpoint": True, "http_status": status,
+                              "asset.login_path": spath}
+            break
+    return extra
+
+
+def _set_cookie_name(headers):
+    """The name of the cookie a Set-Cookie response header issues, or None. A login
+    endpoint that hands back a session cookie is what the session-fixation card applies
+    over, so recon reports the cookie name and the card gates on it existing."""
+    for key, val in (headers or {}).items():
+        if key.lower() == "set-cookie":
+            name = str(val).split(";", 1)[0].split("=", 1)[0].strip()
+            if name:
+                return name
+    return None

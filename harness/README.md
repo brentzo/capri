@@ -393,6 +393,24 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   and not the raw expression; `CorsAdapter` (`cors`) sends a crafted Origin and confirms a
   CORS misconfiguration only when the response reflects that origin with credentials (it
   reads a response header, so the in-container request grew a header-returning variant).
+  `PathAdapter` (`path`) requests a file parameter with a traversal ladder and confirms a
+  path traversal only when the response carries the range canary marker the target writes
+  outside its public dir, proving the read escaped it; the marker never travels in the
+  request, so a contained server never echoes it. `CmdiAdapter` (`cmdi`) proves OS command
+  injection by a timing oracle: it appends a shell `sleep` to the parameter and fires only
+  when the injected request runs at least the sleep longer than the baseline, which the
+  harness times itself (the clock is injected so tests need no real sleep). `CacheAdapter`
+  (`cache`) proves web cache poisoning: it injects a random marker through an unkeyed
+  header on a cache-busting request, then makes a clean request for the same URL, and fires
+  only when that clean request is served the marker from cache. `SessAdapter` (`sess`)
+  proves session fixation: it obtains a pre-auth session id, logs in reusing it, and fires
+  only when the login issues no fresh id and the pre-auth id is authenticated afterward;
+  recon emits the login endpoint as a second asset so this card has a login-typed asset to
+  apply over. `SsrfAdapter` (`ssrf`) proves server-side request forgery with a denied-egress
+  range: the range runs an in-range out-of-band collaborator (never in scope), the adapter
+  points the target's fetch parameter at a collaborator URL carrying a random token, and it
+  fires only when the collaborator was hit for that token from the target, read out of band
+  over docker exec rather than through the scope guard.
   The attacker container runs the toolchain image (`infra/sandbox/Dockerfile.attacker`,
   built for amd64 and arm64, httpx checksum-pinned) while targets stay the minimal node
   image, and the attacker still holds no `NET_ADMIN`, so the host-owned scope guard
@@ -462,13 +480,15 @@ cards, bridged to the concrete tool adapters.
   confirmable technique.
 - `recon.py` now does light web discovery (reading state only) so the real cards' facts
   are there to gate on: the parameters a landing page exposes, a JWT auth scheme and an
-  available authenticated session from a login probe, and privileged sibling paths from a
-  short conventional-path list. `tools/run_engagement.py` loads the KB with `kb.load`,
-  projects it with `capabilities.runnable_index`, and drives it; a live model-driven run
-  confirmed six genuine web-protocol-auth cards (JWT algorithm confusion and server-side
-  template injection at the cards' own critical severity, object- and function-level
-  authorization, boolean-blind SQL injection, and CORS misconfiguration), each verified on
-  a disjoint provider.
+  available authenticated session from a login probe, privileged sibling paths from a short
+  conventional-path list, a cache header on a conventional cacheable path, and a
+  cookie-session login endpoint emitted as a second asset. `tools/run_engagement.py` loads
+  the KB with `kb.load`, projects it with `capabilities.runnable_index`, and drives it; a
+  live model-driven run confirmed eleven genuine web-protocol-auth cards (JWT algorithm
+  confusion, server-side template injection, and OS command injection at the cards' own
+  critical severity, object- and function-level authorization, boolean-blind SQL injection,
+  path traversal, server-side request forgery, web cache poisoning, session fixation, and
+  CORS misconfiguration), each verified on a disjoint provider.
 
 ## Run
 

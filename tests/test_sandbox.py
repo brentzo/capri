@@ -10,6 +10,7 @@ proven separately by `tools/sandbox_selftest.py` on a real Docker host.
 
 Zero-dependency: `python3 tests/test_sandbox.py`.
 """
+import json
 import os
 import sys
 from urllib.parse import urlparse
@@ -185,6 +186,29 @@ def test_provision_seeds_and_runs_a_custom_listener_app_when_configured():
     assert not run.ran("http.server")                            # replaced, not added
 
 
+def test_provision_starts_an_in_range_collaborator_when_configured():
+    run = FakeRunner()
+    sb = DockerSandbox(run=run, collaborator_app="print('collab')")
+    eng = _eng()
+    sb.provision(eng)
+    # the collaborator is created on an in-range address and runs its own seeded app
+    assert run.ran("run", "-d", "--name", "hc-range-collaborator")
+    assert run.ran("exec", "-i", "sh", "-c", "cat > /tmp/app.py")
+    assert sb.collab_addr == "10.90.0.3:8080"                  # .1 oos, .2 attacker, .3 collaborator
+    assert eng.pinned["t1.sandbox.local"].compressed == "10.90.0.4"   # target shifted to .4
+    # the collaborator is never added to the pinned set, so the scope guard never allows the
+    # attacker to reach it; the harness reads its log over docker exec instead
+    assert "10.90.0.3" not in {ip.compressed for ip in eng.pinned.values()}
+
+
+def test_provision_without_a_collaborator_keeps_the_target_at_the_third_address():
+    run = FakeRunner()
+    eng = _eng()
+    DockerSandbox(run=run).provision(eng)
+    assert not run.ran("run", "-d", "--name", "hc-range-collaborator")
+    assert eng.pinned["t1.sandbox.local"].compressed == "10.90.0.3"
+
+
 def test_guard_proof_passes_only_when_the_range_enforces_scope():
     eng = _eng()
     # a correctly enforcing range: only the pinned in-scope target:port connects
@@ -343,15 +367,19 @@ def _pinned_eng():
     return eng
 
 
-def _recon_runner(*, open_ports=(), http=(), pages=None):
-    open_ports, http, pages = set(open_ports), set(http), (pages or {})
+def _recon_runner(*, open_ports=(), http=(), pages=None, headers=None):
+    open_ports, http = set(open_ports), set(http)
+    pages, headers = (pages or {}), (headers or {})
 
     def run(argv, *, input=None, timeout=30):
         i = argv.index("-c")
         src, rest = argv[i + 1], argv[i + 2:]
-        if "urllib.request" in src:                            # a web-discovery body fetch
+        if "urllib.request" in src:                            # a web-discovery fetch
             path = urlparse(rest[0]).path
             status, body = pages.get(path, (404, ""))
+            if "json.dumps(rh)" in src:                        # the header-returning variant
+                hdr_json = json.dumps(headers.get(path, {}))
+                return RunResult(0, f"STATUS {status}\n{hdr_json}\n---BODY---\n{body}", "")
             return RunResult(0, f"STATUS {status}\n---BODY---\n{body}", "")
         ip, port = rest[0], int(rest[1])
         if "OPEN" in src:                                      # the TCP port probe
@@ -372,6 +400,33 @@ def test_phase_recon_builds_the_target_model_and_discovers_web_facts():
                             "asset.params": ["id", "q"], "asset.auth": "jwt",
                             "asset.login_path": "/login", "authenticated_session": True,
                             "asset.privileged_siblings": ["/admin"]}}
+
+
+def test_phase_recon_detects_a_cacheable_endpoint():
+    from harness.recon import phase_recon
+    pages = {"/": (200, "Try /search?q=..."), "/promo": (200, "<link>")}
+    headers = {"/promo": {"Cache-Control": "public, max-age=60", "X-Cache": "MISS"}}
+    run = _recon_runner(open_ports=[("10.90.0.3", 8080)], http=[("10.90.0.3", 8080)],
+                        pages=pages, headers=headers)
+    facts = phase_recon("hc-range-attacker", _pinned_eng(), run=run)["t1"]
+    assert facts["asset.cacheable"] is True
+    assert facts["cacheable_endpoint"] is True
+    assert facts["asset.cache_path"] == "/promo"
+
+
+def test_phase_recon_adds_a_login_endpoint_asset_for_a_session_cookie():
+    from harness.recon import phase_recon
+    pages = {"/": (200, "Try /search?q=..."), "/portal": (200, "portal session anonymous")}
+    headers = {"/portal": {"Set-Cookie": "sid=abc123; Path=/; HttpOnly"}}
+    run = _recon_runner(open_ports=[("10.90.0.3", 8080)], http=[("10.90.0.3", 8080)],
+                        pages=pages, headers=headers)
+    model = phase_recon("hc-range-attacker", _pinned_eng(), run=run)
+    assert "t1-login" in model                               # a distinct asset, same host
+    login = model["t1-login"]
+    assert login["asset.type"] == "login_endpoint"
+    assert login["asset.session_cookie"] == "sid"
+    assert login["login_endpoint"] is True and login["reachable"] is True
+    assert login["host"] == "t1.sandbox.local"
 
 
 def test_phase_recon_marks_an_unreachable_target_and_omits_service_type():
