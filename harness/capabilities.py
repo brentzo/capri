@@ -40,6 +40,7 @@ CAPABILITIES = {
                                     "action_path": "/portal/email", "action_param": "to"}),
     "KB-CLIENT-WS-HIJACK-001": ("wshijack", {"path": "/portal", "login_path": "/portal/login"}),
     "KB-CLIENT-CSP-WEAK-001": ("cspexec", {"path": "/widget", "param": "html"}),
+    "KB-CLIENT-DOM-CLOBBER-001": ("domclobber", {"path": "/clobber", "param": "html"}),
 }
 
 

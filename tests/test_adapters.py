@@ -19,9 +19,9 @@ import re                                                                # noqa:
 from harness.sandbox.adapters import (                                   # noqa: E402
     BflaAdapter, CacheAdapter, ClickjackAdapter, CmdiAdapter, CorsAdapter, CsrfAdapter,
     HttpRequestAdapter, HttpxAdapter, IdorAdapter, JwtAdapter, NmapAdapter, OpenRedirectAdapter,
-    CspAdapter, PathAdapter, SessAdapter, SqliAdapter, SsrfAdapter, SstiAdapter,
-    WsHijackAdapter, _FOREIGN_ORIGIN, _RANGE_CANARY, _parse_http_full, _parse_http_response,
-    _parse_httpx, _parse_nmap_services)
+    CspAdapter, DomClobberAdapter, PathAdapter, SessAdapter, SqliAdapter, SsrfAdapter,
+    SstiAdapter, WsHijackAdapter, _FOREIGN_ORIGIN, _RANGE_CANARY, _parse_http_full,
+    _parse_http_response, _parse_httpx, _parse_nmap_services)
 from harness.sandbox.base import RunResult                               # noqa: E402
 
 # Real `nmap -sV -Pn -p 8080 -oX -` output (captured live), trimmed to the shape we parse.
@@ -1166,6 +1166,51 @@ def test_cspexec_renders_in_a_headless_browser_against_the_resolved_ip():
     assert "chromium" in argv and "--dump-dom" in argv       # a real browser rendered it
     url = next(a for a in argv if a.startswith("http"))
     assert "10.90.0.3" in url and "t1.sandbox.local" not in url
+
+
+class DomClobberRunner:
+    """Simulates chromium rendering /clobber. Vulnerable: injected `<a id=HCCFG>` clobbers
+    the global the gadget reads, so the gadget renders HC-CLOBBERED. Safe: the gadget does
+    not trust the clobberable global and renders HC-SAFE."""
+
+    def __init__(self, *, safe=False):
+        self.safe = safe
+        self.calls = []
+
+    def __call__(self, argv, input=None, timeout=None):
+        self.calls.append(argv)
+        url = next((a for a in argv if a.startswith("http")), "")
+        html = (parse_qs(urlparse(url).query).get("html") or [""])[0]
+        clobbered = (not self.safe) and bool(re.search(r'id=["\']?HCCFG', html))
+        out = "HC-CLOBBERED" if clobbered else "HC-SAFE"
+        return RunResult(0, f'<html><body><div id="out">{out}</div>{html}</body></html>', "")
+
+
+def test_domclobber_confirms_a_clobbered_global():
+    res = DomClobberAdapter("atk", PINNED, run=DomClobberRunner()).run(
+        {"tool": "domclobber", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/clobber", "param": "html"}})
+    sig = res["deterministic_signals"]
+    assert res["status"] == "ok"
+    assert sig["hit"] is True and sig["dom_clobbering"] is True
+
+
+def test_domclobber_safe_gadget_is_not_a_hit():
+    res = DomClobberAdapter("atk", PINNED, run=DomClobberRunner(safe=True)).run(
+        {"tool": "domclobber", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/clobber", "param": "html"}})
+    assert res["deterministic_signals"]["hit"] is False      # the gadget does not read the clobbered global
+
+
+def test_domclobber_injects_named_markup_and_renders_in_a_browser():
+    fake = DomClobberRunner()
+    DomClobberAdapter("atk", PINNED, run=fake).run(
+        {"tool": "domclobber", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/clobber", "param": "html"}})
+    argv = fake.calls[0]
+    assert "chromium" in argv and "--dump-dom" in argv
+    url = next(a for a in argv if a.startswith("http"))
+    assert "10.90.0.3" in url and "HCCFG" in url             # the harness-injected named markup
 
 
 def test_parse_http_full_splits_status_headers_and_body():

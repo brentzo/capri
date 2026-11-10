@@ -424,6 +424,15 @@ def test_phase_recon_marks_an_html_rendering_endpoint():
     assert facts["asset.renders_html"] is True
 
 
+def test_phase_recon_detects_a_markup_reflecting_endpoint():
+    from harness.recon import phase_recon
+    pages = {"/": (200, "Try /search?q=..."), "/clobber": (200, "<div id=out></div>")}
+    run = _recon_runner(open_ports=[("10.90.0.3", 8080)], http=[("10.90.0.3", 8080)], pages=pages)
+    facts = phase_recon("hc-range-attacker", _pinned_eng(), run=run)["t1"]
+    assert facts["asset.allows_named_markup"] is True
+    assert facts["asset.clobber_path"] == "/clobber"
+
+
 def test_phase_recon_detects_a_state_changing_action():
     from harness.recon import phase_recon
     pages = {"/": (200, "Try /search?q=..."), "/portal/settings": (200, "<form>")}

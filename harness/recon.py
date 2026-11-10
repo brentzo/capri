@@ -41,6 +41,9 @@ _ACTION_PATHS = ("/portal/settings",)
 # Conventional WebSocket paths; a 426 Upgrade Required marks a WS endpoint the WS-hijack card
 # (which gates on asset.has_websocket) can apply over.
 _WS_PATHS = ("/ws",)
+# Conventional pages that reflect caller markup, probed so the DOM-clobbering card (which
+# gates on asset.allows_named_markup) has a page to apply over.
+_CLOBBER_PATHS = ("/clobber",)
 
 
 def _tcp_open(run, attacker, ip, port):
@@ -134,6 +137,11 @@ def _enrich_web(facts, http, ip, port):
         if fetch(wpath)[0] == 426:                 # Upgrade Required: a WebSocket endpoint
             facts["asset.has_websocket"] = True
             facts["asset.ws_path"] = wpath
+            break
+    for cpath in _CLOBBER_PATHS:
+        if fetch(cpath)[0] == 200:
+            facts["asset.allows_named_markup"] = True
+            facts["asset.clobber_path"] = cpath
             break
     extra = {}
     for spath in _SESSION_PATHS:

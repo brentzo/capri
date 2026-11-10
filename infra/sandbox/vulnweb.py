@@ -25,6 +25,8 @@ harness has real web vulnerabilities to find and independently confirm:
                  so it sends a victim to any attacker origin (open redirect).
   - /widget?html= writes the parameter into the page unencoded and sets no CSP, so an
                  injected inline script executes when rendered (missing/bypassable CSP).
+  - /clobber?html= reads a script global named HCCFG that injected named markup can override,
+                 so attacker markup clobbers it and a gadget consumes it (DOM clobbering).
   - /portal/settings is a sensitive-action page that sets no X-Frame-Options and no CSP
                  frame-ancestors, so a cross-origin page can frame it (clickjacking).
   - /portal/email?to= changes the session's email, authorized by the session cookie alone
@@ -336,6 +338,16 @@ class Handler(BaseHTTPRequestHandler):
             # <script> executes when the page is rendered. A correct app would send a CSP
             # that forbids inline script, which would block it.
             self._respond(200, _PAGE + '<div id="out"></div>' + html)
+        elif parts.path == "/clobber":
+            html = (query.get("html") or [""])[0]
+            # VULNERABLE BY DESIGN: the page reads a script-referenced global (window.HCCFG)
+            # that injected named markup can override, so an attacker's <a id=HCCFG> clobbers
+            # it and the gadget consumes the element instead of its intended value (DOM
+            # clobbering). A correct app would not read a global a page can name into being.
+            gadget = ('<script>var c=window.HCCFG;'
+                      'document.getElementById("out").textContent='
+                      '(c&&c.nodeName)?"HC-CLOBBERED":"HC-SAFE";</script>')
+            self._respond(200, _PAGE + '<div id="out"></div>' + html + gadget)
         elif parts.path == "/redirect":
             dest = (query.get("url") or ["/"])[0]
             # VULNERABLE BY DESIGN: redirects to the caller's url with no same-origin or

@@ -729,6 +729,43 @@ class CspAdapter(_Adapter):
         }
 
 
+class DomClobberAdapter(_Adapter):
+    """DOM clobbering that overrides a script-referenced global. Registered as `domclobber`.
+
+    The harness injects named markup whose id matches a global the page's gadget reads, and
+    renders the page, reporting the flaw only when the gadget's output shows it resolved the
+    global to the injected element instead of its intended value. The injected markup and the
+    expected marker are the harness's, and the marker is produced only by the page gadget on a
+    real clobber, so a page that does not read a clobbered global shows the safe value and the
+    Verifier reruns with the same injection."""
+
+    _INJECT = '<a id="HCCFG" href="hcx"></a>'
+    _MARK = "HC-CLOBBERED"
+
+    def run(self, req):
+        ip = self._resolve(req["target"])
+        port = int(req["port"])
+        args = req.get("args") or {}
+        scheme = args.get("scheme") or ("https" if port in (443, 8443) else "http")
+        path = args.get("path", "/clobber")
+        param = args.get("param", "html")
+        qs = urllib.parse.urlencode({param: self._INJECT})
+        url = f"{scheme}://{ip}:{port}{path}?{qs}"
+        dom = self._render_dom(url)
+        clobbered = self._MARK in dom
+        return {
+            "status": "ok" if clobbered else "error",
+            "parsed": {"clobbered": clobbered, "dom_len": len(dom)},
+            "request_bytes": f"domclobber {url}".encode("utf-8"),
+            "response_bytes": dom.encode("utf-8", "replace")[:4096],
+            "deterministic_signals": {
+                "hit": clobbered,
+                "dom_clobbering": clobbered,
+                "confidence": 0.9 if clobbered else 0.0,
+            },
+        }
+
+
 class OpenRedirectAdapter(_Adapter):
     """Open redirect against a pinned in-scope target. Registered as `redirect`.
 
