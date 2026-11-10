@@ -35,6 +35,7 @@ CAPABILITIES = {
                                      "me_path": "/portal/me", "login_user": "1"}),
     "KB-WEB-INJ-SSRF-001": ("ssrf", {"path": "/fetch", "param": "url"}),
     "KB-CLIENT-REDIRECT-OPEN-001": ("redirect", {"path": "/redirect", "param": "url"}),
+    "KB-CLIENT-REDRESS-CLICKJACK-001": ("clickjack", {"path": "/portal/settings"}),
 }
 
 

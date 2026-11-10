@@ -35,6 +35,9 @@ _CACHE_HEADERS = ("cache-control", "x-cache", "age")
 # Conventional cookie-session entry points, probed for a Set-Cookie so the session-fixation
 # card (which gates on an `asset.type == "login_endpoint"` asset) has one to apply over.
 _SESSION_PATHS = ("/portal",)
+# Conventional sensitive-action pages, probed so the CSRF and clickjacking cards (which gate
+# on asset.has_state_changing_action) have an action to apply over.
+_ACTION_PATHS = ("/portal/settings",)
 
 
 def _tcp_open(run, attacker, ip, port):
@@ -116,6 +119,11 @@ def _enrich_web(facts, http, ip, port):
     siblings = [path for path in _ADMIN_PATHS if fetch(path)[0] in (200, 401, 403)]
     if siblings:
         facts["asset.privileged_siblings"] = siblings
+    for apath in _ACTION_PATHS:
+        if fetch(apath)[0] == 200:
+            facts["asset.has_state_changing_action"] = True
+            facts["asset.action_path"] = apath
+            break
     extra = {}
     for spath in _SESSION_PATHS:
         status, headers, _ = fetch_full(spath)

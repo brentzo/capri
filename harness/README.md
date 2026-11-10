@@ -414,7 +414,10 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   the first client-side card, sets the redirect parameter to a harness-chosen attacker
   origin and fires only when the response is a 3xx whose Location points at that exact
   foreign origin (a dedicated in-container opener disables redirect-following so the probe
-  reads the 3xx instead of chasing it off the range).
+  reads the 3xx instead of chasing it off the range). `ClickjackAdapter` (`clickjack`)
+  fetches a sensitive-action page and fires when it carries neither X-Frame-Options nor a
+  CSP frame-ancestors directive, the two headers that stop cross-origin framing (recon marks
+  `asset.has_state_changing_action` from a conventional action page so the card applies).
   The attacker container runs the toolchain image (`infra/sandbox/Dockerfile.attacker`,
   built for amd64 and arm64, httpx checksum-pinned) while targets stay the minimal node
   image, and the attacker still holds no `NET_ADMIN`, so the host-owned scope guard

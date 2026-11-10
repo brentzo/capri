@@ -16,10 +16,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from urllib.parse import parse_qs, urlparse                              # noqa: E402
 import base64                                                            # noqa: E402
 from harness.sandbox.adapters import (                                   # noqa: E402
-    BflaAdapter, CacheAdapter, CmdiAdapter, CorsAdapter, HttpRequestAdapter, HttpxAdapter,
-    IdorAdapter, JwtAdapter, NmapAdapter, OpenRedirectAdapter, PathAdapter, SessAdapter,
-    SqliAdapter, SsrfAdapter, SstiAdapter, _FOREIGN_ORIGIN, _RANGE_CANARY, _parse_http_full,
-    _parse_http_response, _parse_httpx, _parse_nmap_services)
+    BflaAdapter, CacheAdapter, ClickjackAdapter, CmdiAdapter, CorsAdapter, HttpRequestAdapter,
+    HttpxAdapter, IdorAdapter, JwtAdapter, NmapAdapter, OpenRedirectAdapter, PathAdapter,
+    SessAdapter, SqliAdapter, SsrfAdapter, SstiAdapter, _FOREIGN_ORIGIN, _RANGE_CANARY,
+    _parse_http_full, _parse_http_response, _parse_httpx, _parse_nmap_services)
 from harness.sandbox.base import RunResult                               # noqa: E402
 
 # Real `nmap -sV -Pn -p 8080 -oX -` output (captured live), trimmed to the shape we parse.
@@ -949,6 +949,49 @@ def test_redirect_sends_the_foreign_origin_to_the_resolved_ip_without_following(
     assert "10.90.0.3" in url and "t1.sandbox.local" not in url
     assert "evil.range.local" in url                         # the harness-chosen foreign origin
     assert "redirect_request" in " ".join(argv)              # the no-follow handler script
+
+
+class ClickjackRunner:
+    """Simulates the sensitive-action page's framing headers. Vulnerable: it returns neither
+    X-Frame-Options nor a CSP frame-ancestors directive. The `xfo`/`csp` flags model the two
+    safe ways to deny framing."""
+
+    def __init__(self, *, xfo=False, csp_frame_ancestors=False):
+        self.xfo, self.csp_frame_ancestors = xfo, csp_frame_ancestors
+        self.calls = []
+
+    def __call__(self, argv, input=None, timeout=None):
+        self.calls.append(argv)
+        headers = {"Content-Type": "text/html"}
+        if self.xfo:
+            headers["X-Frame-Options"] = "DENY"
+        if self.csp_frame_ancestors:
+            headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+        return RunResult(0, "STATUS 200\n" + json.dumps(headers) + "\n---BODY---\n<form>", "")
+
+
+def test_clickjack_confirms_a_framable_sensitive_action():
+    res = ClickjackAdapter("atk", PINNED, run=ClickjackRunner()).run(
+        {"tool": "clickjack", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/portal/settings"}})
+    sig = res["deterministic_signals"]
+    assert res["status"] == "ok"
+    assert sig["hit"] is True and sig["clickjacking"] is True
+
+
+def test_clickjack_x_frame_options_deny_is_not_a_hit():
+    res = ClickjackAdapter("atk", PINNED, run=ClickjackRunner(xfo=True)).run(
+        {"tool": "clickjack", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/portal/settings"}})
+    assert res["deterministic_signals"]["hit"] is False      # framing denied by the header
+
+
+def test_clickjack_csp_frame_ancestors_is_not_a_hit():
+    res = ClickjackAdapter("atk", PINNED, run=ClickjackRunner(csp_frame_ancestors=True)).run(
+        {"tool": "clickjack", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/portal/settings"}})
+    sig = res["deterministic_signals"]
+    assert sig["csp_frame_ancestors"] is True and sig["hit"] is False  # CSP restricts framing
 
 
 def test_parse_http_full_splits_status_headers_and_body():

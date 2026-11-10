@@ -23,6 +23,8 @@ harness has real web vulnerabilities to find and independently confirm:
                  denied by the range, so the only reachable callee is the range collaborator.
   - /redirect?url= 302-redirects to the caller's url with no same-origin or allowlist check,
                  so it sends a victim to any attacker origin (open redirect).
+  - /portal/settings is a sensitive-action page that sets no X-Frame-Options and no CSP
+                 frame-ancestors, so a cross-origin page can frame it (clickjacking).
 It is seeded into a target container at provision time (not baked into the golden image)
 and is never reachable off the range.
 
@@ -260,6 +262,13 @@ class Handler(BaseHTTPRequestHandler):
         elif parts.path == "/portal/me":
             user = _SESSIONS.get(self._req_sid())
             self._respond(200, ("me: user %s" % user) if user else "me: anonymous", "text/plain")
+        elif parts.path == "/portal/settings":
+            # A sensitive account-settings page with a state-changing action. VULNERABLE BY
+            # DESIGN: it sets no X-Frame-Options and no CSP frame-ancestors, so a cross-origin
+            # page can frame it and overlay the action (clickjacking / UI redress). A correct
+            # app would deny framing.
+            self._respond(200, _PAGE + '<form action="/portal/email" method="get">'
+                          '<input name="to"><button>Change email</button></form>')
         elif parts.path == "/fetch":
             url = (query.get("url") or [""])[0]
             # VULNERABLE BY DESIGN: the server fetches the caller's url with no allowlist,

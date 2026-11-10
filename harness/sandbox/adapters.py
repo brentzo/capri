@@ -636,6 +636,47 @@ def _parse_redirect(out_text):
 _FOREIGN_ORIGIN = "https://evil.range.local"
 
 
+class ClickjackAdapter(_Adapter):
+    """Clickjacking / UI redress against a pinned in-scope target. Registered as `clickjack`.
+
+    The harness fetches a sensitive-action page and reports clickjacking only when the
+    response carries neither X-Frame-Options nor a CSP `frame-ancestors` directive, which
+    are the two headers that stop a cross-origin page from framing it; with neither, the
+    page is framable and its action can be overlaid. This is the HTTP-observable half of the
+    card (a browser adapter would also confirm the action operates inside the frame), so a
+    page that denies framing with either header does not fire; the Verifier repeats the
+    header read."""
+
+    def run(self, req):
+        ip = self._resolve(req["target"])
+        port = int(req["port"])
+        args = req.get("args") or {}
+        scheme = args.get("scheme") or ("https" if port in (443, 8443) else "http")
+        path = args.get("path", "/portal/settings")
+        url = f"{scheme}://{ip}:{port}{path}"
+        status_code, headers, _ = self._send_http_full(url)
+        low = {k.lower(): v for k, v in (headers or {}).items()}
+        xfo = low.get("x-frame-options")
+        csp = (low.get("content-security-policy") or "").lower()
+        frame_ancestors = "frame-ancestors" in csp
+        framable = status_code == 200 and not xfo and not frame_ancestors
+        return {
+            "status": "ok" if framable else "error",
+            "parsed": {"status_code": status_code, "x_frame_options": xfo,
+                       "csp_frame_ancestors": frame_ancestors},
+            "request_bytes": f"clickjack {url}".encode("utf-8"),
+            "response_bytes": json.dumps(low).encode("utf-8"),
+            "deterministic_signals": {
+                "hit": framable,
+                "clickjacking": framable,
+                "x_frame_options": xfo,
+                "csp_frame_ancestors": frame_ancestors,
+                "status_code": status_code,
+                "confidence": 0.9 if framable else 0.0,
+            },
+        }
+
+
 class OpenRedirectAdapter(_Adapter):
     """Open redirect against a pinned in-scope target. Registered as `redirect`.
 

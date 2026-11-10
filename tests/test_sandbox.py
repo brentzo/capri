@@ -414,6 +414,15 @@ def test_phase_recon_detects_a_cacheable_endpoint():
     assert facts["asset.cache_path"] == "/promo"
 
 
+def test_phase_recon_detects_a_state_changing_action():
+    from harness.recon import phase_recon
+    pages = {"/": (200, "Try /search?q=..."), "/portal/settings": (200, "<form>")}
+    run = _recon_runner(open_ports=[("10.90.0.3", 8080)], http=[("10.90.0.3", 8080)], pages=pages)
+    facts = phase_recon("hc-range-attacker", _pinned_eng(), run=run)["t1"]
+    assert facts["asset.has_state_changing_action"] is True
+    assert facts["asset.action_path"] == "/portal/settings"
+
+
 def test_phase_recon_adds_a_login_endpoint_asset_for_a_session_cookie():
     from harness.recon import phase_recon
     pages = {"/": (200, "Try /search?q=..."), "/portal": (200, "portal session anonymous")}
