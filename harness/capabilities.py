@@ -36,6 +36,8 @@ CAPABILITIES = {
     "KB-WEB-INJ-SSRF-001": ("ssrf", {"path": "/fetch", "param": "url"}),
     "KB-CLIENT-REDIRECT-OPEN-001": ("redirect", {"path": "/redirect", "param": "url"}),
     "KB-CLIENT-REDRESS-CLICKJACK-001": ("clickjack", {"path": "/portal/settings"}),
+    "KB-CLIENT-CSRF-001": ("csrf", {"path": "/portal", "login_path": "/portal/login",
+                                    "action_path": "/portal/email", "action_param": "to"}),
 }
 
 

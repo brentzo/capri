@@ -25,6 +25,8 @@ harness has real web vulnerabilities to find and independently confirm:
                  so it sends a victim to any attacker origin (open redirect).
   - /portal/settings is a sensitive-action page that sets no X-Frame-Options and no CSP
                  frame-ancestors, so a cross-origin page can frame it (clickjacking).
+  - /portal/email?to= changes the session's email, authorized by the session cookie alone
+                 with no anti-CSRF token and no SameSite cookie (cross-site request forgery).
 It is seeded into a target container at provision time (not baked into the golden image)
 and is never reachable off the range.
 
@@ -64,6 +66,8 @@ _CACHE = {}
 # Cookie session store: sid -> user id (None means established but not authenticated). It
 # too starts empty each time the app is seeded.
 _SESSIONS = {}
+# Per-session profile state the CSRF action changes (sid -> email). Starts empty each seed.
+_PROFILE = {}
 
 
 def _seed_files():
@@ -269,6 +273,20 @@ class Handler(BaseHTTPRequestHandler):
             # app would deny framing.
             self._respond(200, _PAGE + '<form action="/portal/email" method="get">'
                           '<input name="to"><button>Change email</button></form>')
+        elif parts.path == "/portal/email":
+            sid = self._req_sid()
+            if not sid or sid not in _SESSIONS:
+                self._respond(401, "no session", "text/plain")
+                return
+            to = (query.get("to") or [""])[0]
+            if to:
+                # VULNERABLE BY DESIGN: this state change is authorized by the session
+                # cookie alone, with no anti-CSRF token, and the cookie carries no SameSite
+                # attribute, so a cross-origin page can drive it on the victim's behalf
+                # (cross-site request forgery). A correct app would require a per-request
+                # token the attacker's origin cannot read.
+                _PROFILE[sid] = to
+            self._respond(200, "email: %s" % _PROFILE.get(sid, "none"), "text/plain")
         elif parts.path == "/fetch":
             url = (query.get("url") or [""])[0]
             # VULNERABLE BY DESIGN: the server fetches the caller's url with no allowlist,

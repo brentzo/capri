@@ -842,6 +842,74 @@ def _cookie_sid(headers):
     return None
 
 
+def _cookie_samesite(headers):
+    """The SameSite attribute (lowercased) on the `sid` Set-Cookie, or None when absent. A
+    cookie with no SameSite=Strict/Lax is sent on cross-site requests, which is what makes a
+    CSRF forgery carry the victim's session."""
+    for key, val in (headers or {}).items():
+        if key.lower() == "set-cookie" and "sid=" in str(val):
+            for part in str(val).split(";"):
+                name, _, value = part.strip().partition("=")
+                if name.lower() == "samesite":
+                    return value.strip().lower()
+    return None
+
+
+class CsrfAdapter(_Adapter):
+    """Cross-site request forgery on a state-changing endpoint. Registered as `csrf`.
+
+    The harness establishes an authenticated cookie session, then drives the state change
+    carrying only the session cookie and no anti-CSRF token, and reports CSRF only when the
+    change takes effect and the session cookie has no SameSite protection, which is the pair
+    that lets a cross-origin page make the request on the victim's behalf. The marker is the
+    harness's and it reads the state back itself, so an app that requires a token leaves the
+    state unchanged and does not fire, and one that sets SameSite on the cookie fails the
+    second half; the Verifier repeats the sequence against a fresh snapshot."""
+
+    def run(self, req):
+        ip = self._resolve(req["target"])
+        port = int(req["port"])
+        args = req.get("args") or {}
+        scheme = args.get("scheme") or ("https" if port in (443, 8443) else "http")
+        base = f"{scheme}://{ip}:{port}"
+        portal = args.get("path", "/portal")
+        login_path = args.get("login_path", "/portal/login")
+        action_path = args.get("action_path", "/portal/email")
+        action_param = args.get("action_param", "to")
+        login_user = str(args.get("login_user", "1"))
+
+        _, h0, _ = self._send_http_full(base + portal)           # establish a session
+        sid = _cookie_sid(h0)
+        samesite = _cookie_samesite(h0)
+        changed = False
+        s_change = 0
+        if sid:
+            cookie = {"Cookie": f"sid={sid}"}
+            self._send_http_full(f"{base}{login_path}?user={login_user}", "GET", cookie)
+            marker = "csrf-" + secrets.token_hex(6) + "@evil.test"
+            qs = urllib.parse.urlencode({action_param: marker})  # no anti-CSRF token carried
+            s_change, _, _ = self._send_http_full(f"{base}{action_path}?{qs}", "GET", cookie)
+            _, _, b_read = self._send_http_full(f"{base}{action_path}", "GET", cookie)
+            changed = marker in b_read
+        no_samesite = samesite not in ("strict", "lax")
+        hit = bool(sid) and changed and no_samesite
+        return {
+            "status": "ok" if hit else "error",
+            "parsed": {"state_changed": changed, "samesite": samesite,
+                       "change_status": s_change},
+            "request_bytes": f"csrf {base}{action_path} tokenless".encode("utf-8"),
+            "response_bytes": f"changed={changed} samesite={samesite}".encode("utf-8"),
+            "deterministic_signals": {
+                "hit": hit,
+                "csrf": hit,
+                "state_changed": changed,
+                "samesite": samesite,
+                "status_code": s_change,
+                "confidence": 0.95 if hit else 0.0,
+            },
+        }
+
+
 class SessAdapter(_Adapter):
     """Session fixation against a pinned in-scope login endpoint. Registered as `sess`.
 

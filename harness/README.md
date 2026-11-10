@@ -418,6 +418,9 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   fetches a sensitive-action page and fires when it carries neither X-Frame-Options nor a
   CSP frame-ancestors directive, the two headers that stop cross-origin framing (recon marks
   `asset.has_state_changing_action` from a conventional action page so the card applies).
+  `CsrfAdapter` (`csrf`) logs into a cookie session, drives the state change with only the
+  cookie and no anti-CSRF token, and fires only when the change takes effect and the session
+  cookie has no SameSite protection (the pair that lets a cross-origin page forge it).
   The attacker container runs the toolchain image (`infra/sandbox/Dockerfile.attacker`,
   built for amd64 and arm64, httpx checksum-pinned) while targets stay the minimal node
   image, and the attacker still holds no `NET_ADMIN`, so the host-owned scope guard

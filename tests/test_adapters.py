@@ -16,10 +16,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from urllib.parse import parse_qs, urlparse                              # noqa: E402
 import base64                                                            # noqa: E402
 from harness.sandbox.adapters import (                                   # noqa: E402
-    BflaAdapter, CacheAdapter, ClickjackAdapter, CmdiAdapter, CorsAdapter, HttpRequestAdapter,
-    HttpxAdapter, IdorAdapter, JwtAdapter, NmapAdapter, OpenRedirectAdapter, PathAdapter,
-    SessAdapter, SqliAdapter, SsrfAdapter, SstiAdapter, _FOREIGN_ORIGIN, _RANGE_CANARY,
-    _parse_http_full, _parse_http_response, _parse_httpx, _parse_nmap_services)
+    BflaAdapter, CacheAdapter, ClickjackAdapter, CmdiAdapter, CorsAdapter, CsrfAdapter,
+    HttpRequestAdapter, HttpxAdapter, IdorAdapter, JwtAdapter, NmapAdapter, OpenRedirectAdapter,
+    PathAdapter, SessAdapter, SqliAdapter, SsrfAdapter, SstiAdapter, _FOREIGN_ORIGIN,
+    _RANGE_CANARY, _parse_http_full, _parse_http_response, _parse_httpx, _parse_nmap_services)
 from harness.sandbox.base import RunResult                               # noqa: E402
 
 # Real `nmap -sV -Pn -p 8080 -oX -` output (captured live), trimmed to the shape we parse.
@@ -992,6 +992,77 @@ def test_clickjack_csp_frame_ancestors_is_not_a_hit():
          "args": {"path": "/portal/settings"}})
     sig = res["deterministic_signals"]
     assert sig["csp_frame_ancestors"] is True and sig["hit"] is False  # CSP restricts framing
+
+
+class CsrfRunner:
+    """Simulates the cookie-session state change. Vulnerable: `/portal/email?to=` changes
+    the session's email with only the cookie and no token, and the sid cookie has no
+    SameSite. `require_token` models a safe app that rejects the tokenless change; `samesite`
+    models a cookie that is not sent cross-site."""
+
+    def __init__(self, *, require_token=False, samesite=None):
+        self.require_token, self.samesite = require_token, samesite
+        self.sessions, self.emails, self.calls = {}, {}, []
+        self._seq = 0
+
+    def __call__(self, argv, input=None, timeout=None):
+        self.calls.append(argv)
+        url, headers = _call_url_headers(argv)
+        parts = urlparse(url)
+        q = parse_qs(parts.query)
+        sid = None
+        for part in headers.get("Cookie", "").split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == "sid":
+                sid = v
+        set_cookie = None
+        body = ""
+        if parts.path == "/portal":
+            if not sid or sid not in self.sessions:
+                self._seq += 1
+                sid = f"sid{self._seq}"
+                self.sessions[sid] = None
+                set_cookie = f"sid={sid}; Path=/" + (f"; SameSite={self.samesite}" if self.samesite else "")
+            body = f"portal session {sid}"
+        elif parts.path == "/portal/login":
+            self.sessions[sid] = (q.get("user") or ["1"])[0]
+            body = "logged in"
+        elif parts.path == "/portal/email":
+            to = (q.get("to") or [""])[0]
+            if to and not self.require_token:                    # safe app needs a token
+                self.emails[sid] = to
+            body = "email: %s" % self.emails.get(sid, "none")
+        hdr = {"Set-Cookie": set_cookie} if set_cookie else {}
+        return RunResult(0, "STATUS 200\n" + json.dumps(hdr) + "\n---BODY---\n" + body, "")
+
+
+def test_csrf_confirms_tokenless_state_change_on_a_non_samesite_cookie():
+    res = CsrfAdapter("atk", PINNED, run=CsrfRunner()).run(
+        {"tool": "csrf", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/portal", "login_path": "/portal/login",
+                  "action_path": "/portal/email", "action_param": "to"}})
+    sig = res["deterministic_signals"]
+    assert res["status"] == "ok"
+    assert sig["hit"] is True and sig["csrf"] is True
+    assert sig["state_changed"] is True and sig["samesite"] is None
+
+
+def test_csrf_token_required_is_not_a_hit():
+    res = CsrfAdapter("atk", PINNED, run=CsrfRunner(require_token=True)).run(
+        {"tool": "csrf", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/portal", "login_path": "/portal/login",
+                  "action_path": "/portal/email", "action_param": "to"}})
+    sig = res["deterministic_signals"]
+    assert sig["state_changed"] is False and sig["hit"] is False  # the tokenless change was refused
+
+
+def test_csrf_samesite_cookie_is_not_a_hit():
+    res = CsrfAdapter("atk", PINNED, run=CsrfRunner(samesite="Strict")).run(
+        {"tool": "csrf", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/portal", "login_path": "/portal/login",
+                  "action_path": "/portal/email", "action_param": "to"}})
+    sig = res["deterministic_signals"]
+    assert sig["samesite"] == "strict" and sig["hit"] is False   # cookie not sent cross-site
 
 
 def test_parse_http_full_splits_status_headers_and_body():
