@@ -5,7 +5,7 @@ This directory is the host-side setup for that gateway.
 Like the sandbox range, it is self-hosted and runs on your own machine: Docker and two API keys, no cloud account.
 
 The harness Python stays dependency-free and only ever talks to a gateway URL.
-`capri setup` configures the gateway; `tools/setup.py` (standard library only) is the terminal UI behind it, and `tools/modelplane.py` is the mechanics it drives.
+`capri setup` configures the gateway; `cli/setup.py` owns setup state and validation, `cli/setup_tui.py` renders the Textual wizard, and `tools/modelplane.py` handles gateway operations.
 
 ## Quickstart
 
@@ -17,7 +17,7 @@ capri setup      # pick your Operator and Verifier models, drop in keys, start t
 capri run        # run an engagement with the models you chose
 ```
 
-`capri setup` is a terminal UI: it shows a catalog of providers as one list of models grouped by provider, you pick a model for the Operator and a different-provider model for the Verifier (the finder never verifies on its own model), and it reads your API keys with no echo and starts the gateway.
+`capri setup` is a Textual wizard with a persistent progress and role summary, Back and Next navigation, and asterisk-masked API-key input. It shows models from the provider catalog, excludes the Operator's provider from Verifier choices, and starts the gateway only after review.
 `capri run` loads the gateway handles into its own environment, so there is no manual export step.
 With no gateway configured, a run falls back to deterministic stand-ins, so the substrate and dispatch path still work on a host without model access.
 

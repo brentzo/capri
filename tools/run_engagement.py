@@ -137,8 +137,8 @@ def build_roles(conn, eng):
     ver_secret = os.environ.get("HC_VK_VERIFIER")
     if not (op_secret and ver_secret):
         return Operator(), Verifier(), ("deterministic stand-ins "
-                                        "(run tools/setup.py to configure the model plane)")
-    # Routes come from the gateway the user configured (tools/setup.py exports them via
+                                        "(run capri setup to configure the model plane)")
+    # Routes come from the gateway the user configured (capri setup exports them via
     # `modelplane.py env`), so whichever providers they picked drive the run; the
     # defaults keep the deepseek/openai pairing when the env does not set them.
     op_route = os.environ.get("HC_OPERATOR_ROUTE", OPERATOR_ROUTE)
@@ -151,29 +151,30 @@ def build_roles(conn, eng):
             f"Bifrost at {base_url}  (operator={op_route}, verifier={ver_route})")
 
 
-def main():
+def main(progress=None):
+    emit = progress or print
     if shutil.which("docker") is None:
-        print("docker not found; skipping live engagement run")
+        emit("docker not found; skipping live engagement run")
         return 0
     eng, errs = contract.parse(CONTRACT)
     if errs:
-        print("contract invalid:", errs)
+        emit(f"contract invalid: {errs}")
         return 1
     sb = DockerSandbox(listener_app=VULNWEB, collaborator_app=COLLABORATOR)
     try:
         desc = sb.provision(eng)
-        print(f"provisioned {desc['range_id']}  pinned={desc['pinned_targets']}")
+        emit(f"provisioned {desc['range_id']}  pinned={desc['pinned_targets']}")
         if not sb.proofs_pass():
-            print("proofs did not pass; the harness would run passive-only. Aborting live run.")
+            emit("proofs did not pass; the harness would run passive-only. Aborting live run.")
             return 1
-        print("all five guarantees proved; running the engagement under sandbox enforcement")
+        emit("all five guarantees proved; running the engagement under sandbox enforcement")
 
         target_model = phase_recon(sb.attacker, eng)           # live recon, not hand-built
-        print("recon:", target_model)
+        emit(f"recon: {target_model}")
         with tempfile.TemporaryDirectory() as root:
             conn = db.connect()
             operator, verifier, plane_label = build_roles(conn, eng)
-            print("model plane:", plane_label)
+            emit(f"model plane: {plane_label}")
             adapters = {"probe": DockerProbe(sb.attacker, eng.pinned),
                         "nmap": NmapAdapter(sb.attacker, eng.pinned),
                         "httpx": HttpxAdapter(sb.attacker, eng.pinned),
@@ -203,17 +204,17 @@ def main():
             res = Loop(conn, eng, kb_index=KB, dispatcher=disp, sandbox=sb,
                        planner=DeterministicPlanner(KB), operator=operator,
                        verifier=verifier, kb_version="live").run(target_model)
-        print(f"\nmode: {res.mode}   report valid: {res.valid}")
-        print("coverage:", res.report["coverage_summary"])
+        emit(f"\nmode: {res.mode}   report valid: {res.valid}")
+        emit(f"coverage: {res.report['coverage_summary']}")
         for f in res.report["findings"]:
-            print(f"  CONFIRMED {f['technique_id']} on {f['asset']}  "
-                  f"found_by={f['found_by']} verified_by={f['verified_by']} cvss={f['cvss']['band']}")
+            emit(f"  CONFIRMED {f['technique_id']} on {f['asset']}  "
+                 f"found_by={f['found_by']} verified_by={f['verified_by']} cvss={f['cvss']['band']}")
         if not res.report["findings"]:
-            print("  (no confirmed findings)")
+            emit("  (no confirmed findings)")
         return 0 if res.valid else 1
     finally:
         sb.teardown()
-        print("range torn down")
+        emit("range torn down")
 
 
 if __name__ == "__main__":

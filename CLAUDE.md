@@ -5,8 +5,8 @@ The orchestrator is code and owns the control loop; the model roles only ever pr
 
 ## Non-negotiables
 
-Zero third-party dependencies.
-Standard library only, Python 3.12.
+The harness core and its tests use only the Python 3.12 standard library.
+The CLI may use Textual and Rich for terminal UI; pin those dependencies in `pyproject.toml` and `uv.lock`.
 SQLite stands in for the production Postgres, and a content-addressed filesystem blob store stands in for object storage.
 Do not reach for a dependency or a running service to make something easier; the self-contained, egress-denied posture is the whole point of the design.
 
@@ -25,6 +25,14 @@ CI runs each test file by name and will not discover a new one on its own.
 
 A slice is not done until the docs match the code.
 Add an implementation-pointer paragraph to the relevant spec under `docs/specs/`, a short section in `harness/README.md`, and one dated line at the bottom of the `SPEC.md` decision log.
+
+## Git workflow
+
+Do not merge branches or create merge commits.
+When bringing upstream changes into the current branch, rebase onto its upstream instead.
+Use `git pull --rebase --autostash` to update a branch while preserving local work.
+Do not rebase commits that are already published or shared, and do not force-push unless the user explicitly asks.
+This repository sets `pull.rebase=true`, `pull.autostash=true`, and `rebase.autoStash=true` in its local Git config.
 
 ## Commit messages
 

@@ -1,4 +1,4 @@
-# HackCulture KB tooling. Pure standard library; no dependencies to install.
+# Capri CLI plus HackCulture KB tooling.
 
 .PHONY: materialize validate validate-specs test check install
 

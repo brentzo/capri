@@ -8,11 +8,14 @@ One command for the whole workflow:
     capri gateway <cmd>      the model-plane gateway: status | env | down | destroy | up | keys
     capri help               show this message
 
-Set up once with `capri setup`, then `capri run`. Everything is standard-library
-Python; `capri` just dispatches to the tools in this repo, so it also works as
-`./capri ...` from a checkout or symlinked onto your PATH (see `make install`).
+Set up once with `capri setup`, then `capri run`. The harness stays standard-library
+Python; `capri` dispatches to tools in this repo and starts the locked CLI UI with uv
+when needed, so it also works as `./capri ...` from a checkout or PATH symlink.
 """
 import os
+import importlib.util
+import shutil
+import subprocess
 import sys
 
 # The original CAPRI banner uses box-drawing characters that Windows cp1252
@@ -23,7 +26,7 @@ if hasattr(sys.stdout, "reconfigure"):
 # realpath, so running capri through a PATH symlink still finds the repo it lives in.
 ROOT = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, ROOT)
-from tools import terminal                                          # noqa: E402
+from cli import terminal                                            # noqa: E402
 
 TAGLINE = "An autonomous penetration-testing agent."
 
@@ -39,21 +42,71 @@ def _help():
     color = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
     bold = "\033[1m" if color else ""
     dim = "\033[2m" if color else ""
+    cyan = "\033[36m" if color else ""
     rst = "\033[0m" if color else ""
-    commands = ("Commands\n"
-                f"  {terminal.command('setup'):<34} choose models and start the gateway\n"
-                f"  {terminal.command('run'):<34} run an engagement\n"
-                f"  {terminal.command('gateway up'):<34} start the saved gateway\n"
-                f"  {terminal.command('gateway status'):<34} show gateway status\n"
-                f"  {terminal.command('gateway keys'):<34} update provider keys\n"
-                f"  {terminal.command('gateway env'):<34} print shell exports\n"
-                f"  {terminal.command('gateway down'):<34} stop the gateway\n"
-                f"  {terminal.command('gateway destroy'):<34} remove gateway data\n"
-                f"  {terminal.command('help'):<34} show this message")
+    separator_column = 8 + len(terminal.command("gateway destroy")) + 2
+
+    def command_row(cmd, desc, *, indent=4):
+        command = terminal.command(cmd)
+        prefix = " " * indent + command
+        padding = max(2, separator_column - len(prefix))
+        return f"{prefix}{' ' * padding}{dim}│{rst}  {desc}"
+
+    def group(title, entries):
+        rows = [f"    {cyan}{title}{rst}"]
+        rows.extend(command_row(cmd, desc, indent=8) for cmd, desc in entries)
+        return "\n".join(rows)
+
+    quick_start = "\n".join((
+        command_row("setup", "choose models and start Bifrost"),
+        command_row("run", "run the sandbox engagement"),
+    ))
+    commands = "\n\n".join((
+        group("Setup", [("setup", "choose Operator and Verifier models, then start Bifrost")]),
+        group("Run", [("run", "run an engagement against the sandbox")]),
+        group("Gateway", [("gateway up", "start the saved gateway"),
+                           ("gateway status", "show gateway status"),
+                           ("gateway keys", "update provider keys"),
+                           ("gateway env", "print shell exports"),
+                           ("gateway down", "stop the gateway"),
+                           ("gateway destroy", "remove gateway data")]),
+        group("Help", [("help", "show this message")]),
+    ))
     return (f"\n{terminal.render_banner(color=color)}\n\n"
-            f"  {bold}{TAGLINE}{rst}\n\n"
+            f"  {bold}{TAGLINE}{rst}\n"
             f"{dim}{_indent(ABOUT)}{rst}\n\n"
-            f"{_indent(commands)}\n")
+            f"  {bold}Quick start{rst}\n{quick_start}\n\n"
+            f"  {bold}Commands{rst}\n{commands}\n")
+
+
+def _uses_rich_ui(argv):
+    if not argv or argv[0] in ("help", "-h", "--help"):
+        return False
+    interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    if argv[0] == "setup":
+        return interactive and "--plain" not in argv[1:]
+    if argv[0] == "run":
+        return interactive and "--plain" not in argv[1:]
+    return False
+
+
+def _prepare_ui_runtime(argv):
+    """Re-enter the command through the locked uv environment when the UI deps are missing."""
+    if not _uses_rich_ui(argv):
+        return None
+    if importlib.util.find_spec("textual") and importlib.util.find_spec("rich"):
+        return None
+    uv = shutil.which("uv")
+    if not uv:
+        sys.stderr.write("Capri's interactive UI needs Textual. Install uv or use `setup --plain`.\n")
+        return 1
+    env = os.environ.copy()
+    if env.get("CAPRI_UV_REENTRY"):
+        sys.stderr.write("Capri could not load Textual from the uv environment. Run `uv sync` and retry.\n")
+        return 1
+    env["CAPRI_UV_REENTRY"] = "1"
+    return subprocess.run([uv, "run", "--project", ROOT, "python",
+                           os.path.join(ROOT, "capri"), *argv], env=env, check=False).returncode
 
 
 def _state_dir_for_run():
@@ -73,16 +126,22 @@ def _state_dir_for_run():
     return modelplane.state_dir(types.SimpleNamespace(dir=None))
 
 
-def _cmd_run(_rest):
-    from tools import modelplane, run_engagement
-    terminal.print_banner("RUN ENGAGEMENT", "The sandbox is validated before active probes.")
+def _cmd_run(rest):
+    from tools import modelplane
+
     env = modelplane.runtime_env(_state_dir_for_run())
     if env:
         for k, v in env.items():
             os.environ.setdefault(k, v)          # wire the gateway handles in-process
-    else:
+    if "--plain" not in rest and sys.stdin.isatty() and sys.stdout.isatty():
+        from cli.ui import RunApp
+        return RunApp().run()
+    terminal.print_banner("RUN ENGAGEMENT", "The sandbox is validated before active probes.")
+    if not env:
         print(f"note: no model plane configured yet (run `{terminal.command('setup')}` first); "
               "running with the deterministic stand-ins.\n")
+    from tools import run_engagement
+
     return run_engagement.main()
 
 
@@ -90,9 +149,12 @@ def main(argv):
     if not argv or argv[0] in ("help", "-h", "--help"):
         print(_help())
         return 0
+    prepared = _prepare_ui_runtime(argv)
+    if prepared is not None:
+        return prepared
     cmd, rest = argv[0], argv[1:]
     if cmd == "setup":
-        from tools import setup
+        from cli import setup
         return setup.main(rest)
     if cmd == "run":
         return _cmd_run(rest)

@@ -103,7 +103,7 @@ def test_bring_up_rejects_missing_keys_before_writing_state_or_running_docker():
 def test_setup_requests_both_keys_before_checking_docker():
     import tempfile
     import types
-    from tools import setup
+    from cli import setup
 
     original_have_docker = mp.have_docker
     docker_checks = []

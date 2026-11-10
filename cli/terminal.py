@@ -30,3 +30,26 @@ def print_banner(title, subtitle=None, *, stream=None):
 def command(subcommand):
     prefix = "python .\\capri" if os.name == "nt" else "capri"
     return f"{prefix} {subcommand}".rstrip()
+
+
+def rich_console():
+    """Return Rich's terminal-aware console when the optional CLI UI deps are available."""
+    try:
+        from rich.console import Console
+    except ImportError:
+        return None
+    return Console()
+
+
+def print_status(message, *, style="cyan", stream=None):
+    """Print one colored status line, falling back cleanly for plain environments."""
+    try:
+        from rich.text import Text
+    except ImportError:
+        (stream or sys.stdout).write(message + "\n")
+        return
+    console = rich_console()
+    if console is None:
+        (stream or sys.stdout).write(message + "\n")
+        return
+    console.print(Text(message, style=style))

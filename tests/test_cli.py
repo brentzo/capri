@@ -6,7 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from tools import terminal
+from cli import terminal
 
 
 def test_original_banner_renders_without_color_by_default():

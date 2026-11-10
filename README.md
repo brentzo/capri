@@ -6,7 +6,9 @@ Capri drives an LLM agent through a real pentest against a disposable sandbox ta
 
 The governing rule is **the harness is code, the agent is prompted**: safety-critical logic is deterministic, and the model only proposes what to try, never what runs.
 
-This repository holds the whole system: the dependency-free Python harness, plus self-hostable backends for the two things it drives - an isolated Docker sandbox range and a Bifrost model gateway you bring up on your own machine. The harness itself has zero third-party dependencies, and its decision layer is tested against stubbed infrastructure, so `make check` runs in seconds without Docker or a network.
+This repository holds the whole system: the dependency-free Python harness, plus self-hostable backends for the two things it drives - an isolated Docker sandbox range and a Bifrost model gateway you bring up on your own machine.
+The harness core and its test suite use only the Python standard library, and its decision layer is tested against stubbed infrastructure, so `make check` runs in seconds without Docker or a network.
+The CLI's styled terminal UI uses Textual and Rich, pinned in `pyproject.toml` and `uv.lock`.
 
 ## Highlights
 
@@ -74,12 +76,13 @@ Untrusted target output enters a role's context only as delimited data, never as
 
 ## Quickstart
 
-Needs Python 3.12, `make`, and `git`. Nothing to install.
+Needs Python 3.12, `uv`, `make`, and `git`.
 
 ```bash
 git clone git@github.com:brentzo/capri.git && cd capri
 
 make check      # the strict KB validator plus all self-test suites (what CI runs)
+uv sync         # install the pinned CLI UI dependencies
 make contract   # validate the example engagement contract
 make materialize # regenerate the card tree and eval manifests from the specs
 ```
@@ -137,8 +140,9 @@ A live engagement needs three things, all self-hostable on your own machine:
    capri run        # run an engagement with the models you chose
    ```
 
-   In Windows PowerShell, from the repository folder, run `python .\capri setup --plain`
+   In Windows PowerShell, from the repository folder, run `python .\capri setup`
    and `python .\capri run` if `capri` is not installed on your `PATH`.
+   Those commands use the repo's locked `uv` environment; add `--plain` to setup for line-by-line prompts.
 
    `capri setup` offers a catalog of providers (OpenAI, Anthropic, Gemini, DeepSeek, and more) and keeps the two roles on different providers; the gateway (Bifrost) runs on `127.0.0.1` and never appears. See the [gateway setup walkthrough](infra/modelplane/README.md) and the [model-plane spec](docs/specs/HC-MODEL-01.md).
 3. **Tool adapters** behind the allow-listed `dispatch()` interface (nmap, httpx, ffuf, sqlmap, nuclei, a headless browser), optionally with the Tavily enrichment service.

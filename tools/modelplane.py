@@ -7,7 +7,7 @@ infrastructure, the way Docker is for the sandbox, and it runs on the user's own
 machine - no cloud account. This module owns the mechanics of bringing it up from a
 pairing (which provider/model is the Operator, which is the Verifier) chosen from the
 catalog Capri owns (`tools/catalog.py`). The interactive way to choose that pairing and
-drop in keys is the setup TUI (`tools/setup.py`); this module is what it calls, and it
+drop in keys is the setup TUI (`cli/setup.py`); this module is what it calls, and it
 also exposes a plain CLI (`up`/`keys`/`env`/`status`/`down`/`destroy`).
 
 The one step that is never automated, by design, is the user supplying their own
@@ -31,11 +31,10 @@ import secrets
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from tools import catalog, terminal                                  # noqa: E402
+from cli import terminal                                              # noqa: E402
+from tools import catalog                                             # noqa: E402
 
 IMAGE = "maximhq/bifrost:latest"
 SEED_IMAGE = "alpine:3.20"           # tiny, root, only used to seed config + perms
@@ -262,22 +261,23 @@ def bring_up(sd, plane, env, *, port, progress=lambda m: None):
     return {"ok": True, "routes": plane_routes(plane)}
 
 
-# --- plain CLI (the TUI in tools/setup.py is the interactive way) ----------------
+# --- plain CLI (the TUI in cli/setup.py is the interactive way) ------------------
 
 def up(args):
     if not have_docker():
         sys.exit(f"{container_cmd()} not found. Install Docker, or set HC_CONTAINER=podman.")
     sd = state_dir(args)
     plane = load_plane(sd)                           # persisted choice, else the default
-    res = bring_up(sd, plane, load_env(sd), port=args.port, progress=lambda m: print(f"  {m} ..."))
+    res = bring_up(sd, plane, load_env(sd), port=args.port,
+                   progress=lambda message: terminal.print_status(f"›  {message} …"))
     if not res["ok"]:
-        print("gateway did not come up:", res["error"])
+        terminal.print_status(f"Gateway did not come up: {res['error']}", style="bold red")
         if res.get("logs"):
             print(res["logs"])
         sys.exit(1)
     r = res["routes"]
-    print(f"gateway healthy on 127.0.0.1:{args.port}  "
-          f"(operator={r['operator']}, verifier={r['verifier']}).")
+    terminal.print_status(f"✓ Gateway healthy on 127.0.0.1:{args.port}", style="bold green")
+    terminal.print_status(f"Operator  {r['operator']}  ·  Verifier  {r['verifier']}", style="cyan")
     print("run an engagement with:  " + terminal.command("run"))
 
 
@@ -288,14 +288,14 @@ def keys(args):
     plane, env = load_plane(sd), load_env(sd)
     if not env:
         sys.exit("gateway not set up yet; run: " + terminal.command("setup"))
-    print("Paste each provider API key (input is hidden). Enter to leave one unchanged.")
+    terminal.print_status("Update provider API keys · input is hidden", style="bold cyan")
     for role, s in plane.items():
         shown = "set" if env.get(s["key_env"], "").strip() else "unset"
         val = getpass.getpass(f"  {s['key_env']} for {role} ({s['provider']}, {shown}): ").strip()
         if val:
             env[s["key_env"]] = val
     save_env(sd, env, plane)
-    print("keys written. Restarting the gateway ...")
+    terminal.print_status("✓ Keys saved. Restarting the gateway…", style="bold green")
     args.port = args.port or _current_port() or DEFAULT_PORT
     up(args)
 
@@ -326,9 +326,31 @@ def status(args):
         sys.exit(f"{container_cmd()} not found.")
     sd = state_dir(args)
     plane, env = load_plane(sd), load_env(sd)
-    print(f"state dir: {sd}")
-    print(f"container: {CONTAINER}  health: {_health(CONTAINER)}")
+    health = _health(CONTAINER)
     port = _current_port()
+    console = terminal.rich_console()
+    if console:
+        from rich.table import Table
+        from rich.text import Text
+
+        console.print(Text(f"Gateway  {CONTAINER}  ·  {health}",
+                           style="bold green" if health == "healthy" else "bold yellow"))
+        console.print(Text(f"Address  {f'127.0.0.1:{port}' if port else 'not running'}",
+                           style="cyan"))
+        table = Table(box=None, show_header=True, padding=(0, 2))
+        table.add_column("ROLE", style="bold cyan")
+        table.add_column("PROVIDER / MODEL")
+        table.add_column("API KEY")
+        for role, settings in plane.items():
+            configured = bool(env.get(settings["key_env"], "").strip())
+            table.add_row(Text(role.title()), Text(f"{settings['provider']} / {settings['model']}"),
+                          Text("set" if configured else "unset",
+                               style="green" if configured else "bold red"))
+        console.print(table)
+        console.print(Text(f"State  {sd}", style="dim"))
+        return
+    print(f"state dir: {sd}")
+    print(f"container: {CONTAINER}  health: {health}")
     print(f"port: {port if port else '(not running)'}")
     for role, s in plane.items():
         print(f"  {role:8} -> {s['provider']}/{s['model']:16} key {s['key_env']}: "
@@ -339,7 +361,7 @@ def down(args):
     if not have_docker():
         sys.exit(f"{container_cmd()} not found.")
     _run(["rm", "-f", CONTAINER])
-    print(f"stopped {CONTAINER} (data volume and keys kept; setup brings it back).")
+    terminal.print_status(f"✓ Stopped {CONTAINER}. Data volume and keys are kept.", style="bold green")
 
 
 def destroy(args):
@@ -347,13 +369,13 @@ def destroy(args):
         sys.exit(f"{container_cmd()} not found.")
     _run(["rm", "-f", CONTAINER])
     _run(["volume", "rm", VOLUME])
-    print(f"removed {CONTAINER} and volume {VOLUME}. The .env (keys) is kept; "
-          f"delete {state_dir(args) / '.env'} to remove the secrets too.")
+    terminal.print_status(f"✓ Removed {CONTAINER} and volume {VOLUME}.", style="bold green")
+    terminal.print_status(f"Provider keys remain in {state_dir(args) / '.env'}.", style="yellow")
 
 
 def main(argv=None):
     p = argparse.ArgumentParser(description="Bring up the Bifrost model-plane gateway. "
-                                "For interactive setup, run tools/setup.py.")
+                                "For interactive setup, run capri setup.")
     p.add_argument("--dir", help="state dir (default ~/.hackculture/modelplane)")
     p.add_argument("--port", type=int, default=0, help=f"localhost port (default {DEFAULT_PORT})")
     sub = p.add_subparsers(dest="cmd", required=True)
