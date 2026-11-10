@@ -71,8 +71,6 @@ def _head(eid):
         ":root{color-scheme:light dark}\n"
         "body{font:16px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;"
         "max-width:60rem;margin:0 auto;padding:2rem 1rem;color:#1b1f24;background:#fff}\n"
-        "@media(prefers-color-scheme:dark){body{background:#15171a;color:#e6e8ea}"
-        ".card,.cov{background:#1e2126;border-color:#2c3139}.meta,.steps{color:#9aa3ad}}\n"
         "h1{font-size:1.5rem;margin:0 0 .25rem}h2{font-size:1.1rem;margin:2rem 0 .75rem;"
         "border-bottom:1px solid #d8dce1;padding-bottom:.3rem}\n"
         ".meta{color:#5b6470;font-size:.9rem;margin:0 0 1.25rem}\n"
@@ -91,6 +89,15 @@ def _head(eid):
         ".label{font-weight:600;color:#3a424c}\n"
         ".steps{color:#5b6470;font-size:.88rem;margin:.5rem 0 0;padding-left:1.1rem}\n"
         "footer{margin-top:2.5rem;color:#8a929b;font-size:.82rem}\n"
+        # dark-mode overrides last, so source order lets them win over the base rules above
+        "@media (prefers-color-scheme: dark){"
+        "body{background:#15171a;color:#e6e8ea}"
+        "h2{border-color:#2c3139}"
+        ".cov,.card{background:#1e2126;border-color:#2c3139}"
+        ".meta,.steps,.method{color:#9aa3ad}"
+        ".label,.banner{color:#e6e8ea}"
+        ".banner{background:#3a2e1a;border-color:#6b5324}"
+        "footer{color:#79828c}}\n"
         "</style>\n</head>\n<body>")
 
 

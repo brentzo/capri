@@ -23,11 +23,10 @@ from harness.store import datadir, db, engagements
 _HOST = "127.0.0.1"   # loopback only; a run history is never exposed on the network
 
 _STYLE = (
-    "<style>:root{color-scheme:light dark}"
+    "<style>"
+    ":root{color-scheme:light dark}"
     "body{font:16px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;"
     "max-width:60rem;margin:0 auto;padding:2rem 1rem;color:#1b1f24;background:#fff}"
-    "@media(prefers-color-scheme:dark){body{background:#15171a;color:#e6e8ea}"
-    "tr,.row{border-color:#2c3139}a{color:#6ab0ff}.meta{color:#9aa3ad}}"
     "h1{font-size:1.5rem}a{color:#1a5fb4;text-decoration:none}a:hover{text-decoration:underline}"
     ".meta{color:#5b6470;font-size:.9rem}"
     ".row{display:flex;gap:1rem;align-items:baseline;padding:.6rem 0;border-bottom:1px solid #e3e7ec}"
@@ -36,7 +35,15 @@ _STYLE = (
     "table{border-collapse:collapse;width:100%;font-size:.9rem}"
     "td,th{text-align:left;padding:.35rem .6rem;border-bottom:1px solid #e3e7ec;vertical-align:top}"
     "code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.85em}"
-    ".ok{color:#2f6f4e;font-weight:600}.bad{color:#b00020;font-weight:600}</style>")
+    ".ok{color:#2f6f4e;font-weight:600}.bad{color:#b00020;font-weight:600}"
+    # dark-mode overrides last, so source order lets them win over the base rules above
+    "@media (prefers-color-scheme: dark){"
+    "body{background:#15171a;color:#e6e8ea}"
+    "a{color:#6ab0ff}"
+    ".meta{color:#9aa3ad}"
+    ".row,td,th{border-color:#2c3139}"
+    ".ok{color:#5ec98b}.bad{color:#ff6b6b}"
+    "}</style>")
 
 
 def _esc(v):
