@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Tests for the sandbox substrate interface and the Docker backend (HC-SUB-01 §8, §10).
 
-The backend shells every docker/nsenter call through an injected runner, so these
+The backend shells every Docker call through an injected runner, so these
 drive the real provisioning and guard-proof logic against a stub with no Docker
 present: the commands issued (an internal network, an attacker with no NET_ADMIN, the
-host-installed scope guard), the guard ruleset built from the contract, and the four
+helper-installed scope guard), the guard ruleset built from the contract, and the four
 §8.1 assertions passing only when the range actually enforces scope. The live path is
 proven separately by `tools/sandbox_selftest.py` on a real Docker host.
 
@@ -13,12 +13,13 @@ Zero-dependency: `python3 tests/test_sandbox.py`.
 import json
 import os
 import sys
+from unittest.mock import patch
 from urllib.parse import urlparse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from harness.sandbox import PassiveOnlySandbox, guard_proof_result                 # noqa: E402
-from harness.sandbox.base import RunResult                                         # noqa: E402
+from harness.sandbox.base import RunResult, default_run                            # noqa: E402
 from harness.sandbox.docker import DockerSandbox, guard_ruleset                     # noqa: E402
 from harness.sandbox.probe import DockerProbe                                       # noqa: E402
 from harness.substrate import contract                                             # noqa: E402
@@ -42,6 +43,13 @@ def _eng():
     return eng
 
 
+def test_default_run_preserves_binary_stdin_bytes():
+    script = "import sys; sys.stdout.write(repr(sys.stdin.buffer.read()))"
+    result = default_run([sys.executable, "-c", script], input=b"first\nsecond\n")
+    assert result.rc == 0, result.err
+    assert result.out == "b'first\\nsecond\\n'"
+
+
 class FakeRunner:
     """Records every command and answers the ones the backend reads back: the attacker
     pid, the TCP/DNS probes per a configured reachability model, and a tiny per-
@@ -51,6 +59,7 @@ class FakeRunner:
     def __init__(self, *, reachable=(), dns_resolves=False, pid=4242,
                  runtimes='{"runc":{"path":"runc"}}', host_ip="203.0.113.9"):
         self.calls = []
+        self.inputs = {}
         self.reachable = set(reachable)
         self.dns_resolves = dns_resolves
         self.pid = pid
@@ -62,6 +71,7 @@ class FakeRunner:
 
     def __call__(self, argv, *, input=None, timeout=30):
         self.calls.append(list(argv))
+        self.inputs[tuple(argv)] = input
         if argv[:4] == ["docker", "inspect", "-f", "{{.State.Pid}}"]:
             return RunResult(0, str(self.pid), "")
         if argv[:4] == ["docker", "inspect", "-f", "{{.State.Status}}"]:
@@ -80,6 +90,8 @@ class FakeRunner:
             self.images[argv[3]] = dict(self.files.get(argv[2], {}))
             return RunResult(0, "", "")
         if argv[:2] == ["docker", "run"]:
+            if "--network" in argv and any(arg.startswith("container:") for arg in argv):
+                return RunResult(0, "", "")
             name, image = argv[argv.index("--name") + 1], argv[-1]
             self.files[name] = dict(self.images.get(image, {}))   # snapshot image -> its files
             return RunResult(0, "", "")
@@ -116,6 +128,20 @@ class FakeRunner:
 
     def ran(self, *needles):
         return any(all(n in call for n in needles) for call in self.calls)
+
+
+class FakeHostRoute:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        pass
+
+    def connect(self, address):
+        assert address == ("1.1.1.1", 80)
+
+    def getsockname(self):
+        return "203.0.113.9", 54321
 
 
 # --- the passive-only default -------------------------------------------
@@ -165,7 +191,8 @@ def test_provision_builds_an_internal_network_and_an_unprivileged_attacker():
     run = FakeRunner()
     sb = DockerSandbox(run=run)
     eng = _eng()
-    desc = sb.provision(eng)
+    with patch("harness.sandbox.docker.socket.socket", return_value=FakeHostRoute()):
+        desc = sb.provision(eng)
     assert desc["range_id"] == "hc-range" and desc["mode"] == "sandboxed"
     assert run.ran("network", "create", "--internal")          # G2 by construction
     assert run.ran("run", "-d", "--name", "hc-range-attacker")
@@ -174,8 +201,19 @@ def test_provision_builds_an_internal_network_and_an_unprivileged_attacker():
                         if c[:2] == ["docker", "run"] and "hc-range-attacker" in c)
     assert "NET_ADMIN" not in attacker_run and "--privileged" not in attacker_run
     assert "--init" in attacker_run        # reaps the headless browser's orphaned helpers
-    # the guard is installed by the HOST into the attacker netns, not by the agent
-    assert run.ran("nsenter", "-t", "4242", "-n", "nft", "-f", "-")
+    # A one-shot helper shares the attacker's netns and receives only NET_ADMIN.
+    guard = next(c for c in run.calls if c[:2] == ["docker", "run"]
+                 and "container:hc-range-attacker" in c)
+    assert "hc-guard:golden" in guard
+    assert "--cap-drop=ALL" in guard and "--cap-add=NET_ADMIN" in guard
+    assert "--privileged" not in guard
+    assert guard[-3:] == ["nft", "-f", "-"]
+    ruleset = run.inputs[tuple(guard)]
+    assert ruleset == guard_ruleset("hc_guard", [("10.90.0.3", [8080])]).encode("utf-8")
+    assert b"\r" not in ruleset
+    assert not run.ran("nsenter") and not run.ran("ip", "route", "get")
+    escape = sb.escape_attempt()
+    assert any(a["name"] == "unreachable:203.0.113.9" for a in escape["assertions"])
     assert eng.pinned["t1.sandbox.local"].compressed == "10.90.0.3"   # .1 oos, .2 attacker, .3 target
 
 
@@ -270,7 +308,8 @@ def test_escape_attempt_passes_when_the_host_and_other_nets_are_unreachable():
     # network are not, so there is no path off the range.
     run = FakeRunner(reachable=[("10.90.0.3", 8080)])
     sb = DockerSandbox(run=run)
-    sb.provision(_eng())
+    with patch("harness.sandbox.docker.socket.socket", return_value=FakeHostRoute()):
+        sb.provision(_eng())
     res = sb.escape_attempt()
     assert res["pass"] is True, res
     assert res["hardened_runtime"] == "runc"                   # no gVisor on this stub host
@@ -282,7 +321,8 @@ def test_escape_attempt_fails_when_the_operator_host_is_reachable():
     # a path to the host's management interface is an escape and must fail the proof
     run = FakeRunner(reachable=[("10.90.0.3", 8080), ("203.0.113.9", 22)])
     sb = DockerSandbox(run=run)
-    sb.provision(_eng())
+    with patch("harness.sandbox.docker.socket.socket", return_value=FakeHostRoute()):
+        sb.provision(_eng())
     res = sb.escape_attempt()
     assert res["pass"] is False
     assert any(a["name"] == "unreachable:203.0.113.9" and not a["ok"] for a in res["assertions"])
@@ -294,6 +334,9 @@ def test_provision_uses_gvisor_runtime_when_the_host_offers_it():
     sb.provision(_eng())
     assert sb.hardened is True
     assert hardened.ran("run", "--name", "hc-range-attacker", "--runtime", "runsc")
+    guard = next(c for c in hardened.calls if c[:2] == ["docker", "run"]
+                 and "container:hc-range-attacker" in c)
+    assert "--runtime" in guard and guard[guard.index("--runtime") + 1] == "runsc"
     # without gVisor the range still provisions, just without the hardened runtime
     plain = FakeRunner()
     sb2 = DockerSandbox(run=plain)
@@ -333,7 +376,8 @@ def test_proofs_pass_is_true_only_when_all_five_guarantees_prove():
     # a range with a live escape path to the host never earns full trust
     leaky = FakeRunner(reachable=[("10.90.0.3", 8080), ("203.0.113.9", 22)])
     sb2 = DockerSandbox(run=leaky)
-    sb2.provision(_eng())
+    with patch("harness.sandbox.docker.socket.socket", return_value=FakeHostRoute()):
+        sb2.provision(_eng())
     assert sb2.proofs_pass() is False
 
 

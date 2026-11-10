@@ -15,7 +15,7 @@ keys are read from the environment and presented only by the transport. With no 
 configured the run falls back to deterministic stand-ins, so the substrate, dispatch,
 probe, and report path can still be exercised on a host without model access.
 
-Skips (exit 0) when Docker is unavailable. Run on the range host as root, with the
+Skips (exit 0) when Docker is unavailable. Run where Docker is available, with the
 Bifrost virtual keys exported from the gateway's own env (never pasted in):
     export HC_VK_OPERATOR=... HC_VK_VERIFIER=...   # from the Bifrost .env, on the host
     sudo -E python3 tools/run_engagement.py

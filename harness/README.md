@@ -309,8 +309,8 @@ contract permits it, and a foothold never widens scope.
 ## What's here (the sandbox substrate backend)
 
 HC-SUB-01 §10: the interface the control loop drives to get an isolated range, plus
-the first self-hostable backend. No nested virtualization needed, so it runs on any
-commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
+the first self-hostable backend. It runs on Linux and on Windows/macOS through Docker
+Desktop without requiring host `nsenter` or root.
 
 - `sandbox/base.py` - `Sandbox`, the backend-agnostic interface (`provision /
   snapshot / restore / guard_proof / proofs_pass / kill`), and `PassiveOnlySandbox`,
@@ -319,7 +319,9 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
 - `sandbox/docker.py` - `DockerSandbox`, the Docker backend. `provision` builds one
   `--internal` network (no egress by construction = G2) with a target container per
   in-scope host and one attacker container (no `NET_ADMIN`, no network tooling, so the
-  agent can neither leave scope nor touch the guard). A target's listener is the plain
+  agent can neither leave scope nor touch the guard). A short-lived `hc-guard:golden`
+  helper joins the attacker's network namespace with only `NET_ADMIN`, installs the
+  default-deny nftables rules from stdin, then exits. A target's listener is the plain
   `http.server` stand-in, or, when `listener_app` is set, a python app seeded in over
   stdin (never baked into the golden image); the live runner seeds `infra/sandbox/vulnweb.py`,
   a deliberately vulnerable app (it reflects one query parameter unencoded, concatenates
@@ -328,8 +330,8 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   whose /account skips the ownership check, and whose /admin skips the role check), so the
   XSS, SQLi, SSTI, CORS, IDOR, BFLA, and JWT-confusion techniques have a real hole.
   The scope guard is an nftables
-  ruleset the host installs into the attacker's netns - default-deny egress, allowing
-  only the pinned in-scope IPs on their allowed ports (`scope.ports_for`). `guard_proof`
+  ruleset a short-lived helper installs into the attacker's netns - default-deny egress,
+  allowing only the pinned in-scope IPs on their allowed ports (`scope.ports_for`). `guard_proof`
   runs the four §8.1 probes from inside the attacker container. `snapshot`/`restore`
   give reproducibility (G3): `snapshot` commits each target container to an image and
   `restore` recreates it from that image at the same pinned IP (the attacker and guard
@@ -357,7 +359,7 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   range, gate on `proofs_pass`, recon the targets, and drive the control loop, so a
   live run confirms a finding (finder and verifier disjoint) and produces a validated
   report under sandbox enforcement.
-  Every docker/nsenter call goes through an injected runner, so the logic is
+  Every Docker call goes through an injected runner, so the logic is
   unit-tested with no Docker present (`tests/test_sandbox.py`); the live path is proven
   by `tools/sandbox_selftest.py` (golden image and notes in `infra/sandbox/`).
 - `sandbox/adapters.py` - the live tool adapters that give the §5.3 allowlist real
@@ -441,7 +443,7 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   postMessage (needs a second origin), and DOM-based XSS (needs Laya) stay out of reach.
   The attacker container runs the toolchain image (`infra/sandbox/Dockerfile.attacker`,
   built for amd64 and arm64, httpx checksum-pinned) while targets stay the minimal node
-  image, and the attacker still holds no `NET_ADMIN`, so the host-owned scope guard
+  image, and the attacker still holds no `NET_ADMIN`, so the namespace scope guard
   bounds every request. Each adapter's parse and signal shape are pinned against captured
   real tool output (or, for the crafted probes, a runner that simulates the vulnerable
   server) with no Docker and no tool present (`tests/test_adapters.py`); a live

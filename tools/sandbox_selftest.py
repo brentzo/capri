@@ -5,12 +5,12 @@ Provisions a throwaway range on the local Docker host, runs the guard proof from
 inside the attacker container, prints each assertion, and tears the range down.
 Exits non-zero if any assertion fails. Skips (exit 0) when Docker is unavailable, so
 it is safe to invoke anywhere; CI proves the same logic without Docker via
-`tests/test_sandbox.py`. Run it on the range host as root (nsenter needs it):
+`tests/test_sandbox.py`. Run it from the repository root:
 
-    sudo python3 tools/sandbox_selftest.py
+    uv run --project . python tools/sandbox_selftest.py
 
-It requires the golden node image to exist (`hc-node:golden`); build it with
-`docker build -t hc-node:golden -f infra/sandbox/Dockerfile.node infra/sandbox`.
+It requires the `hc-node:golden`, `hc-attacker:golden`, and `hc-guard:golden` images;
+build them using the commands in `infra/sandbox/README.md`.
 """
 import os
 import shutil

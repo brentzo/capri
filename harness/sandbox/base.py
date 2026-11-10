@@ -115,11 +115,20 @@ def default_run(argv, *, input=None, timeout=30):
     the real backends inject this and the tests inject a stub, so no Docker or root is
     needed to exercise the provisioning and proof logic."""
     import subprocess
+    binary_input = isinstance(input, bytes)
     try:
-        p = subprocess.run(list(argv), input=input, capture_output=True, text=True,
+        p = subprocess.run(list(argv), input=input, capture_output=True, text=not binary_input,
                            timeout=timeout)
     except subprocess.TimeoutExpired as e:
-        return RunResult(124, e.stdout or "", f"timeout after {timeout}s")
+        if binary_input:
+            stdout = (e.stdout or b"").decode("utf-8", errors="replace")
+        else:
+            stdout = e.stdout or ""
+        return RunResult(124, stdout, f"timeout after {timeout}s")
     except OSError as e:
         return RunResult(127, "", str(e))
+    if binary_input:
+        return RunResult(p.returncode,
+                         p.stdout.decode("utf-8", errors="replace"),
+                         p.stderr.decode("utf-8", errors="replace"))
     return RunResult(p.returncode, p.stdout, p.stderr)

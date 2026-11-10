@@ -3,7 +3,7 @@
 Provisions one egress-denied Docker network (`--internal`, so the range has no route
 off the host by construction = G2) holding a target container per in-scope host and
 one attacker container where tool adapters run. The scope guard (§5) is an nftables
-ruleset the HOST installs into the attacker's network namespace: default-deny egress,
+ruleset a short-lived helper installs into the attacker's network namespace: default-deny egress,
 allowing only the pinned in-scope IPs on their allowed ports. The attacker runs with
 no NET_ADMIN and no nft binary, so the agent can neither reach an out-of-scope host
 nor reconfigure the guard (§2: the agent itself is in the threat model). The guard
@@ -14,12 +14,12 @@ inside Docker Desktop's Linux VM on macOS/Windows). A separate gateway host and
 microVM/gVisor isolation harden G4 further and are selected the same way, behind this
 interface; this backend's job is G1 and G2, proven by the guard proof.
 
-Every docker/nsenter call goes through an injected `run`, so provisioning and proof
+Every Docker call goes through an injected `run`, so provisioning and proof
 logic is unit-tested against a stub with no Docker present (`tests/test_sandbox.py`);
-the live path uses the default subprocess runner and must execute on the range host
-as root (nsenter into the attacker netns needs it).
+the live path uses the default subprocess runner and works on Linux and Docker Desktop.
 """
 import ipaddress
+import socket
 import time
 
 from harness.sandbox.base import (
@@ -78,14 +78,15 @@ def guard_ruleset(table, pinned_ports):
 
 
 class DockerSandbox(Sandbox):
-    """A range built from Docker containers plus a host-installed nft scope guard.
+    """A range built from Docker containers plus an nft scope-guard helper.
 
     `provision` is idempotent-by-teardown: it removes any range of the same name
     first, so a re-driven run starts clean. The backend holds no engagement secrets;
-    it only shells out to `docker` and `nsenter` through the injected runner."""
+    it shells out to Docker through the injected runner."""
 
     def __init__(self, *, run=None, node_image="hc-node:golden", network="hc-range",
                  attacker_image="hc-attacker:golden",
+                 guard_image="hc-guard:golden",
                  subnet="10.90.0.0/24", internet_canary=("1.1.1.1", 443),
                  public_name="example.com", unrelated_net_ip="172.17.0.1",
                  kill_budget_ms=10000, listener_app=None, collaborator_app=None,
@@ -108,8 +109,9 @@ class DockerSandbox(Sandbox):
         self.collab_addr = None                    # "ip:port" a target should fetch, set at provision
         # The attacker container carries the pentest toolchain (nmap, ...); it still has
         # no NET_ADMIN and no nft/ip tooling, so the agent can run tools within scope but
-        # cannot reach the host-installed scope guard. Targets stay on the minimal image.
+        # cannot reach the scope guard helper. Targets stay on the minimal image.
         self.attacker_image = attacker_image
+        self.guard_image = guard_image
         self.network = network
         self.subnet = ipaddress.ip_network(subnet)
         self.internet_canary = internet_canary
@@ -124,7 +126,7 @@ class DockerSandbox(Sandbox):
         self.hardened = False
         self._host_ip = None        # the operator host's own IP, a §8.3 escape target
         self._eng = None
-        self._attacker_pid = None
+        self._provisioned = False
         self._targets = {}          # host -> (container_name, ip_str)
         self._target_ports = {}     # host -> [ports], to restart listeners after restore
         self._snapshots = {}        # snapshot_id -> {host: (name, ip, image_tag)}
@@ -138,14 +140,6 @@ class DockerSandbox(Sandbox):
         r = self._run(["docker", *args], input=input)
         if r.rc != 0:
             raise SandboxError(f"docker {' '.join(args[:2])} failed: {r.err.strip() or r.out.strip()}")
-        return r.out.strip()
-
-    def _attacker_netns(self, *args, input=None):
-        if self._attacker_pid is None:
-            raise SandboxError("range not provisioned: no attacker netns")
-        r = self._run(["nsenter", "-t", str(self._attacker_pid), "-n", *args], input=input)
-        if r.rc != 0:
-            raise SandboxError(f"nsenter {' '.join(args[:1])} failed: {r.err.strip()}")
         return r.out.strip()
 
     def _exec_attacker(self, *args, input=None):
@@ -194,15 +188,21 @@ class DockerSandbox(Sandbox):
         if errs:
             raise SandboxError("pinning failed: " + "; ".join(errs))
 
-        self._attacker_pid = int(self._docker("inspect", "-f", "{{.State.Pid}}", self.attacker))
-        self._attacker_netns("nft", "-f", "-", input=guard_ruleset(self.guard_table, pinned_ports))
+        guard_command = ["run", "--rm", "--network", f"container:{self.attacker}"]
+        if self._runtime:
+            guard_command += ["--runtime", self._runtime]
+        guard_command += ["--cap-drop=ALL", "--cap-add=NET_ADMIN", "-i", self.guard_image,
+                          "nft", "-f", "-"]
+        ruleset = guard_ruleset(self.guard_table, pinned_ports).encode("utf-8")
+        self._docker(*guard_command, input=ruleset)
+        self._provisioned = True
         return {"range_id": self.network, "attacker": self.attacker, "mode": "sandboxed",
                 "pinned_targets": dict(pinned), "provisioned_at": self._clock()}
 
     def guard_proof(self):
         """Prove G1/G2 from inside the attacker container: internet dropped, public DNS
         refused, in-range out-of-scope dropped, pinned in-scope allowed (§8.1)."""
-        if self._attacker_pid is None or self._in_scope_ip is None:
+        if not self._provisioned or self._in_scope_ip is None:
             return {"pass": False, "assertions": [], "reason": "range not provisioned"}
         return guard_proof_result(
             internet_reachable=self._tcp(self.internet_canary[0], self.internet_canary[1]),
@@ -226,7 +226,7 @@ class DockerSandbox(Sandbox):
         range's state can be restored after a tier>=2 action (§6.3, G3). Filesystem
         state is captured, which is what the §8.2 round-trip and recoverable actions
         need; a separate backend adds memory checkpointing where a target requires it."""
-        if self._attacker_pid is None:
+        if not self._provisioned:
             raise SandboxError("no range to snapshot: not provisioned")
         self._snap_seq += 1
         snap_id = f"{self.network}-snap-{self._snap_seq}"
@@ -263,7 +263,7 @@ class DockerSandbox(Sandbox):
         range and is the real escape path, closed only by the scope guard; the
         container runtime is reported so an operator knows whether kernel-escape
         hardening (gVisor) backs the network containment."""
-        if self._attacker_pid is None:
+        if not self._provisioned:
             return {"pass": False, "assertions": [], "reason": "range not provisioned"}
         targets = [(self._out_of_scope_ip, "the range gateway (the operator host's interface on the range)")]
         if self._host_ip:
@@ -296,7 +296,7 @@ class DockerSandbox(Sandbox):
         The attacker is left frozen (paused), not destroyed, so its state is preserved
         for analysis and the range can be revived. Returns the freeze latency and what
         was restored."""
-        if self._attacker_pid is None:
+        if not self._provisioned:
             return {"ok": True, "frozen_ms": 0, "forensics": [], "restored_from_golden": []}
         containers = [self.attacker, *[name for name, _ in self._targets.values()]]
         t0 = time.monotonic()
@@ -347,7 +347,7 @@ class DockerSandbox(Sandbox):
         images = [img for snap in self._snapshots.values() for _, _, img in snap.values()]
         for image in images + self._forensics:
             self._run(["docker", "rmi", "-f", image])
-        self._attacker_pid = None
+        self._provisioned = False
         self.collab_addr = None
         self._targets, self._target_ports, self._snapshots, self._forensics = {}, {}, {}, []
         return True
@@ -371,9 +371,13 @@ class DockerSandbox(Sandbox):
         return "runsc" if r.rc == 0 and "runsc" in (r.out or "") else None
 
     def _discover_host_ip(self):
-        r = self._run(["ip", "route", "get", "1.1.1.1"])
-        toks = r.out.split() if r.rc == 0 else []
-        return toks[toks.index("src") + 1] if "src" in toks else None
+        # A UDP connect asks the OS to select a route but sends no packet.
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as route_probe:
+                route_probe.connect(("1.1.1.1", 80))
+                return route_probe.getsockname()[0]
+        except OSError:
+            return None
 
     def _start_listeners(self, name, ports, app=None):
         # A custom app (seeded over stdin so it never touches the golden image), or the

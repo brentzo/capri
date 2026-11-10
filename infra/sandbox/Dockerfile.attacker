@@ -4,9 +4,9 @@
 # and exploit in-scope targets, never escape scope.
 #
 # It deliberately has NO NET_ADMIN (set at `docker run`) and NO nft / ip tooling, so the
-# agent cannot see or reconfigure the scope guard the host installs into this container's
+# agent cannot see or reconfigure the scope guard the helper installs into this container's
 # network namespace. The guard - default-deny egress, allowing only pinned in-scope
-# IPs:ports - is enforced in the host-owned netns regardless of what tools live here, so
+# IPs:ports - is enforced in this network namespace regardless of what tools live here, so
 # nmap and friends can only reach what scope already allows.
 #
 # Build (on the range host, not a laptop):  docker build -t hc-attacker:golden -f Dockerfile.attacker .
