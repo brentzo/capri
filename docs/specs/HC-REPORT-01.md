@@ -150,8 +150,8 @@ report.render(report_record)                                 the pure renderer (
 capri dashboard [--port] [--data-dir]                         the local server (§6)
 ```
 
-Implementation, pure standard library: run persistence and the read API are built in `harness/store/datadir.py` (the `~/.capri/` data directory, overridable with `HC_DATA_DIR`) and `harness/store/engagements.py` (`save`, `list_all`, `get`, `audit`), with the one-row `engagement` table in `harness/store/schema.sql` and the live runner persisting each finished run (`tools/run_engagement.py`); `tests/test_engagements_store.py` proves a run still lists and re-opens after the writing connection is closed.
-Still to build: the role-turn reasoning record written from `harness/loop.py` (§3), the renderer over the validated report (§5), and the local server in `cli/dashboard.py` behind a new `capri` subcommand (§6), with their tests wired into the Makefile and CI per the repo convention.
+Implementation, pure standard library: run persistence and the read API are built in `harness/store/datadir.py` (the `~/.capri/` data directory, overridable with `HC_DATA_DIR`) and `harness/store/engagements.py` (`save`, `list_all`, `get`, `audit`), with the one-row `engagement` table in `harness/store/schema.sql` and the live runner persisting each finished run (`tools/run_engagement.py`); `tests/test_engagements_store.py` proves a run still lists and re-opens after the writing connection is closed. The report renderer (§5) is built in `harness/report_render.py` (`render_html` and the `am_pm` helper), a pure function from the validated report to one self-contained HTML page with am/pm times and every value escaped, proven by `tests/test_report_render.py`.
+Still to build: the role-turn reasoning record written from `harness/loop.py` (§3) and the local server in `cli/dashboard.py` behind a new `capri` subcommand (§6), which serves this renderer's output per run and adds the reasoning, evidence, and audit views.
 
 ## 9. Acceptance criteria
 

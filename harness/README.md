@@ -551,8 +551,18 @@ will use: `save` persists a finished run and commits, and `list_all`, `get`, and
 runs back, the last returning a run's audit rows with the global hash-chain verification
 result so integrity is shown, not assumed. `tools/run_engagement.py` now writes to this store
 instead of a temp dir. `tests/test_engagements_store.py` drives a real on-disk file, reopening
-it between write and read, so a run provably survives the process that produced it. The
-reasoning record, the report renderer, and the `capri dashboard` server follow.
+it between write and read, so a run provably survives the process that produced it.
+
+The report renderer is the next piece built: `harness/report_render.py` turns a validated
+report (HC-FIND-01) into one self-contained HTML page, a pure function with no store and no
+server so it is unit-tested directly (`tests/test_report_render.py`). It renders each finding
+with its impact, severity, CWE, and distinct finder and verifier, keeps hardening notes in
+their own section with no severity, shows a passive-only banner when containment was not
+proven, and renders times in am/pm (the stored form is ISO, so the am/pm form is a render
+concern, closing the BR-08 gap). Every dynamic value is HTML-escaped, so target strings and
+any model-authored text render as inert text, never active markup. The same output is what
+the dashboard will serve per run and what a static export would carry. The reasoning record
+and the `capri dashboard` server follow.
 
 ## Run
 
