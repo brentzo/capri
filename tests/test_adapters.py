@@ -19,8 +19,8 @@ import re                                                                # noqa:
 from harness.sandbox.adapters import (                                   # noqa: E402
     BflaAdapter, CacheAdapter, ClickjackAdapter, CmdiAdapter, CorsAdapter, CsrfAdapter,
     HttpRequestAdapter, HttpxAdapter, IdorAdapter, JwtAdapter, NmapAdapter, OpenRedirectAdapter,
-    CspAdapter, DomClobberAdapter, PathAdapter, SessAdapter, SqliAdapter, SsrfAdapter,
-    SstiAdapter, WsHijackAdapter, _FOREIGN_ORIGIN, _RANGE_CANARY, _parse_http_full,
+    CspAdapter, DomClobberAdapter, PathAdapter, ProtoPolluteAdapter, SessAdapter, SqliAdapter,
+    SsrfAdapter, SstiAdapter, WsHijackAdapter, _FOREIGN_ORIGIN, _RANGE_CANARY, _parse_http_full,
     _parse_http_response, _parse_httpx, _parse_nmap_services)
 from harness.sandbox.base import RunResult                               # noqa: E402
 
@@ -1211,6 +1211,55 @@ def test_domclobber_injects_named_markup_and_renders_in_a_browser():
     assert "chromium" in argv and "--dump-dom" in argv
     url = next(a for a in argv if a.startswith("http"))
     assert "10.90.0.3" in url and "HCCFG" in url             # the harness-injected named markup
+
+
+class ProtoPolluteRunner:
+    """Simulates chromium rendering /profile. Vulnerable: a `__proto__.*` query key pollutes
+    the prototype, so the gadget reads the marker off a plain object and renders GADGET=<marker>.
+    Safe: the merge rejects `__proto__`, so the gadget renders GADGET=clean. The marker reaches
+    the DOM only through the gadget, never reflected from the URL."""
+
+    def __init__(self, *, safe=False):
+        self.safe = safe
+        self.calls = []
+
+    def __call__(self, argv, input=None, timeout=None):
+        self.calls.append(argv)
+        url = next((a for a in argv if a.startswith("http")), "")
+        q = parse_qs(urlparse(url).query)
+        val = ""
+        for k, v in q.items():
+            if k.startswith("__proto__") and not self.safe:
+                val = v[0]
+        out = "GADGET=" + (val or "clean")
+        return RunResult(0, f'<html><body><div id="out">{out}</div></body></html>', "")
+
+
+def test_protopollute_confirms_a_consumed_pollution():
+    res = ProtoPolluteAdapter("atk", PINNED, run=ProtoPolluteRunner()).run(
+        {"tool": "protopollute", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/profile", "pollute_key": "__proto__.hcxpoll"}})
+    sig = res["deterministic_signals"]
+    assert res["status"] == "ok"
+    assert sig["hit"] is True and sig["proto_pollution"] is True
+
+
+def test_protopollute_safe_merge_is_not_a_hit():
+    res = ProtoPolluteAdapter("atk", PINNED, run=ProtoPolluteRunner(safe=True)).run(
+        {"tool": "protopollute", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/profile", "pollute_key": "__proto__.hcxpoll"}})
+    assert res["deterministic_signals"]["hit"] is False      # the merge rejected __proto__
+
+
+def test_protopollute_sends_a_proto_key_and_renders_in_a_browser():
+    fake = ProtoPolluteRunner()
+    ProtoPolluteAdapter("atk", PINNED, run=fake).run(
+        {"tool": "protopollute", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/profile", "pollute_key": "__proto__.hcxpoll"}})
+    argv = fake.calls[0]
+    assert "chromium" in argv and "--dump-dom" in argv
+    url = next(a for a in argv if a.startswith("http"))
+    assert "10.90.0.3" in url and "__proto__" in urlparse(url).query
 
 
 def test_parse_http_full_splits_status_headers_and_body():

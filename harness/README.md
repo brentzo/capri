@@ -432,9 +432,11 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   computed marker into the title and fires only when that marker appears in the rendered DOM,
   proving the inline script executed (a restrictive CSP blocks it). `DomClobberAdapter`
   (`domclobber`) injects named markup whose id matches a global the page gadget reads and
-  fires when the gadget's output shows the global resolved to the injected element. Prototype
-  pollution follows on the same driver; web-storage token (needs JS evaluation), postMessage
-  (needs a second origin), and DOM-based XSS (needs Laya) stay out of reach.
+  fires when the gadget's output shows the global resolved to the injected element.
+  `ProtoPolluteAdapter` (`protopollute`) sends a parameter that walks into Object.prototype
+  with a random marker and fires when a gadget reads that marker off a plain object. So seven
+  of the ten client-side cards confirm live; web-storage token (needs JS evaluation),
+  postMessage (needs a second origin), and DOM-based XSS (needs Laya) stay out of reach.
   The attacker container runs the toolchain image (`infra/sandbox/Dockerfile.attacker`,
   built for amd64 and arm64, httpx checksum-pinned) while targets stay the minimal node
   image, and the attacker still holds no `NET_ADMIN`, so the host-owned scope guard

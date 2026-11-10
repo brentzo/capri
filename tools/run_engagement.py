@@ -39,8 +39,8 @@ from harness.roles import ModelOperator, ModelVerifier         # noqa: E402
 from harness.sandbox.adapters import (                         # noqa: E402
     BflaAdapter, CacheAdapter, ClickjackAdapter, CmdiAdapter, CorsAdapter, CspAdapter,
     CsrfAdapter, DomClobberAdapter, HttpRequestAdapter, HttpxAdapter, IdorAdapter, JwtAdapter,
-    NmapAdapter, OpenRedirectAdapter, PathAdapter, SessAdapter, SqliAdapter, SsrfAdapter,
-    SstiAdapter, WsHijackAdapter)
+    NmapAdapter, OpenRedirectAdapter, PathAdapter, ProtoPolluteAdapter, SessAdapter, SqliAdapter,
+    SsrfAdapter, SstiAdapter, WsHijackAdapter)
 from harness.sandbox.docker import DockerSandbox               # noqa: E402
 from harness.sandbox.probe import DockerProbe                  # noqa: E402
 from harness.store import blobstore, db                        # noqa: E402
@@ -196,7 +196,8 @@ def main():
                         "csrf": CsrfAdapter(sb.attacker, eng.pinned),
                         "wshijack": WsHijackAdapter(sb.attacker, eng.pinned),
                         "cspexec": CspAdapter(sb.attacker, eng.pinned),
-                        "domclobber": DomClobberAdapter(sb.attacker, eng.pinned)}
+                        "domclobber": DomClobberAdapter(sb.attacker, eng.pinned),
+                        "protopollute": ProtoPolluteAdapter(sb.attacker, eng.pinned)}
             disp = Dispatcher(conn, blobstore.BlobStore(root), eng, adapters,
                               ratelimit.RateLimiter(1000, now=lambda: 0.0))
             res = Loop(conn, eng, kb_index=KB, dispatcher=disp, sandbox=sb,

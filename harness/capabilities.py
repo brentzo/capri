@@ -41,6 +41,8 @@ CAPABILITIES = {
     "KB-CLIENT-WS-HIJACK-001": ("wshijack", {"path": "/portal", "login_path": "/portal/login"}),
     "KB-CLIENT-CSP-WEAK-001": ("cspexec", {"path": "/widget", "param": "html"}),
     "KB-CLIENT-DOM-CLOBBER-001": ("domclobber", {"path": "/clobber", "param": "html"}),
+    "KB-CLIENT-PROTO-POLLUTE-001": ("protopollute", {"path": "/profile",
+                                                     "pollute_key": "__proto__.hcxpoll"}),
 }
 
 

@@ -766,6 +766,42 @@ class DomClobberAdapter(_Adapter):
         }
 
 
+class ProtoPolluteAdapter(_Adapter):
+    """Client-side prototype pollution via an unsafe merge. Registered as `protopollute`.
+
+    The harness sends a parameter that walks into Object.prototype carrying a random marker,
+    renders the page in a real browser, and reports the flaw only when a page gadget's output
+    shows it read that marker off a plain object, which proves the prototype was polluted and
+    a gadget observably consumed it. The marker is the harness's and it reaches the DOM only
+    through the gadget reading the polluted prototype (it is not reflected from the URL), so a
+    page whose merge rejects `__proto__` renders the clean value; the Verifier reruns with its
+    own marker."""
+
+    def run(self, req):
+        ip = self._resolve(req["target"])
+        port = int(req["port"])
+        args = req.get("args") or {}
+        scheme = args.get("scheme") or ("https" if port in (443, 8443) else "http")
+        path = args.get("path", "/profile")
+        pollute_key = args.get("pollute_key", "__proto__.hcxpoll")
+        marker = "hcpp" + secrets.token_hex(5)
+        qs = urllib.parse.urlencode({pollute_key: marker})
+        url = f"{scheme}://{ip}:{port}{path}?{qs}"
+        dom = self._render_dom(url)
+        polluted = marker in dom
+        return {
+            "status": "ok" if polluted else "error",
+            "parsed": {"polluted": polluted, "dom_len": len(dom)},
+            "request_bytes": f"protopollute {url}".encode("utf-8"),
+            "response_bytes": dom.encode("utf-8", "replace")[:4096],
+            "deterministic_signals": {
+                "hit": polluted,
+                "proto_pollution": polluted,
+                "confidence": 0.9 if polluted else 0.0,
+            },
+        }
+
+
 class OpenRedirectAdapter(_Adapter):
     """Open redirect against a pinned in-scope target. Registered as `redirect`.
 

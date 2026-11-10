@@ -27,6 +27,8 @@ harness has real web vulnerabilities to find and independently confirm:
                  injected inline script executes when rendered (missing/bypassable CSP).
   - /clobber?html= reads a script global named HCCFG that injected named markup can override,
                  so attacker markup clobbers it and a gadget consumes it (DOM clobbering).
+  - /profile     client JS merges the query string unsafely, so __proto__.X=Y pollutes
+                 Object.prototype and a gadget reads it (client-side prototype pollution).
   - /portal/settings is a sensitive-action page that sets no X-Frame-Options and no CSP
                  frame-ancestors, so a cross-origin page can frame it (clickjacking).
   - /portal/email?to= changes the session's email, authorized by the session cookie alone
@@ -348,6 +350,21 @@ class Handler(BaseHTTPRequestHandler):
                       'document.getElementById("out").textContent='
                       '(c&&c.nodeName)?"HC-CLOBBERED":"HC-SAFE";</script>')
             self._respond(200, _PAGE + '<div id="out"></div>' + html + gadget)
+        elif parts.path == "/profile":
+            # VULNERABLE BY DESIGN: client JavaScript parses the query string with an unsafe
+            # recursive assignment, so a __proto__.X=Y parameter walks into Object.prototype
+            # and pollutes it, and a gadget then reads that polluted property (client-side
+            # prototype pollution). A correct app would reject __proto__ keys.
+            page = (_PAGE + '<div id="out"></div><script>'
+                    'function setDeep(o,p,v){var k=p.split(".");var c=o;'
+                    'for(var i=0;i<k.length-1;i++){c=c[k[i]]=c[k[i]]||{}}'
+                    'c[k[k.length-1]]=v}'
+                    'location.search.slice(1).split("&").forEach(function(pr){'
+                    'var kv=pr.split("=");if(kv[0])setDeep({},decodeURIComponent(kv[0]),'
+                    'decodeURIComponent(kv[1]||""))});'
+                    'var probe={};document.getElementById("out").textContent='
+                    '"GADGET="+(probe.hcxpoll||"clean");</script>')
+            self._respond(200, page)
         elif parts.path == "/redirect":
             dest = (query.get("url") or ["/"])[0]
             # VULNERABLE BY DESIGN: redirects to the caller's url with no same-origin or
