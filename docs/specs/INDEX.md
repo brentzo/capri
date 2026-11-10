@@ -22,6 +22,7 @@ Areas:
 - `DATA` - evidence store and corpus
 - `SAFE` - safety and guardrails
 - `EVAL` - evaluation
+- `REPORT` - operator report rendering, reasoning record, and the local run dashboard
 
 Each spec file opens with this frontmatter:
 
@@ -62,6 +63,7 @@ updated: 2026-11-08
 | HC-DATA-01  | Evidence store and self-labeling corpus                | SPEC.md#9        | draft   |
 | HC-SAFE-01  | Safety and guardrails                                  | SPEC.md#11       | draft   |
 | HC-EVAL-01  | Evaluation harness and seeded vulns                    | SPEC.md#14       | draft   |
+| HC-REPORT-01| Operator report rendering, reasoning record, local dashboard | SPEC.md#8, #9 | draft |
 
 ## Status legend
 

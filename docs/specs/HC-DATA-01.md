@@ -4,7 +4,7 @@ title: Evidence store and self-labeling corpus
 status: draft
 parent: SPEC.md#9
 depends_on: [HC-SUB-01, HC-KB-01, HC-FIND-01]
-depended_on_by: [HC-MODEL-02, HC-AGENT-01, HC-FIND-01, HC-SAFE-01, HC-EVAL-01]
+depended_on_by: [HC-MODEL-02, HC-AGENT-01, HC-FIND-01, HC-SAFE-01, HC-EVAL-01, HC-REPORT-01]
 updated: 2026-11-08
 ---
 

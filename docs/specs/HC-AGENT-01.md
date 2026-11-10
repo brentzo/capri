@@ -4,7 +4,7 @@ title: Agent loop and role orchestration
 status: draft
 parent: SPEC.md#4, SPEC.md#6
 depends_on: [HC-SUB-01, HC-MODEL-01, HC-KB-01, HC-FIND-01, HC-DATA-01, HC-MODEL-02, HC-ENRICH-01]
-depended_on_by: [HC-MODEL-01, HC-FIND-01, HC-SAFE-01, HC-EVAL-01]
+depended_on_by: [HC-MODEL-01, HC-FIND-01, HC-SAFE-01, HC-EVAL-01, HC-REPORT-01]
 updated: 2026-11-08
 ---
 

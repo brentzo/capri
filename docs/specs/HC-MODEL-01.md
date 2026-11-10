@@ -4,7 +4,7 @@ title: Bifrost topology - roles, keys, budgets, MCP boundary
 status: draft
 parent: SPEC.md#5.1
 depends_on: [HC-AGENT-01, HC-SUB-01]
-depended_on_by: [HC-AGENT-01, HC-MODEL-02, HC-ENRICH-01, HC-SAFE-01]
+depended_on_by: [HC-AGENT-01, HC-MODEL-02, HC-ENRICH-01, HC-SAFE-01, HC-REPORT-01]
 updated: 2026-11-08
 ---
 

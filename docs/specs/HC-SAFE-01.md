@@ -4,7 +4,7 @@ title: Safety and guardrails
 status: draft
 parent: SPEC.md#11
 depends_on: [HC-SUB-01, HC-AGENT-01, HC-MODEL-01, HC-DATA-01, HC-ENRICH-01]
-depended_on_by: []
+depended_on_by: [HC-REPORT-01]
 updated: 2026-11-08
 ---
 
