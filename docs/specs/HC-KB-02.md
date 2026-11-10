@@ -49,7 +49,7 @@ Tier distribution: eleven tier-1 (read-only probing) and four tier-2 (state-chan
 id: KB-WEB-INJ-SQLI-001
 title: Error/boolean-based SQL injection in a query parameter
 taxonomy: { attack: {technique: T1190}, owasp: [WSTG-INPV-05], cwe: [CWE-89] }
-applicability: [ 'asset.type == "http_endpoint"', 'exists(asset.params)' ]
+applicability: [ 'asset.type == "http_endpoint"', 'exists(asset.params)', 'matches(asset.sink_risk, /sqli/) || !exists(asset.sink_analyzed)' ]
 preconditions: [ reachable ]
 yields_on_success: [ db_read ]
 blast_tier: 1
@@ -118,7 +118,7 @@ severity_rubric: { base: high }
 id: KB-WEB-INJ-CMDI-001
 title: OS command injection
 taxonomy: { attack: {technique: T1190}, owasp: [WSTG-INPV-12], cwe: [CWE-78] }
-applicability: [ 'asset.type == "http_endpoint"', 'exists(asset.params)' ]
+applicability: [ 'asset.type == "http_endpoint"', 'exists(asset.params)', 'matches(asset.sink_risk, /cmdi/) || !exists(asset.sink_analyzed)' ]
 preconditions: [ reachable ]
 yields_on_success: [ rce_foothold ]
 blast_tier: 1                      # read-only proof: timing or OOB, no destructive command
@@ -135,7 +135,7 @@ severity_rubric: { base: critical }
 id: KB-WEB-INJ-SSTI-001
 title: Server-side template injection
 taxonomy: { attack: {technique: T1190}, owasp: [WSTG-INPV-18], cwe: [CWE-1336] }
-applicability: [ 'asset.type == "http_endpoint"', 'exists(asset.params)' ]
+applicability: [ 'asset.type == "http_endpoint"', 'exists(asset.params)', 'matches(asset.sink_risk, /ssti/) || !exists(asset.sink_analyzed)' ]
 preconditions: [ reachable ]
 yields_on_success: [ rce_foothold ]
 blast_tier: 1                      # arithmetic-eval proof only, no code exec in the probe
@@ -151,7 +151,7 @@ severity_rubric: { base: critical }
 id: KB-WEB-INJ-PATH-001
 title: Path traversal / local file read
 taxonomy: { attack: {technique: T1190}, owasp: [WSTG-ATHZ-01], cwe: [CWE-22] }
-applicability: [ 'asset.type == "http_endpoint"', 'matches(asset.params, /file|path|name|template/)' ]
+applicability: [ 'asset.type == "http_endpoint"', 'matches(asset.sink_risk, /path/) || !exists(asset.sink_analyzed) && matches(asset.params, /file|path|name|template/)' ]
 preconditions: [ reachable ]
 yields_on_success: [ file_read ]
 blast_tier: 1

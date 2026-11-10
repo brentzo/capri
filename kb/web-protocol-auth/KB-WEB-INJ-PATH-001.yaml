@@ -4,7 +4,7 @@ version: 1.0.0
 status: active
 supersedes: null
 taxonomy: { attack: {technique: T1190}, owasp: [WSTG-ATHZ-01], cwe: [CWE-22] }
-applicability: [ 'asset.type == "http_endpoint"', 'matches(asset.params, /file|path|name|template/)' ]
+applicability: [ 'asset.type == "http_endpoint"', 'matches(asset.sink_risk, /path/) || !exists(asset.sink_analyzed) && matches(asset.params, /file|path|name|template/)' ]
 preconditions: [ reachable ]
 yields_on_success: [ file_read ]
 inputs: { param: "{asset.params[*]}" }

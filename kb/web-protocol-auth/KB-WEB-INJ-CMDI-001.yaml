@@ -4,7 +4,7 @@ version: 1.0.0
 status: active
 supersedes: null
 taxonomy: { attack: {technique: T1190}, owasp: [WSTG-INPV-12], cwe: [CWE-78] }
-applicability: [ 'asset.type == "http_endpoint"', 'exists(asset.params)' ]
+applicability: [ 'asset.type == "http_endpoint"', 'exists(asset.params)', 'matches(asset.sink_risk, /cmdi/) || !exists(asset.sink_analyzed)' ]
 preconditions: [ reachable ]
 yields_on_success: [ rce_foothold ]
 inputs: { param: "{asset.params[*]}" }

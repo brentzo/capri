@@ -623,6 +623,38 @@ interaction-gated routes where the dangerous bugs live, and it reaches them prec
   projection over a fixture route tree, with no network and no models; confirming a candidate
   on an auth-gated route still needs a session and the app provisioned, a later slice.
 
+## What's here (sink tracing)
+
+The full surface is large (168 routes became 633 endpoint-assets), and probing every technique
+against every parameter is the fan-out that times a run out. Sink tracing decides which
+parameters are worth probing by reading how each handler reaches its sinks, so a probe fires
+only where a parameter can reach a dangerous one.
+
+- `sourcemap/sinks.py` - the per-handler sink analyzer. `build_import_graph` scans the app's
+  source once and resolves its imports (relative and the `@/` alias) into a graph of the app's
+  own files; `reachable_files` takes each handler's transitive closure over it, since a route's
+  taps and its sinks usually sit in different files (route -> facade -> provider). Each file is
+  classified on its own text into four sink classes - SQL injection, path traversal, OS command
+  injection, server-side template injection - and a class is risky for the handler when any
+  reachable file is risky for it. A value reaches SQL safely as a `$N` parameter (`push(...)`,
+  `$${...}`); a statement is risky only when a value is inlined into a string literal
+  (`'${x}'`) or a request-derived expression reaches it, so a well-parameterized layer stays
+  clean without a whitelist of safe idioms. The other classes key on a request value reaching a
+  filesystem path, a `child_process` call, or `eval`/a template engine. It runs no code.
+- `recon.py:project_surface` attaches `asset.sink_risk` (the risky classes) and
+  `asset.sink_analyzed` to every parameter of the handler. The four injection cards
+  (`kb/web-protocol-auth/KB-WEB-INJ-{SQLI,CMDI,SSTI,PATH}-001`, authored in the HC-KB-02 spec)
+  gain one applicability clause each: the card applies only when the parameter reached the
+  matching sink, or when the asset was never analyzed, so a source-aware run probes the few
+  real candidates while a black-box crawl (which sets neither fact) keeps its param-presence
+  behavior. Over the real dashboard's source the injectable candidates collapse from 572 to
+  zero - an honest clean bill for a uniformly-parameterized app.
+- It is precision-favoring, not exhaustive: it flags where the source shows a value reaching a
+  sink unsafely and can miss one laundered through several indirections (a sink helper that
+  raw-interpolates its own parameter is the known gap). `tests/test_sinks.py` covers the
+  classifier, the cross-file closure, the projection and the gate over a fixture app, with no
+  network and no models.
+
 ## Run
 
 ```sh

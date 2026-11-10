@@ -9,6 +9,7 @@ the surface differs. An unrecognized tree returns an empty surface with its fram
 """
 import os
 
+from harness.sourcemap import sinks
 from harness.sourcemap.detect import detect
 
 
@@ -26,4 +27,27 @@ def extract_surface(source_root):
     surface.setdefault("framework", framework)
     surface.setdefault("source_root", source_root)
     surface.setdefault("endpoints", [])
+    _annotate_sinks(source_root, surface["endpoints"])
     return surface
+
+
+def _annotate_sinks(source_root, endpoints):
+    """Tag each endpoint with the sink classes its handler can reach unsafely.
+
+    Per-handler sink reachability (see `harness.sourcemap.sinks`) decides which parameters are
+    worth probing. `sink_risk` is the list of risky classes (empty when the handler reaches
+    only safe or absent sinks); `sink_analyzed` records that the analysis ran, so a parameter a
+    card skips because it reached no unsafe sink is distinguished downstream from a black-box
+    parameter that was never analyzed at all. The import graph is built once for the whole app.
+    """
+    if not endpoints:
+        return
+    graph, content = sinks.build_import_graph(source_root)
+    for ep in endpoints:
+        rel = ep.get("handler_file")
+        if not rel:
+            continue
+        handler = os.path.join(source_root, rel)
+        if os.path.isfile(handler):
+            ep["sink_risk"] = sinks.analyze_handler(handler, graph, content)
+            ep["sink_analyzed"] = True

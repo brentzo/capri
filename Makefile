@@ -44,6 +44,7 @@ test:
 	python3 tests/test_bind.py
 	python3 tests/test_crawler.py
 	python3 tests/test_sourcemap.py
+	python3 tests/test_sinks.py
 	python3 tests/test_catalog.py
 	python3 tests/test_modelplane_setup.py
 	python3 tests/test_cli.py

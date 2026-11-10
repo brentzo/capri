@@ -164,6 +164,8 @@ def project_surface(surface, host, ip, port=None):
         auth_required = bool(ep.get("auth"))
         path_params = [p for p in (ep.get("path_params") or []) if p]
         concrete = _concretize(path)
+        sink_analyzed = bool(ep.get("sink_analyzed"))
+        sink_risk = list(ep.get("sink_risk") or [])
 
         def _base_facts():
             facts = {"host": host, "addr": ip, "reachable": True,
@@ -175,6 +177,12 @@ def project_surface(surface, host, ip, port=None):
                 facts["asset.renders_html"] = True
             if auth_required:
                 facts["asset.auth_required"] = True
+            if sink_analyzed:
+                # Source-aware sink reachability (Slice B): the injection cards gate on these
+                # so a probe fires only where a param can reach an unsafe sink. A black-box
+                # crawl sets neither fact, and the cards fall back to param presence.
+                facts["asset.sink_analyzed"] = True
+                facts["asset.sink_risk"] = list(sink_risk)
             return facts
 
         for param in sorted({p for p in (ep.get("params") or []) if p}):
