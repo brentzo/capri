@@ -18,8 +18,9 @@ import base64                                                            # noqa:
 from harness.sandbox.adapters import (                                   # noqa: E402
     BflaAdapter, CacheAdapter, ClickjackAdapter, CmdiAdapter, CorsAdapter, CsrfAdapter,
     HttpRequestAdapter, HttpxAdapter, IdorAdapter, JwtAdapter, NmapAdapter, OpenRedirectAdapter,
-    PathAdapter, SessAdapter, SqliAdapter, SsrfAdapter, SstiAdapter, _FOREIGN_ORIGIN,
-    _RANGE_CANARY, _parse_http_full, _parse_http_response, _parse_httpx, _parse_nmap_services)
+    PathAdapter, SessAdapter, SqliAdapter, SsrfAdapter, SstiAdapter, WsHijackAdapter,
+    _FOREIGN_ORIGIN, _RANGE_CANARY, _parse_http_full, _parse_http_response, _parse_httpx,
+    _parse_nmap_services)
 from harness.sandbox.base import RunResult                               # noqa: E402
 
 # Real `nmap -sV -Pn -p 8080 -oX -` output (captured live), trimmed to the shape we parse.
@@ -1063,6 +1064,57 @@ def test_csrf_samesite_cookie_is_not_a_hit():
                   "action_path": "/portal/email", "action_param": "to"}})
     sig = res["deterministic_signals"]
     assert sig["samesite"] == "strict" and sig["hit"] is False   # cookie not sent cross-site
+
+
+class WsHijackRunner:
+    """Simulates the cookie-session setup plus the raw WebSocket handshake. Vulnerable: the
+    server completes the handshake for any Origin and streams the session's secret. Safe
+    (`validate_origin`): a foreign-Origin handshake is rejected."""
+
+    def __init__(self, *, validate_origin=False):
+        self.validate_origin = validate_origin
+        self.calls = []
+
+    def __call__(self, argv, input=None, timeout=None):
+        self.calls.append(argv)
+        src = argv[argv.index("-c") + 1] if "-c" in argv else ""
+        if "socket.create_connection" in src:                # the WebSocket handshake probe
+            origin = argv[-2]
+            if self.validate_origin and origin == _FOREIGN_ORIGIN:
+                return RunResult(0, "STATUS 403\nFRAME \n", "")   # origin rejected
+            return RunResult(0, "STATUS 101\nFRAME ws-secret-for-user-1\n", "")
+        url, _ = _call_url_headers(argv)                     # a _send_http_full call
+        hdr = {"Set-Cookie": "sid=sid1; Path=/"} if urlparse(url).path == "/portal" else {}
+        return RunResult(0, "STATUS 200\n" + json.dumps(hdr) + "\n---BODY---\nok", "")
+
+
+def test_wshijack_confirms_foreign_origin_handshake_returns_session_data():
+    res = WsHijackAdapter("atk", PINNED, run=WsHijackRunner()).run(
+        {"tool": "wshijack", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/portal", "login_path": "/portal/login"}})
+    sig = res["deterministic_signals"]
+    assert res["status"] == "ok"
+    assert sig["hit"] is True and sig["ws_hijack"] is True
+    assert sig["handshake_status"] == 101 and sig["session_bound"] is True
+
+
+def test_wshijack_origin_validated_handshake_is_not_a_hit():
+    res = WsHijackAdapter("atk", PINNED, run=WsHijackRunner(validate_origin=True)).run(
+        {"tool": "wshijack", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/portal", "login_path": "/portal/login"}})
+    sig = res["deterministic_signals"]
+    assert sig["handshake_status"] == 403 and sig["hit"] is False  # foreign origin refused
+
+
+def test_wshijack_opens_the_handshake_with_the_foreign_origin_and_session_cookie():
+    fake = WsHijackRunner()
+    WsHijackAdapter("atk", PINNED, run=fake).run(
+        {"tool": "wshijack", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/portal", "login_path": "/portal/login"}})
+    ws = next(c for c in fake.calls if "-c" in c and "socket.create_connection" in c[c.index("-c") + 1])
+    assert ws[-4] == "10.90.0.3"                             # resolved target ip
+    assert ws[-2] == _FOREIGN_ORIGIN                         # the harness-chosen foreign origin
+    assert ws[-1].startswith("sid=")                         # the victim's session cookie
 
 
 def test_parse_http_full_splits_status_headers_and_body():

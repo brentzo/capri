@@ -38,6 +38,7 @@ CAPABILITIES = {
     "KB-CLIENT-REDRESS-CLICKJACK-001": ("clickjack", {"path": "/portal/settings"}),
     "KB-CLIENT-CSRF-001": ("csrf", {"path": "/portal", "login_path": "/portal/login",
                                     "action_path": "/portal/email", "action_param": "to"}),
+    "KB-CLIENT-WS-HIJACK-001": ("wshijack", {"path": "/portal", "login_path": "/portal/login"}),
 }
 
 

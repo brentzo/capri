@@ -27,6 +27,8 @@ harness has real web vulnerabilities to find and independently confirm:
                  frame-ancestors, so a cross-origin page can frame it (clickjacking).
   - /portal/email?to= changes the session's email, authorized by the session cookie alone
                  with no anti-CSRF token and no SameSite cookie (cross-site request forgery).
+  - /ws          completes a WebSocket handshake without validating the Origin header, then
+                 streams session-bound data (cross-site WebSocket hijacking).
 It is seeded into a target container at provision time (not baked into the golden image)
 and is never reachable off the range.
 
@@ -49,6 +51,7 @@ from urllib.parse import parse_qs, urlparse
 _PAGE = "<!doctype html><title>hc-shop</title><body><h1>hc-shop</h1>"
 _JWT_SECRET = b"hc-very-secret-key"
 _TMPL_RE = re.compile(r"\{\{(.+?)\}\}")
+_WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"   # RFC 6455 handshake magic
 
 # A public download dir with one legit file, plus a range canary written OUTSIDE it. The
 # canary marker is a fixed, distinctive sentinel no normal endpoint returns, so finding it
@@ -287,6 +290,28 @@ class Handler(BaseHTTPRequestHandler):
                 # token the attacker's origin cannot read.
                 _PROFILE[sid] = to
             self._respond(200, "email: %s" % _PROFILE.get(sid, "none"), "text/plain")
+        elif parts.path == "/ws":
+            key = self.headers.get("Sec-WebSocket-Key")
+            if not key:                                   # a plain GET: advertise the endpoint
+                self._respond(426, "websocket endpoint: upgrade required", "text/plain")
+                return
+            # VULNERABLE BY DESIGN: completes the WebSocket handshake WITHOUT validating the
+            # Origin header, so a socket opened by a cross-origin page is accepted and then
+            # streams session-bound data (cross-site WebSocket hijacking). A correct server
+            # would reject a handshake whose Origin is not its own.
+            accept = base64.b64encode(
+                hashlib.sha1((key + _WS_GUID).encode()).digest()).decode()
+            self.send_response(101)
+            self.send_header("Upgrade", "websocket")
+            self.send_header("Connection", "Upgrade")
+            self.send_header("Sec-WebSocket-Accept", accept)
+            self.end_headers()
+            user = _SESSIONS.get(self._req_sid())
+            secret = "ws-secret-for-user-%s" % (user if user else "anon")
+            payload = secret.encode()
+            self.wfile.write(bytes([0x81, len(payload)]) + payload)   # unmasked text frame
+            self.wfile.flush()
+            self.close_connection = True
         elif parts.path == "/fetch":
             url = (query.get("url") or [""])[0]
             # VULNERABLE BY DESIGN: the server fetches the caller's url with no allowlist,

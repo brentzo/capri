@@ -38,6 +38,9 @@ _SESSION_PATHS = ("/portal",)
 # Conventional sensitive-action pages, probed so the CSRF and clickjacking cards (which gate
 # on asset.has_state_changing_action) have an action to apply over.
 _ACTION_PATHS = ("/portal/settings",)
+# Conventional WebSocket paths; a 426 Upgrade Required marks a WS endpoint the WS-hijack card
+# (which gates on asset.has_websocket) can apply over.
+_WS_PATHS = ("/ws",)
 
 
 def _tcp_open(run, attacker, ip, port):
@@ -123,6 +126,11 @@ def _enrich_web(facts, http, ip, port):
         if fetch(apath)[0] == 200:
             facts["asset.has_state_changing_action"] = True
             facts["asset.action_path"] = apath
+            break
+    for wpath in _WS_PATHS:
+        if fetch(wpath)[0] == 426:                 # Upgrade Required: a WebSocket endpoint
+            facts["asset.has_websocket"] = True
+            facts["asset.ws_path"] = wpath
             break
     extra = {}
     for spath in _SESSION_PATHS:

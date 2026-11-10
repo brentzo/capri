@@ -421,6 +421,13 @@ commodity Linux host (and inside Docker Desktop's Linux VM on macOS/Windows).
   `CsrfAdapter` (`csrf`) logs into a cookie session, drives the state change with only the
   cookie and no anti-CSRF token, and fires only when the change takes effect and the session
   cookie has no SameSite protection (the pair that lets a cross-origin page forge it).
+  `WsHijackAdapter` (`wshijack`) opens a raw WebSocket handshake (a stdlib socket client) from
+  a foreign Origin carrying the session cookie and fires only when the handshake is accepted
+  and the socket returns the session's own data, proving the server did not validate the
+  handshake Origin (recon marks `asset.has_websocket` from a 426 on a conventional ws path).
+  Those four are the browserless client-side cards; the other six (CSP execution, DOM
+  clobbering, DOM-based XSS, postMessage, prototype pollution, web-storage token) need a
+  headless-browser tool in the attacker image, which does not exist yet.
   The attacker container runs the toolchain image (`infra/sandbox/Dockerfile.attacker`,
   built for amd64 and arm64, httpx checksum-pinned) while targets stay the minimal node
   image, and the attacker still holds no `NET_ADMIN`, so the host-owned scope guard
