@@ -537,6 +537,23 @@ cards, bridged to the concrete tool adapters.
   it (the finder-is-not-verifier guarantee refusing an unreproduced lead). A stronger
   Verifier is the HC-MODEL-01 bake-off.
 
+## What's here (durable runs, the dashboard store)
+
+HC-REPORT-01 begins with persistence, since a live run used to open an in-memory database
+and a throwaway blob directory, so nothing survived the process and there was nothing for an
+operator to browse later. A run now persists under a per-user data directory,
+`~/.capri/` by default and overridable with `HC_DATA_DIR` (`harness/store/datadir.py`): the
+SQLite store at `engagements.db` and the content-addressed evidence at `blobs/`. The schema
+gains one `engagement` summary row per run, carrying the run's identity, window, scope, mode,
+and its validated report (HC-FIND-01), while the evidence, finding, and audit tables are
+unchanged. `harness/store/engagements.py` is the single writer and the read API the dashboard
+will use: `save` persists a finished run and commits, and `list_all`, `get`, and `audit` read
+runs back, the last returning a run's audit rows with the global hash-chain verification
+result so integrity is shown, not assumed. `tools/run_engagement.py` now writes to this store
+instead of a temp dir. `tests/test_engagements_store.py` drives a real on-disk file, reopening
+it between write and read, so a run provably survives the process that produced it. The
+reasoning record, the report renderer, and the `capri dashboard` server follow.
+
 ## Run
 
 ```sh

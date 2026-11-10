@@ -9,6 +9,23 @@
 
 PRAGMA foreign_keys = ON;
 
+-- one summary row per run, so a persisted store can list engagements for the
+-- operator dashboard (HC-REPORT-01 §2). The evidence/finding/audit tables below
+-- are keyed by engagement_id and are unchanged; this row carries the run's
+-- identity and its validated report (HC-FIND-01 §7) for listing and re-display.
+CREATE TABLE IF NOT EXISTS engagement (
+  id             TEXT PRIMARY KEY,
+  started_at     TEXT NOT NULL,             -- ISO-8601 UTC, when the run began
+  window_start   TEXT,
+  window_end     TEXT,
+  in_scope_hosts TEXT NOT NULL DEFAULT '[]',-- JSON array
+  max_blast_tier INTEGER,
+  mode           TEXT,                      -- sandboxed | passive-only
+  valid          INTEGER,                   -- 1 if the report passed its ship gate
+  report         TEXT NOT NULL,             -- JSON: the validated report (HC-FIND-01 §7)
+  generated_at   TEXT
+);
+
 -- raw probe I/O: the atomic, immutable record (HC-DATA-01 §4.1)
 CREATE TABLE IF NOT EXISTS probe_event (
   id                     TEXT PRIMARY KEY,          -- pe_<ulid>

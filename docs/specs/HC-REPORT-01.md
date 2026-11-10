@@ -27,7 +27,7 @@ A dashboard has nothing to read until a run is durable, so this spec makes a run
 
 A run persists to a per-user data directory, `~/.capri/` by default (overridable), holding two things:
 
-- `~/.capri/engagements.db`: one SQLite file carrying every engagement, so a self-hoster accumulates a history rather than one disposable run. The existing schema is unchanged; only the connection target moves from memory to this file.
+- `~/.capri/engagements.db`: one SQLite file carrying every engagement, so a self-hoster accumulates a history rather than one disposable run. The schema gains one minimal `engagement` summary row per run (its identity, window, scope, mode, and validated report); the evidence, finding, and audit tables are unchanged, and the connection target moves from memory to this file.
 - `~/.capri/blobs/`: the content-addressed blob store (HC-DATA-01), already filesystem-backed, rooted here so raw request and response bodies survive with the run that references them.
 
 The store gains a small read API over the existing tables, used only by the dashboard and never by the control loop:
@@ -150,7 +150,8 @@ report.render(report_record)                                 the pure renderer (
 capri dashboard [--port] [--data-dir]                         the local server (§6)
 ```
 
-Intended implementation, pure standard library, not yet built: a persistence target and read API in `harness/store/`, a role-turn table and `reasoning.record` written from `harness/loop.py`, a renderer in `harness/report.py` (or a sibling), and the server in `cli/dashboard.py` behind a new `capri` subcommand, with tests in `tests/` wired into the Makefile and CI per the repo convention.
+Implementation, pure standard library: run persistence and the read API are built in `harness/store/datadir.py` (the `~/.capri/` data directory, overridable with `HC_DATA_DIR`) and `harness/store/engagements.py` (`save`, `list_all`, `get`, `audit`), with the one-row `engagement` table in `harness/store/schema.sql` and the live runner persisting each finished run (`tools/run_engagement.py`); `tests/test_engagements_store.py` proves a run still lists and re-opens after the writing connection is closed.
+Still to build: the role-turn reasoning record written from `harness/loop.py` (§3), the renderer over the validated report (§5), and the local server in `cli/dashboard.py` behind a new `capri` subcommand (§6), with their tests wired into the Makefile and CI per the repo convention.
 
 ## 9. Acceptance criteria
 

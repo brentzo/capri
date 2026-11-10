@@ -20,10 +20,10 @@ Bifrost virtual keys exported from the gateway's own env (never pasted in):
     export HC_VK_OPERATOR=... HC_VK_VERIFIER=...   # from the Bifrost .env, on the host
     sudo -E python3 tools/run_engagement.py
 """
+import contextlib
 import os
 import shutil
 import sys
-import tempfile
 import types
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -43,7 +43,7 @@ from harness.sandbox.adapters import (                         # noqa: E402
     SsrfAdapter, SstiAdapter, WsHijackAdapter)
 from harness.sandbox.docker import DockerSandbox               # noqa: E402
 from harness.sandbox.probe import DockerProbe                  # noqa: E402
-from harness.store import blobstore, db                        # noqa: E402
+from harness.store import blobstore, datadir, db, engagements  # noqa: E402
 from harness.substrate import contract                         # noqa: E402
 
 CONTRACT = """
@@ -171,8 +171,8 @@ def main(progress=None):
 
         target_model = phase_recon(sb.attacker, eng)           # live recon, not hand-built
         emit(f"recon: {target_model}")
-        with tempfile.TemporaryDirectory() as root:
-            conn = db.connect()
+        with contextlib.nullcontext(datadir.blob_root()) as root:  # persist, not a temp dir
+            conn = db.connect(datadir.db_path())
             operator, verifier, plane_label = build_roles(conn, eng)
             emit(f"model plane: {plane_label}")
             adapters = {"probe": DockerProbe(sb.attacker, eng.pinned),
@@ -204,6 +204,7 @@ def main(progress=None):
             res = Loop(conn, eng, kb_index=KB, dispatcher=disp, sandbox=sb,
                        planner=DeterministicPlanner(KB), operator=operator,
                        verifier=verifier, kb_version="live").run(target_model)
+            engagements.save(conn, res.report, valid=res.valid)    # persist the run for the dashboard
         emit(f"\nmode: {res.mode}   report valid: {res.valid}")
         emit(f"coverage: {res.report['coverage_summary']}")
         for f in res.report["findings"]:
@@ -211,6 +212,7 @@ def main(progress=None):
                  f"found_by={f['found_by']} verified_by={f['verified_by']} cvss={f['cvss']['band']}")
         if not res.report["findings"]:
             emit("  (no confirmed findings)")
+        emit(f"saved run {eng.id} -> {datadir.db_path()}")
         return 0 if res.valid else 1
     finally:
         sb.teardown()

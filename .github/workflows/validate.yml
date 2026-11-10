@@ -68,6 +68,8 @@ jobs:
         run: python3 tests/test_modelplane_setup.py
       - name: CLI output and command paths
         run: python3 tests/test_cli.py
+      - name: Durable run persistence and dashboard read API
+        run: python3 tests/test_engagements_store.py
       - name: Example engagement contract parses
         run: python3 -m harness.substrate.contract harness/substrate/examples/engagement.example.yaml
       - name: Business-requirement features are valid and in sync

@@ -44,6 +44,7 @@ test:
 	python3 tests/test_catalog.py
 	python3 tests/test_modelplane_setup.py
 	python3 tests/test_cli.py
+	python3 tests/test_engagements_store.py
 
 ## contract: validate the example engagement contract (HC-SUB-01 §4)
 contract:
