@@ -1,5 +1,6 @@
 from rich.text import Text
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.widgets import Button, Footer, Header, RichLog, Static
 
@@ -8,6 +9,8 @@ from cli.theme import CSS as THEME_CSS
 
 class RunApp(App):
     """Run the engagement in a worker while keeping progress visible and scrollable."""
+
+    BINDINGS = [Binding("q", "exit_app", "Exit"), Binding("escape", "exit_app", "Exit")]
 
     CSS = THEME_CSS + """
     #screen-title {
@@ -25,9 +28,10 @@ class RunApp(App):
 
     #nav {
         dock: bottom;
-        height: 3;
+        height: 4;
         align-horizontal: right;
-        margin: 0 1;
+        margin-top: 1;
+        padding-right: 2;
     }
     """
 
@@ -77,4 +81,8 @@ class RunApp(App):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "exit" and self.complete:
+            self.exit(self.exit_code)
+
+    def action_exit_app(self) -> None:
+        if self.complete:
             self.exit(self.exit_code)

@@ -222,6 +222,7 @@ The engagement-contract parser, `scope.validate`, and `blast.gate` are implement
 The §10 interface and the first provisioning backend are implemented in `harness/sandbox/`.
 `Sandbox` (base.py) is the backend-agnostic interface the control loop drives, and `PassiveOnlySandbox` is the safe default whose proofs all fail, so a harness with no range stays in passive-only (§9).
 `DockerSandbox` (docker.py) is the first self-hostable backend and needs no nested virtualization, so it runs on commodity Linux hosts and Docker Desktop on Windows/macOS.
+Before creating a range, `provision` checks that the attacker image exists and reports its build command if it is missing.
 It provisions one egress-denied Docker network (`--internal`, so the range has no route off the host by construction, which is G2) holding a target container per in-scope host and one attacker container where tool adapters run; a short-lived `hc-guard:golden` helper joins the attacker's network namespace with all capabilities dropped except `NET_ADMIN`, installs the nftables rules from stdin, then exits.
 The rules default-deny egress and allow only the pinned in-scope IPs on their allowed ports, built from the same `scope.ports_for` policy the pre-flight check enforces.
 The attacker runs with no `NET_ADMIN` and no network tooling, so the agent can neither reach an out-of-scope host nor reconfigure the guard (§2: the agent itself is in the threat model).

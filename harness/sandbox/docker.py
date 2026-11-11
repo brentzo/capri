@@ -151,6 +151,11 @@ class DockerSandbox(Sandbox):
         descriptor; the range is not yet trusted until `proofs_pass` succeeds."""
         if not engagement.in_scope_hosts:
             raise SandboxError("cannot provision: the contract declares no in_scope_hosts")
+        image = self._run(["docker", "image", "inspect", self.attacker_image])
+        if image.rc != 0:
+            raise SandboxError(
+                f"required attacker image {self.attacker_image} is missing; build it with: "
+                "docker build -t hc-attacker:golden -f infra/sandbox/Dockerfile.attacker infra/sandbox")
         self._eng = engagement
         self.teardown()                                        # start from a clean range
         self._runtime = self._detect_runtime()                 # gVisor if the host offers it (§6.2)

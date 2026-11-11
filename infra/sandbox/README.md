@@ -30,6 +30,9 @@ docker build -t hc-attacker:golden -f infra/sandbox/Dockerfile.attacker infra/sa
 docker build -t hc-guard:golden -f infra/sandbox/Dockerfile.guard infra/sandbox
 ```
 
+`capri run` checks for `hc-attacker:golden` before provisioning and prints the build
+command if it is missing.
+
 ## Prove it (guard proof, G1 scope + G2 no-egress)
 
 ```sh

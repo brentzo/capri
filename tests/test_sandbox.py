@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from harness.sandbox import PassiveOnlySandbox, guard_proof_result                 # noqa: E402
-from harness.sandbox.base import RunResult, default_run                            # noqa: E402
+from harness.sandbox.base import RunResult, SandboxError, default_run                # noqa: E402
 from harness.sandbox.docker import DockerSandbox, guard_ruleset                     # noqa: E402
 from harness.sandbox.probe import DockerProbe                                       # noqa: E402
 from harness.substrate import contract                                             # noqa: E402
@@ -57,7 +57,8 @@ class FakeRunner:
     is exercised end to end with no Docker present."""
 
     def __init__(self, *, reachable=(), dns_resolves=False, pid=4242,
-                 runtimes='{"runc":{"path":"runc"}}', host_ip="203.0.113.9"):
+                 runtimes='{"runc":{"path":"runc"}}', host_ip="203.0.113.9",
+                 missing_attacker=False):
         self.calls = []
         self.inputs = {}
         self.reachable = set(reachable)
@@ -65,6 +66,7 @@ class FakeRunner:
         self.pid = pid
         self.runtimes = runtimes
         self.host_ip = host_ip
+        self.missing_attacker = missing_attacker
         self.files = {}       # container -> {path: content}
         self.images = {}      # image tag -> {path: content} (a committed filesystem)
         self.paused = set()   # frozen containers
@@ -72,6 +74,8 @@ class FakeRunner:
     def __call__(self, argv, *, input=None, timeout=30):
         self.calls.append(list(argv))
         self.inputs[tuple(argv)] = input
+        if argv[:3] == ["docker", "image", "inspect"] and self.missing_attacker:
+            return RunResult(1, "", "No such image")
         if argv[:4] == ["docker", "inspect", "-f", "{{.State.Pid}}"]:
             return RunResult(0, str(self.pid), "")
         if argv[:4] == ["docker", "inspect", "-f", "{{.State.Status}}"]:
@@ -187,6 +191,17 @@ def test_guard_ruleset_default_denies_and_allows_only_pinned_ports():
 
 
 # --- provisioning -------------------------------------------------------
+def test_provision_reports_how_to_build_a_missing_attacker_image():
+    sb = DockerSandbox(run=FakeRunner(missing_attacker=True))
+    try:
+        sb.provision(_eng())
+    except SandboxError as error:
+        assert "hc-attacker:golden" in str(error)
+        assert "docker build -t hc-attacker:golden" in str(error)
+    else:
+        raise AssertionError("missing attacker image should block provisioning")
+
+
 def test_provision_builds_an_internal_network_and_an_unprivileged_attacker():
     run = FakeRunner()
     sb = DockerSandbox(run=run)
