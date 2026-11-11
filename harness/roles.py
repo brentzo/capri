@@ -27,6 +27,16 @@ from harness.modelplane import PlaneStop
 
 STOP = "STOP"   # a role emits exactly this to end its turn without proposing a probe
 
+
+def _call_plane(plane, role, messages, corr, stop):
+    """Apply the shared model-call and stop policy for a role turn."""
+    try:
+        comp = plane.call(role, messages, {"correlation_id": corr})
+    except PlaneStop:
+        return None
+    return None if comp.text.strip() == stop else comp.text
+
+
 OPERATOR_SYSTEM = (
     "You are the Operator in an authorized, scoped penetration test. You only "
     "propose; the harness disposes. Each turn, propose exactly one next probe. "
@@ -90,11 +100,7 @@ class ModelOperator:
                 + f"\n\nPropose the next probe as one JSON object, or reply {self.stop}.")
         messages = [{"role": "system", "content": system},
                     {"role": "user", "content": user}]
-        try:
-            comp = self.plane.call(role, messages, {"correlation_id": corr})
-        except PlaneStop:
-            return None                      # budget / rate / provider stop: give up
-        return None if comp.text.strip() == self.stop else comp.text
+        return _call_plane(self.plane, role, messages, corr, self.stop)
 
 
 class ModelVerifier:
@@ -119,8 +125,4 @@ class ModelVerifier:
                 f"Reply {self.stop} once you have re-issued it or cannot proceed.")
         messages = [{"role": "system", "content": self.system},
                     {"role": "user", "content": user}]
-        try:
-            comp = self.plane.call("verifier", messages, {"correlation_id": corr})
-        except PlaneStop:
-            return None                      # pinned provider down: hold the lead
-        return None if comp.text.strip() == self.stop else comp.text
+        return _call_plane(self.plane, "verifier", messages, corr, self.stop)
