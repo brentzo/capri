@@ -19,7 +19,7 @@ logic is unit-tested against a stub with no Docker present (`tests/test_sandbox.
 the live path uses the default subprocess runner and works on Linux and Docker Desktop.
 """
 import ipaddress
-import os
+import posixpath
 import socket
 import time
 
@@ -497,7 +497,9 @@ class DockerSandbox(Sandbox):
         if t.get("build"):
             b = t["build"]
             tag = f"hc-target:{self.network}"
-            dockerfile = os.path.join(b["context"], b["dockerfile"])
+            # Contract paths are POSIX-style; joining them the same way on every host keeps
+            # the build command identical across platforms (Docker accepts "/" on Windows).
+            dockerfile = posixpath.join(b["context"], b["dockerfile"])
             self._docker("build", "-t", tag, "-f", dockerfile, b["context"])
             return tag
         return None
