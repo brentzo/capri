@@ -520,6 +520,20 @@ class Loop:
                 tier=tier, produced_by=fid, event_ids=self._found_event_ids(fid))
 
     # --- operator inner loop (§4.1) -------------------------------------
+    def _aim_probe(self, request, asset):
+        """Send a probe aimed at the asset to the asset's recon'd port. The port is a recon fact,
+        not a role's choice, so the harness sets it rather than trust the model's guess; without
+        this a probe defaults to a conventional port (8080) and misses an app on any other port,
+        which is every app that is not one of the bundled practice targets. A probe deliberately
+        aimed elsewhere (an SSRF callback to the collaborator, an open-redirect target) keeps its
+        own target and port: the override applies only when the request is aimed at the asset's
+        own address."""
+        facts = self.target_model.get(asset) or {}
+        ports = facts.get("open_ports")
+        if ports and request.get("target") == facts.get("addr"):
+            request["port"] = ports[0]
+        return request
+
     def _hunt(self, pair):
         """Run the Operator inner loop on one pair; return the lead's finding id or
         None. Marks the pair's outcome in the ledger either way."""
@@ -564,6 +578,7 @@ class Loop:
                         outcome = "inconclusive"
                         break
                     continue
+                self._aim_probe(turn.request, pair.asset)    # hit the asset on its recon'd port
                 if not self._sandbox_proven():
                     outcome = "inconclusive"
                     self._record_turn("operator", session, pair, step, raw, turn, None)
@@ -651,6 +666,7 @@ class Loop:
                 if invalid >= self.max_invalid:
                     break                                        # falls through to inconclusive
                 continue
+            self._aim_probe(turn.request, pair.asset)        # reproduce on the asset's recon'd port
             if not self._sandbox_proven():
                 self._record_turn("verifier", session, pair, step, raw, turn, None)
                 findings.transition(

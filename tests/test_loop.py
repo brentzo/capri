@@ -283,6 +283,25 @@ def _ledger_status(conn, eng, asset, tid):
 
 
 # --- tests ---------------------------------------------------------------
+def test_aim_probe_sends_an_asset_aimed_probe_to_the_reconned_port():
+    lp = Loop(None, None, kb_index={}, dispatcher=None, sandbox=None,
+              planner=None, operator=None, verifier=None)
+    lp.target_model = {"t1::/notes?tag": {"addr": "10.90.0.5", "open_ports": [3000]}}
+    # a probe aimed at the asset is corrected to the asset's recon'd port, not the role's guess
+    req = {"tool": "sqli", "target": "10.90.0.5", "port": 8080, "args": {}}
+    lp._aim_probe(req, "t1::/notes?tag")
+    assert req["port"] == 3000
+    # a probe deliberately aimed elsewhere (e.g. an SSRF callback) keeps its own target and port
+    off = {"tool": "ssrf", "target": "10.90.0.3", "port": 9000, "args": {}}
+    lp._aim_probe(off, "t1::/notes?tag")
+    assert off["port"] == 9000
+    # an asset recon surfaced no port for leaves the request untouched
+    lp.target_model = {"t1": {"addr": "10.90.0.5"}}
+    unchanged = {"target": "10.90.0.5", "port": 8080}
+    lp._aim_probe(unchanged, "t1")
+    assert unchanged["port"] == 8080
+
+
 def test_confirmed_run_ships_valid_report():
     with tempfile.TemporaryDirectory() as root:
         conn, eng, disp, sandbox = _build(root, hits=[("10.10.0.5", "KB-TEST-SQLI-001")])

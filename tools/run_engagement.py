@@ -90,7 +90,10 @@ class Operator:
     Bifrost-backed `ModelOperator` runs instead."""
 
     def begin(self, pair, facts=None):
-        return types.SimpleNamespace(step=0, id="live-operator", addr=(facts or {}).get("addr"))
+        facts = facts or {}
+        ports = facts.get("open_ports") or []
+        return types.SimpleNamespace(step=0, id="live-operator", addr=facts.get("addr"),
+                                     port=(ports[0] if ports else 8080))
 
     def propose_next(self, session, card, role_context):
         if session.step >= 1:
@@ -99,7 +102,7 @@ class Operator:
         step = (card.get("probe_steps") or [{}])[0]
         args = {k: v for k, v in step.items() if k not in ("tool", "intent")}
         return roleio.emit({"tool": step.get("tool"), "intent": step.get("intent"),
-                            "target": session.addr, "port": 8080, "args": args})
+                            "target": session.addr, "port": session.port, "args": args})
 
 
 class Verifier:
