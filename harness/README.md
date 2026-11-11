@@ -384,11 +384,12 @@ Desktop without requiring host `nsenter` or root.
   random tag-breaking marker into a named parameter and reports whether that exact marker
   reflects unencoded in the body - a deterministic signal the harness owns, since the
   marker is generated here, so a model can neither pre-pick a match nor forge the echo.
-  `SqliAdapter`, the `sqli` tool, is the blind-injection counterpart: it sends a baseline
-  plus a harness-generated true and false condition on a named parameter and confirms
-  boolean-blind SQL injection only when the true one reproduces the baseline response and
-  the false one changes it, so a safely parametrized parameter never splits and the
-  verdict stays harness-owned. `IdorAdapter`, the `idor` tool, carries identity: it logs
+  `SqliAdapter`, the `sqli` tool, is the injection counterpart with two harness-owned
+  differentials on a named parameter: error-based, where a value that unbalances the SQL
+  quoting provokes a database error the benign value did not, and boolean-blind, where two
+  different always-true conditions answer alike but an always-false one differs. It assumes
+  no baseline value that matches a row, so a real app's injectable parameter confirms, while
+  a safely parametrized one neither errors nor splits and the verdict stays harness-owned. `IdorAdapter`, the `idor` tool, carries identity: it logs
   in as one user, then reads that user's own object and a neighbour's with the same token,
   and reports broken object-level authorization (IDOR/BOLA) only when the neighbour comes
   back 200 with distinct data, which an ownership check would refuse with a 401/403.
@@ -399,17 +400,18 @@ Desktop without requiring host `nsenter` or root.
   tool, attacks the token: it forges an unsigned (alg:none) token and a bogus-signature
   one and reports JWT algorithm confusion only when the server accepts the unsigned token
   but rejects the bogus-signature one, proving it honors alg:none rather than ignoring
-  verification entirely. `SstiAdapter` (`ssti`) injects a fixed template expression and
-  confirms server-side template injection only when the response has the computed value
-  and not the raw expression; `CorsAdapter` (`cors`) sends a crafted Origin and confirms a
+  verification entirely. `SstiAdapter` (`ssti`) injects an arithmetic template
+  expression in each major dialect syntax in turn and confirms server-side template
+  injection on the first whose response has the computed value and not the raw expression; `CorsAdapter` (`cors`) sends a crafted Origin and confirms a
   CORS misconfiguration only when the response reflects that origin with credentials (it
   reads a response header, so the in-container request grew a header-returning variant).
   `PathAdapter` (`path`) requests a file parameter with a traversal ladder and confirms a
   path traversal only when the response carries the range canary marker the target writes
   outside its public dir, proving the read escaped it; the marker never travels in the
   request, so a contained server never echoes it. `CmdiAdapter` (`cmdi`) proves OS command
-  injection by a timing oracle: it appends a shell `sleep` to the parameter and fires only
-  when the injected request runs at least the sleep longer than the baseline, which the
+  injection by a timing oracle: it appends a shell `sleep` to the parameter through each
+  common framing (separator, pipe, logical-and, substitution, backticks, newline) and fires
+  on the first whose request runs at least the sleep longer than the baseline, which the
   harness times itself (the clock is injected so tests need no real sleep). `CacheAdapter`
   (`cache`) proves web cache poisoning: it injects a random marker through an unkeyed
   header on a cache-busting request, then makes a clean request for the same URL, and fires

@@ -326,24 +326,50 @@ def _parse_http_response(out_text):
 # SQL boolean conditions the harness appends to prove injection: a true one the server
 # must answer the same as the baseline, and a false one it must answer differently. The
 # numeric pair suits an unquoted column; the string pair closes a quoted one.
-_SQLI_TEMPLATES = (
-    ("numeric", " AND 1=1", " AND 1=2"),
-    ("string", "' AND '1'='1", "' AND '1'='2"),
+# Boolean-blind templates as (name, true_a, true_b, false): two conditions that are both always
+# TRUE but textually different, and one always FALSE. Injection is reported when the two trues
+# produce the same response as each other but a different one from the false. This does not need
+# the baseline value to match any row (an OR-true returns the whole table regardless), and a
+# parameter the query parametrizes safely cannot produce it: its three payloads are inert literals,
+# so the trues and the false all match the same (nothing), leaving true == false. A parameter that
+# merely reflects its value is not flagged either, since the two textually different trues would
+# then differ from each other.
+_SQLI_BOOLEAN = (
+    ("string", "' OR '1'='1", "' OR 'x'='x", "' OR '1'='2"),
+    ("numeric", " OR 1=1", " OR 2=2", " OR 1=2"),
+)
+# Syntax-breakers for error-based detection: a value that unbalances the quoting.
+_SQLI_ERRORS = ("'", "')", "';", "\"")
+# Substrings that mark a database error surfaced to the response (any common engine), so an
+# error a benign value does not provoke is strong evidence the value reaches the SQL text.
+_SQL_ERROR_SIGNS = (
+    "sql syntax", "syntax error at or near", "unterminated quoted", "unclosed quotation",
+    "quoted string not properly terminated", "you have an error in your sql", "ora-00",
+    "psycopg", "pg::", "sqlite3.", "sqlstate", "odbc sql", "jdbc", "near \"",
 )
 
 
-class SqliAdapter(_Adapter):
-    """Boolean-blind SQL injection detection against a pinned in-scope web target.
-    Registered as `sqli`.
+def _sql_error_in(body):
+    low = (body or "").lower()
+    return any(sign in low for sign in _SQL_ERROR_SIGNS)
 
-    For the named parameter the harness sends three requests - the baseline value, the
-    value with an appended condition that is always true, and one that is always false -
-    and reports injection only when the true condition reproduces the baseline response
-    while the false one changes it. The conditions are generated here, not by the model,
-    so a model cannot force the verdict; a parameter the query parametrizes safely treats
-    all three as literal data, so its responses never split that way. The signal is
-    deterministic and harness-owned, and the Verifier reruns the same differential, so a
-    confirm is two independent splits."""
+
+class SqliAdapter(_Adapter):
+    """SQL injection detection against a pinned in-scope web target. Registered as `sqli`.
+
+    For the named parameter the harness tries two deterministic, harness-owned signals, so a
+    model cannot force the verdict and a safely parametrized parameter produces neither:
+
+    - error-based: a value that unbalances the SQL quoting (e.g. a lone quote) provokes a
+      database error - a 5xx or a recognizable SQL-error body - that the benign value does not.
+    - boolean-blind: two always-true conditions that are textually different produce the same
+      response as each other but a different one from an always-false condition. This needs no
+      knowledge of a value that matches a row, and a parameter that merely reflects its value is
+      not flagged, since the two different true payloads would then differ from each other.
+
+    The signal does not assume the baseline value matches data, which is what let a real app's
+    injectable parameter go unconfirmed before. The Verifier reruns the same differential on a
+    fresh snapshot, so a confirm is two independent reproductions."""
 
     def run(self, req):
         ip = self._resolve(req["target"])
@@ -364,19 +390,32 @@ class SqliAdapter(_Adapter):
             return url, self._send_http(url)
 
         base_url, base_resp = fetch(base)
-        base_status = base_resp[0]
+        base_status, base_body = base_resp
         technique = None
-        probes = [{"label": "baseline", "value": base, "status": base_status,
-                   "len": len(base_resp[1])}]
+        probes = [{"label": "baseline", "value": base, "status": base_status, "len": len(base_body)}]
+
         if sqli_param and base_status > 0:
-            for name, t_suffix, f_suffix in _SQLI_TEMPLATES:
-                _, t_resp = fetch(base + t_suffix)
-                _, f_resp = fetch(base + f_suffix)
-                probes.append({"label": name + ":true", "status": t_resp[0], "len": len(t_resp[1])})
-                probes.append({"label": name + ":false", "status": f_resp[0], "len": len(f_resp[1])})
-                if t_resp == base_resp and f_resp != base_resp:
-                    technique = name
-                    break
+            benign_errorish = base_status >= 500 or _sql_error_in(base_body)
+            # error-based: a syntax-breaker errors where the benign value did not
+            if not benign_errorish:
+                for q in _SQLI_ERRORS:
+                    _, (qs, qb) = fetch(base + q)
+                    probes.append({"label": "error:" + q, "status": qs, "len": len(qb)})
+                    if qs >= 500 or _sql_error_in(qb):
+                        technique = "error-based"
+                        break
+            # boolean-blind: true_a == true_b != false, all non-error
+            if technique is None:
+                for name, ta, tb, fs in _SQLI_BOOLEAN:
+                    _, ra = fetch(base + ta)
+                    _, rb = fetch(base + tb)
+                    _, rf = fetch(base + fs)
+                    probes += [{"label": name + ":true_a", "status": ra[0], "len": len(ra[1])},
+                               {"label": name + ":true_b", "status": rb[0], "len": len(rb[1])},
+                               {"label": name + ":false", "status": rf[0], "len": len(rf[1])}]
+                    if ra[0] < 500 and rb[0] < 500 and rf[0] < 500 and ra == rb and ra != rf:
+                        technique = "boolean:" + name
+                        break
         hit = technique is not None
         return {
             "status": "ok" if hit else "error",
@@ -557,17 +596,33 @@ class JwtAdapter(_Adapter):
         }
 
 
+# The arithmetic the SSTI probes evaluate to, across template dialects. 7**6 is a distinctive
+# marker: unlike a bare "49" it is very unlikely to appear in a page by chance, so a response
+# carrying it (and not the raw expression) is strong evidence the engine computed it.
+_SSTI_INNER, _SSTI_RESULT = "7*7*7*7*7*7", "117649"
+# The same arithmetic wrapped for each major template-expression syntax, tried in turn so a
+# Jinja/Twig/Nunjucks app, a Freemarker/Thymeleaf/JSP-EL/Mako one, a Velocity one, an ERB/JSP
+# one, or a Razor one all confirm - not only the one dialect the bundled target happens to use.
+_SSTI_PROBES = (
+    "{{" + _SSTI_INNER + "}}",        # Jinja2, Twig, Nunjucks, Angular
+    "${" + _SSTI_INNER + "}",         # Freemarker, Thymeleaf, JSP EL, Mako
+    "#{" + _SSTI_INNER + "}",         # Velocity, Thymeleaf selection
+    "<%= " + _SSTI_INNER + " %>",     # ERB, JSP scriptlet
+    "@(" + _SSTI_INNER + ")",         # Razor
+)
+
+
 class SstiAdapter(_Adapter):
     """Server-side template injection detection against a pinned in-scope target.
     Registered as `ssti`.
 
-    The harness injects a fixed arithmetic template expression into a parameter and reports
+    The harness injects an arithmetic template expression into a parameter and reports
     injection only when the response carries the computed value and not the raw expression,
     which proves the template engine evaluated harness-supplied input rather than merely
-    reflecting it. The expression is fixed in the adapter, so the signal is deterministic
-    and harness-owned, and the Verifier reruns it."""
-
-    _EXPR, _RESULT = "{{7*7}}", "49"
+    reflecting it. It tries the expression in each major template-dialect syntax and fires on
+    the first that evaluates, so a real app on any common engine confirms rather than only the
+    one dialect a fixed payload would catch. The expressions are fixed in the adapter, so the
+    signal is deterministic and harness-owned, and the Verifier reruns it."""
 
     def run(self, req):
         ip = self._resolve(req["target"])
@@ -576,20 +631,27 @@ class SstiAdapter(_Adapter):
         scheme = args.get("scheme") or ("https" if port in (443, 8443) else "http")
         path = args.get("path", "/")
         param = args.get("param", "q")
-        qs = urllib.parse.urlencode({param: self._EXPR})
-        url = f"{scheme}://{ip}:{port}{path}?{qs}"
-        status_code, body = self._send_http(url)
-        evaluated = self._RESULT in body and self._EXPR not in body
+        status_code = 0
+        technique = None
+        last_url = f"{scheme}://{ip}:{port}{path}"
+        for expr in _SSTI_PROBES:
+            qs = urllib.parse.urlencode({param: expr})
+            last_url = f"{scheme}://{ip}:{port}{path}?{qs}"
+            status_code, body = self._send_http(last_url)
+            if _SSTI_RESULT in body and expr not in body:
+                technique = expr
+                break
+        evaluated = technique is not None
         return {
             "status": "ok" if evaluated else "error",
-            "parsed": {"status_code": status_code},
-            "request_bytes": f"ssti {url}".encode("utf-8"),
-            "response_bytes": f"STATUS {status_code}\n{body}".encode("utf-8", "replace"),
+            "parsed": {"status_code": status_code, "expression": technique},
+            "request_bytes": f"ssti {last_url}".encode("utf-8"),
+            "response_bytes": f"STATUS {status_code}\nexpression={technique}".encode("utf-8", "replace"),
             "deterministic_signals": {
                 "hit": evaluated,
                 "ssti": evaluated,
                 "status_code": status_code,
-                "expression": self._EXPR,
+                "expression": technique or _SSTI_PROBES[0],
                 "confidence": 0.95 if evaluated else 0.0,
             },
         }
@@ -1247,18 +1309,34 @@ class CacheAdapter(_Adapter):
         }
 
 
+# Ways an appended `sleep` splices into a parameter that reaches a shell, by how the injection
+# point is framed (statement separator, pipe, logical-and, command substitution, backticks, a
+# newline). `{n}` is the sleep seconds. Each is tried in turn and the first whose injected sleep
+# dominates the round-trip confirms, so an app that never shells out fires on none of them.
+_CMDI_SEPARATORS = (
+    "; sleep {n}",
+    "| sleep {n}",
+    "&& sleep {n}",
+    "$(sleep {n})",
+    "`sleep {n}`",
+    "\nsleep {n}",
+)
+
+
 class CmdiAdapter(_Adapter):
     """OS command injection via a timing oracle against a pinned in-scope target.
     Registered as `cmdi`.
 
-    The harness sends a baseline request and then one that appends a shell `sleep` to the
-    parameter, and reports command injection only when the injected request takes at least
-    the sleep duration longer than the baseline, which proves the server executed the
-    injected command rather than treating it as data. The delay is the harness's and it
-    measures the round-trip itself, so a model cannot forge the verdict; a server that does
-    not shell out answers both in the same time and does not fire. The Verifier reruns the
-    pair against a fresh snapshot. The round-trip clock is injected so the timing logic is
-    unit-tested without real sleeps; the live path measures the real wall clock."""
+    The harness sends a baseline request and then ones that append a shell `sleep` to the
+    parameter through each common injection framing (separator, pipe, logical-and, command
+    substitution, backticks, newline), and reports command injection on the first whose
+    request takes at least the sleep duration longer than the baseline, which proves the
+    server executed the injected command rather than treating it as data. The delay is the
+    harness's and it measures the round-trip itself, so a model cannot forge the verdict; a
+    server that does not shell out answers every variant in the same time and does not fire.
+    The Verifier reruns the pair against a fresh snapshot. The round-trip clock is injected so
+    the timing logic is unit-tested without real sleeps; the live path measures the real wall
+    clock."""
 
     def __init__(self, attacker, pinned, *, run=None, clock=time.monotonic, session_headers=None):
         super().__init__(attacker, pinned, run=run, session_headers=session_headers)
@@ -1282,19 +1360,28 @@ class CmdiAdapter(_Adapter):
             return status_code, self._clock() - t0
 
         base_status, base_elapsed = timed(base)
-        inj_status, inj_elapsed = timed(f"{base}; sleep {int(delay_s)}")
-        delta = inj_elapsed - base_elapsed
-        hit = base_status > 0 and delta >= delay_s * 0.5          # injected sleep dominates
+        technique = None
+        inj_elapsed, delta = base_elapsed, 0.0
+        for sep in _CMDI_SEPARATORS:
+            payload = base + sep.format(n=int(delay_s))
+            _, inj_elapsed = timed(payload)
+            delta = inj_elapsed - base_elapsed
+            if base_status > 0 and delta >= delay_s * 0.5:       # injected sleep dominates
+                technique = sep.format(n=int(delay_s)).strip()
+                break
+        hit = technique is not None
         return {
             "status": "ok" if hit else "error",
             "parsed": {"baseline_ms": int(base_elapsed * 1000),
-                       "injected_ms": int(inj_elapsed * 1000)},
-            "request_bytes": f"cmdi {path}?{param}=...; sleep {int(delay_s)}".encode("utf-8"),
+                       "injected_ms": int(inj_elapsed * 1000),
+                       "separator": technique},
+            "request_bytes": f"cmdi {path}?{param}=...{technique or 'sleep'}".encode("utf-8"),
             "response_bytes": f"baseline={base_elapsed:.3f}s injected={inj_elapsed:.3f}s".encode("utf-8"),
             "deterministic_signals": {
                 "hit": hit,
                 "cmdi": hit,
                 "delay_s": delay_s,
+                "separator": technique,
                 "baseline_ms": int(base_elapsed * 1000),
                 "injected_ms": int(inj_elapsed * 1000),
                 "delta_ms": int(delta * 1000),

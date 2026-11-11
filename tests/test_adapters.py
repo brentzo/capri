@@ -20,8 +20,8 @@ from harness.sandbox.adapters import (                                   # noqa:
     BflaAdapter, CacheAdapter, ClickjackAdapter, CmdiAdapter, CorsAdapter, CsrfAdapter,
     HttpRequestAdapter, HttpxAdapter, IdorAdapter, JwtAdapter, NmapAdapter, OpenRedirectAdapter,
     CspAdapter, DomClobberAdapter, PathAdapter, ProtoPolluteAdapter, SessAdapter, SqliAdapter,
-    SsrfAdapter, SstiAdapter, WsHijackAdapter, _FOREIGN_ORIGIN, _RANGE_CANARY, _parse_http_full,
-    _parse_http_response, _parse_httpx, _parse_nmap_services)
+    SsrfAdapter, SstiAdapter, WsHijackAdapter, _FOREIGN_ORIGIN, _RANGE_CANARY, _SSTI_PROBES,
+    _SSTI_RESULT, _parse_http_full, _parse_http_response, _parse_httpx, _parse_nmap_services)
 from harness.sandbox.base import RunResult                               # noqa: E402
 
 # Real `nmap -sV -Pn -p 8080 -oX -` output (captured live), trimmed to the shape we parse.
@@ -281,10 +281,26 @@ def test_parse_http_response_splits_status_and_body():
     assert _parse_http_response("ERR Timeout") == (0, "")
 
 
-class SqlInjectableRunner:
-    """Emulates the vulnerable endpoint `SELECT name FROM items WHERE id = <id>` (row 1 is
-    'widget'): a true numeric condition returns the row, a false one returns nothing, and a
-    broken quote errors - the exact split a boolean-blind SQLi target shows."""
+def _string_ctx_sql(idv, *, hide_errors):
+    """Emulate a string-context endpoint `... WHERE id = '<idv>'` whose table has no row with
+    id '1', so the baseline matches nothing. An unbalanced quote makes malformed SQL; a value
+    that breaks out of the literal and appends an always-true OR returns every row, a false one
+    returns the baseline (nothing). `hide_errors` models an app that swallows the SQL error
+    (blind) rather than surfacing it."""
+    stmt = "id = '" + idv + "'"
+    if stmt.count("'") % 2 == 1:                          # unbalanced quoting -> malformed SQL
+        if hide_errors:
+            return 200, "[]"                              # error swallowed: blind
+        return 500, 'unterminated quoted string at or near "\'"'
+    if "'" not in idv:                                    # inert literal (incl. numeric payloads)
+        return 200, "[]"                                  # id '1' matches nothing
+    low = idv.lower()                                     # the value escaped the literal
+    always_true = ("or '1'='1" in low) or ("or 'x'='x" in low)
+    return (200, "widget\napple\nsecret") if always_true else (200, "[]")
+
+
+class SqlErrorRunner:
+    """A string-context injectable endpoint that surfaces the database error (error-based)."""
 
     def __init__(self):
         self.calls = []
@@ -293,18 +309,13 @@ class SqlInjectableRunner:
         self.calls.append(argv)
         url = next((a for a in argv if a.startswith("http")), "")
         idv = (parse_qs(urlparse(url).query).get("id") or ["1"])[0]
-        if "'" in idv:
-            inner = "query error"                       # unbalanced quote -> SQL error
-        elif idv in ("1", "1 AND 1=1"):
-            inner = "<li>widget</li>"                    # baseline / true condition
-        else:
-            inner = "no item"                            # false condition selects nothing
-        return RunResult(0, f"STATUS 200\n---BODY---\n<ul>{inner}</ul>", "")
+        status, body = _string_ctx_sql(idv, hide_errors=False)
+        return RunResult(0, f"STATUS {status}\n---BODY---\n{body}", "")
 
 
-class SafeSqlRunner:
-    """A parametrized-safe endpoint: the id is a literal, so an injected condition never
-    acts as SQL - only the exact baseline id returns the row."""
+class SqlBooleanRunner:
+    """An injectable endpoint that swallows the error (no 500, no SQL text) but is still
+    boolean-blind: an always-true injection returns the table, a false one does not."""
 
     def __init__(self):
         self.calls = []
@@ -312,19 +323,43 @@ class SafeSqlRunner:
     def __call__(self, argv, input=None, timeout=None):
         self.calls.append(argv)
         url = next((a for a in argv if a.startswith("http")), "")
-        idv = (parse_qs(urlparse(url).query).get("id") or [""])[0]
-        inner = "<li>widget</li>" if idv == "1" else "no item"
-        return RunResult(0, f"STATUS 200\n---BODY---\n<ul>{inner}</ul>", "")
+        idv = (parse_qs(urlparse(url).query).get("id") or ["1"])[0]
+        status, body = _string_ctx_sql(idv, hide_errors=True)
+        return RunResult(0, f"STATUS {status}\n---BODY---\n{body}", "")
 
 
-def test_sqli_confirms_boolean_blind_injection():
-    res = SqliAdapter("atk", PINNED, run=SqlInjectableRunner()).run(
+class SafeSqlRunner:
+    """A parametrized-safe endpoint: the id is always an inert literal, so neither a broken
+    quote nor an injected condition changes anything - no row matches id '1' either way."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, argv, input=None, timeout=None):
+        self.calls.append(argv)
+        return RunResult(0, "STATUS 200\n---BODY---\n[]", "")
+
+
+def test_sqli_confirms_error_based_injection():
+    res = SqliAdapter("atk", PINNED, run=SqlErrorRunner()).run(
         {"tool": "sqli", "target": "t1.sandbox.local", "port": 8080,
          "args": {"path": "/item", "sqli_param": "id"}})
     sig = res["deterministic_signals"]
     assert res["status"] == "ok"
     assert sig["hit"] is True and sig["sqli"] is True
-    assert sig["technique"] == "numeric"                 # the true/false pair split the response
+    assert sig["technique"] == "error-based"             # a broken quote surfaced a SQL error
+
+
+def test_sqli_confirms_boolean_blind_injection_when_the_baseline_matches_no_row():
+    # the real-app case that went unconfirmed before: the baseline value matches nothing, so the
+    # old "true reproduces baseline" test never fired; the true_a == true_b != false split does.
+    res = SqliAdapter("atk", PINNED, run=SqlBooleanRunner()).run(
+        {"tool": "sqli", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/item", "sqli_param": "id"}})
+    sig = res["deterministic_signals"]
+    assert res["status"] == "ok"
+    assert sig["hit"] is True and sig["sqli"] is True
+    assert sig["technique"] == "boolean:string"
 
 
 def test_sqli_safe_parametrized_endpoint_is_not_a_hit():
@@ -335,26 +370,19 @@ def test_sqli_safe_parametrized_endpoint_is_not_a_hit():
     assert res["deterministic_signals"]["technique"] is None
 
 
-def test_sqli_sends_a_harness_generated_true_and_false_condition_to_the_resolved_ip():
-    fake = SqlInjectableRunner()
+def test_sqli_sends_harness_generated_payloads_to_the_resolved_ip():
+    fake = SqlBooleanRunner()
     SqliAdapter("atk", PINNED, run=fake).run(
         {"tool": "sqli", "target": "t1.sandbox.local", "port": 8080,
          "args": {"path": "/item", "sqli_param": "id"}})
     urls = " ".join(a for call in fake.calls for a in call if a.startswith("http"))
     assert "10.90.0.3" in urls and "t1.sandbox.local" not in urls
-    assert "1%3D1" in urls and "1%3D2" in urls           # the appended AND 1=1 / AND 1=2
-
-
-def test_sqli_stops_at_the_first_splitting_template():
-    fake = SqlInjectableRunner()
-    SqliAdapter("atk", PINNED, run=fake).run(
-        {"tool": "sqli", "target": "t1.sandbox.local", "port": 8080,
-         "args": {"path": "/item", "sqli_param": "id"}})
-    assert len(fake.calls) == 3                           # baseline + the numeric true/false
+    assert "%27" in urls                                 # a quote (error / boolean payloads)
+    assert "OR" in urls.upper()                          # an injected OR condition
 
 
 def test_sqli_without_a_param_probes_once_and_does_not_hit():
-    fake = SqlInjectableRunner()
+    fake = SqlErrorRunner()
     res = SqliAdapter("atk", PINNED, run=fake).run(
         {"tool": "sqli", "target": "10.90.0.3", "port": 8080, "args": {"path": "/item"}})
     assert res["deterministic_signals"]["hit"] is False
@@ -540,18 +568,20 @@ def test_bfla_public_endpoint_is_not_a_hit():
 
 
 class SstiRunner:
-    """Simulates the endpoint: renders a {{ expression }} the caller injects. With
-    `evaluate`, it computes it (template injection); otherwise it reflects it raw."""
+    """Simulates a template endpoint that renders an expression the caller injects. With
+    `evaluate`, the one `dialect` this engine speaks is computed (template injection) and the
+    others are reflected raw; without it, every dialect is reflected raw."""
 
-    def __init__(self, *, evaluate=True):
+    def __init__(self, *, evaluate=True, dialect=0):
         self.evaluate = evaluate
+        self.dialect = dialect
         self.calls = []
 
     def __call__(self, argv, input=None, timeout=None):
         self.calls.append(argv)
         url = next((a for a in argv if a.startswith("http")), "")
         name = (parse_qs(urlparse(url).query).get("name") or [""])[0]
-        shown = "49" if (self.evaluate and name == "{{7*7}}") else name
+        shown = _SSTI_RESULT if (self.evaluate and name == _SSTI_PROBES[self.dialect]) else name
         return RunResult(0, f"STATUS 200\n---BODY---\n<p>Hello {shown}</p>", "")
 
 
@@ -562,6 +592,21 @@ def test_ssti_confirms_template_evaluation():
     sig = res["deterministic_signals"]
     assert res["status"] == "ok"
     assert sig["hit"] is True and sig["ssti"] is True
+    assert sig["expression"] == _SSTI_PROBES[0]              # fired on the first dialect tried
+
+
+def test_ssti_confirms_a_non_default_template_dialect():
+    # an engine whose syntax is not the first probe (here an ERB/JSP <%= ... %>) still confirms:
+    # the adapter advances past the dialects that only reflect and fires on the one that evaluates.
+    fake = SstiRunner(dialect=3)
+    res = SstiAdapter("atk", PINNED, run=fake).run(
+        {"tool": "ssti", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/greet", "param": "name"}})
+    sig = res["deterministic_signals"]
+    assert res["status"] == "ok"
+    assert sig["hit"] is True and sig["ssti"] is True
+    assert sig["expression"] == _SSTI_PROBES[3]
+    assert len(fake.calls) == 4                              # probes 0-2 reflected, 3 evaluated
 
 
 def test_ssti_raw_reflection_is_not_a_hit():
@@ -693,11 +738,28 @@ def test_cmdi_confirms_injection_when_the_sleep_dominates_the_round_trip():
 
 
 def test_cmdi_no_delay_is_not_a_hit():
-    # both requests return in the same time: a server that does not shell out
-    res = CmdiAdapter("atk", PINNED, run=CmdiRunner(), clock=_clock(0.0, 0.01, 0.02, 0.03)).run(
+    # every variant returns in the same time: a server that does not shell out. The clock
+    # supplies two ticks per request for the baseline plus all six separator probes.
+    fake = CmdiRunner()
+    res = CmdiAdapter("atk", PINNED, run=fake, clock=_clock(*(i / 100 for i in range(14)))).run(
         {"tool": "cmdi", "target": "t1.sandbox.local", "port": 8080,
          "args": {"path": "/ping", "param": "host", "delay_s": 5}})
     assert res["deterministic_signals"]["hit"] is False
+    assert len(fake.calls) == 7                               # baseline + every separator tried
+
+
+def test_cmdi_confirms_on_a_non_semicolon_separator():
+    # the `;` variant does not delay but the pipe one does: the adapter must try past the first
+    # framing and fire on the separator that actually reaches the shell.
+    fake = CmdiRunner()
+    res = CmdiAdapter("atk", PINNED, run=fake,
+                      clock=_clock(0.0, 0.01, 0.02, 0.03, 0.04, 5.05)).run(
+        {"tool": "cmdi", "target": "t1.sandbox.local", "port": 8080,
+         "args": {"path": "/ping", "param": "host", "delay_s": 5}})
+    sig = res["deterministic_signals"]
+    assert sig["hit"] is True and sig["cmdi"] is True
+    assert "|" in sig["separator"]                            # the pipe framing, not the first
+    assert len(fake.calls) == 3                               # baseline + `;` (no delay) + `|`
 
 
 def test_cmdi_appends_a_sleep_to_the_param_against_the_resolved_ip():
@@ -706,7 +768,7 @@ def test_cmdi_appends_a_sleep_to_the_param_against_the_resolved_ip():
         {"tool": "cmdi", "target": "t1.sandbox.local", "port": 8080,
          "args": {"path": "/ping", "param": "host", "delay_s": 5}})
     urls = [next(a for a in c if a.startswith("http")) for c in fake.calls]
-    assert len(urls) == 2                                     # baseline, then injected
+    assert len(urls) == 2                                     # baseline, then the first injected
     assert all("10.90.0.3" in u for u in urls) and all("t1.sandbox.local" not in u for u in urls)
     assert "sleep+5" in urls[1] or "sleep%205" in urls[1]     # the appended shell command
 
