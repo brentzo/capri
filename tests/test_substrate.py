@@ -79,6 +79,77 @@ def test_source_root_must_be_a_nonempty_string():
     assert e is None and any("source_root" in x for x in errs)
 
 
+# --- engagement.target (app + datastore the range stands up, HC-SUB-01 §4) ----------
+def _with_target(block):
+    return VALID.replace("  max_blast_tier: 2", "  max_blast_tier: 2\n" + block)
+
+
+def test_target_absent_is_none():
+    assert eng().target is None            # optional: a contract without it runs the bundled listener
+
+
+def test_target_services_only_parses_and_normalizes_defaults():
+    e, errs = contract.parse(_with_target(
+        "  target:\n"
+        "    services:\n"
+        "      - { name: db, engine: postgres, init_sql: ./seed.sql }\n"))
+    assert errs == [] and e.target is not None
+    svc = e.target["services"][0]
+    # defaults fill in: version 16, app/app/app credentials, the alias is the service name
+    assert svc == {"name": "db", "engine": "postgres", "version": "16",
+                   "init_sql": "./seed.sql", "user": "app", "password": "app", "db": "app"}
+
+
+def test_target_full_build_and_db_parses():
+    e, errs = contract.parse(_with_target(
+        "  target:\n"
+        "    build: { context: ., dockerfile: Dockerfile }\n"
+        "    port: 3000\n"
+        '    env: { DATABASE_URL: "postgres://app:app@db:5432/app" }\n'
+        "    ready: { path: /healthz, timeout_s: 45 }\n"
+        "    services:\n"
+        "      - { name: db, engine: postgres, version: \"16\" }\n"))
+    assert errs == []
+    assert e.target["build"] == {"context": ".", "dockerfile": "Dockerfile"}
+    assert e.target["port"] == 3000 and e.target["ready"] == {"path": "/healthz", "timeout_s": 45}
+    assert e.target["env"]["DATABASE_URL"] == "postgres://app:app@db:5432/app"
+
+
+def test_target_image_and_build_are_mutually_exclusive():
+    e, errs = contract.parse(_with_target(
+        "  target:\n    image: myapp:local\n    build: { context: . }\n    port: 8080\n"))
+    assert e is None and any("exactly one" in x for x in errs)
+
+
+def test_target_app_requires_a_port():
+    e, errs = contract.parse(_with_target("  target:\n    image: myapp:local\n"))
+    assert e is None and any("port is required" in x for x in errs)
+
+
+def test_target_rejects_unsupported_keys_rather_than_ignoring_them():
+    # A directive that would breach containment (a host volume) must fail loudly, not slip through.
+    e, errs = contract.parse(_with_target(
+        "  target:\n    image: myapp:local\n    port: 8080\n    volumes: [\"/host:/data\"]\n"))
+    assert e is None and any("unsupported key" in x and "volumes" in x for x in errs)
+
+
+def test_target_rejects_an_unknown_service_engine():
+    e, errs = contract.parse(_with_target(
+        "  target:\n    services:\n      - { name: cache, engine: redis }\n"))
+    assert e is None and any("engine must be one of" in x for x in errs)
+
+
+def test_target_rejects_a_non_dns_safe_service_alias():
+    e, errs = contract.parse(_with_target(
+        "  target:\n    services:\n      - { name: DB_1, engine: postgres }\n"))
+    assert e is None and any("DNS-safe alias" in x for x in errs)
+
+
+def test_target_must_declare_something():
+    e, errs = contract.parse(_with_target("  target: {}\n"))
+    assert e is None and any("must declare an image, a build, or at least one service" in x for x in errs)
+
+
 def test_invalid_cidr_fails():
     e, errs = contract.parse(VALID.replace("10.13.0.0/24", "10.13.0.0/99"))
     assert e is None and errs

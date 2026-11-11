@@ -16,6 +16,48 @@ BLAST_TIERS = (0, 1, 2, 3)
 # none, so a live run is always bounded rather than open-ended.
 _DEFAULT_MODEL_BUDGET = 300_000
 
+# The optional engagement.target block declares a real app and its backing datastore so the
+# range can stand them up (HC-SUB-01 §4). We own this surface deliberately: it cannot express a
+# host volume, a published port, or an external network, so a contract cannot describe a target
+# that would breach the egress-denied range. Backing services are a closed set of engines the
+# harness knows how to run, seed, and snapshot; `postgres` is the first.
+TARGET_ENGINES = ("postgres",)
+_TARGET_KEYS = {"image", "build", "port", "env", "ready", "services"}
+_BUILD_KEYS = {"context", "dockerfile"}
+_READY_KEYS = {"path", "timeout_s"}
+_SERVICE_KEYS = {"name", "engine", "version", "init_sql", "user", "password", "db"}
+_DNS_ALIAS = re.compile(r"^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$")  # a safe, lowercase network alias
+
+
+def _normalize_target(t):
+    """Normalize a validated engagement.target into the plain dict the sandbox consumes,
+    or None when absent. Defensive against shapes, but `validate` has already run, so this
+    only fills defaults (postgres 16, ready path '/', 60s, app/app/app credentials)."""
+    if not isinstance(t, dict):
+        return None
+    out = {"image": t.get("image") or None, "build": None, "port": t.get("port"),
+           "env": {}, "ready": None, "services": []}
+    if isinstance(t.get("env"), dict):
+        out["env"] = {str(k): str(v) for k, v in t["env"].items()}
+    b = t.get("build")
+    if isinstance(b, dict):
+        out["build"] = {"context": b.get("context") or ".",
+                        "dockerfile": b.get("dockerfile") or "Dockerfile"}
+    r = t.get("ready")
+    if isinstance(r, dict):
+        ts = r.get("timeout_s")
+        out["ready"] = {"path": r.get("path") or "/",
+                        "timeout_s": ts if isinstance(ts, int) and not isinstance(ts, bool) else 60}
+    for s in (t.get("services") or []):
+        if isinstance(s, dict):
+            out["services"].append({
+                "name": s.get("name"), "engine": s.get("engine"),
+                "version": str(s["version"]) if s.get("version") is not None else "16",
+                "init_sql": s.get("init_sql") or None,
+                "user": s.get("user") or "app", "password": s.get("password") or "app",
+                "db": s.get("db") or "app"})
+    return out
+
 
 def _session_headers(session):
     """Normalize an optional `engagement.session` block into the request headers the harness
@@ -81,6 +123,10 @@ class Engagement:
         # falls back to a conservative default, so every run is bounded, not only configured ones.
         mb = e.get("model_budget")
         self.model_budget = int(mb) if isinstance(mb, int) and mb > 0 else _DEFAULT_MODEL_BUDGET
+        # The optional app-and-datastore the range stands up for this run. Absent, the range
+        # runs the bundled stdlib listener as before; present, the sandbox builds the app and
+        # its backing services (e.g. a Postgres sidecar) inside the egress-denied range.
+        self.target = _normalize_target(e.get("target"))
         self.pinned = {}   # host -> ipaddress, set at provisioning (§4.3)
 
     def pin(self, host_to_ip):
@@ -191,6 +237,7 @@ def validate(raw, management_cidrs=None):
     mb = eng.get("model_budget")
     if mb is not None and (not isinstance(mb, int) or isinstance(mb, bool) or mb <= 0):
         errs.append("engagement.model_budget must be a positive integer when present")
+    _validate_target(eng.get("target"), errs)
 
     scope = raw.get("scope")
     if not isinstance(scope, dict):
@@ -234,6 +281,105 @@ def validate(raw, management_cidrs=None):
         _validate_objective(raw["objective"], list(hosts), in_nets, out_nets,
                             lateral is True, errs)
     return errs
+
+
+def _validate_target(t, errs):
+    """Fail-closed validation of the optional engagement.target block (HC-SUB-01 §4).
+
+    Because we own this surface, an unsupported key is rejected rather than ignored: a
+    directive we do not implement (a host volume, a published port) must fail loudly, never
+    slip through and weaken the range's containment. An app is declared by exactly one of
+    `image` or `build`; backing services name a known engine the harness can run and seed."""
+    if t is None:
+        return
+    if not isinstance(t, dict):
+        errs.append("engagement.target must be a mapping when present")
+        return
+    unknown = sorted(set(t) - _TARGET_KEYS)
+    if unknown:
+        errs.append(f"engagement.target has unsupported key(s): {', '.join(unknown)}")
+
+    has_image = t.get("image") not in (None, "")
+    has_build = t.get("build") is not None
+    if has_image and has_build:
+        errs.append("engagement.target declares both image and build; name exactly one")
+    if has_image and not isinstance(t.get("image"), str):
+        errs.append("engagement.target.image must be a string")
+    if has_build:
+        b = t.get("build")
+        if not isinstance(b, dict):
+            errs.append("engagement.target.build must be a mapping")
+        else:
+            ub = sorted(set(b) - _BUILD_KEYS)
+            if ub:
+                errs.append(f"engagement.target.build has unsupported key(s): {', '.join(ub)}")
+            for f in ("context", "dockerfile"):
+                if f in b and not (isinstance(b[f], str) and b[f].strip()):
+                    errs.append(f"engagement.target.build.{f} must be a non-empty string")
+
+    port = t.get("port")
+    if (has_image or has_build) and port is None:
+        errs.append("engagement.target.port is required when an app image or build is declared")
+    if port is not None and (not isinstance(port, int) or isinstance(port, bool)
+                             or not 1 <= port <= 65535):
+        errs.append("engagement.target.port must be an integer 1..65535")
+
+    env = t.get("env")
+    if env is not None:
+        if not isinstance(env, dict):
+            errs.append("engagement.target.env must be a mapping")
+        else:
+            for k, v in env.items():
+                if isinstance(v, (dict, list)):
+                    errs.append(f"engagement.target.env.{k} must be a scalar value")
+
+    ready = t.get("ready")
+    if ready is not None:
+        if not isinstance(ready, dict):
+            errs.append("engagement.target.ready must be a mapping")
+        else:
+            ur = sorted(set(ready) - _READY_KEYS)
+            if ur:
+                errs.append(f"engagement.target.ready has unsupported key(s): {', '.join(ur)}")
+            p = ready.get("path")
+            if p is not None and not (isinstance(p, str) and p.startswith("/")):
+                errs.append("engagement.target.ready.path must be a string starting with '/'")
+            ts = ready.get("timeout_s")
+            if ts is not None and (not isinstance(ts, int) or isinstance(ts, bool) or ts <= 0):
+                errs.append("engagement.target.ready.timeout_s must be a positive integer")
+
+    services = t.get("services")
+    has_services = isinstance(services, list) and len(services) > 0
+    if services is not None and not isinstance(services, list):
+        errs.append("engagement.target.services must be a list")
+    elif isinstance(services, list):
+        seen = set()
+        for i, s in enumerate(services):
+            if not isinstance(s, dict):
+                errs.append(f"engagement.target.services[{i}] must be a mapping")
+                continue
+            us = sorted(set(s) - _SERVICE_KEYS)
+            if us:
+                errs.append(f"engagement.target.services[{i}] has unsupported key(s): {', '.join(us)}")
+            name = s.get("name")
+            if not (isinstance(name, str) and _DNS_ALIAS.match(name)):
+                errs.append(f"engagement.target.services[{i}].name must be a lowercase DNS-safe alias")
+            elif name in seen:
+                errs.append(f"engagement.target.services[{i}].name '{name}' is duplicated")
+            else:
+                seen.add(name)
+            if s.get("engine") not in TARGET_ENGINES:
+                errs.append(f"engagement.target.services[{i}].engine must be one of {list(TARGET_ENGINES)}")
+            ver = s.get("version")
+            if ver is not None and not (isinstance(ver, (str, int)) and str(ver).strip()
+                                        and not isinstance(ver, bool)):
+                errs.append(f"engagement.target.services[{i}].version must be a non-empty string")
+            for f in ("init_sql", "user", "password", "db"):
+                if f in s and not (isinstance(s[f], str) and s[f].strip()):
+                    errs.append(f"engagement.target.services[{i}].{f} must be a non-empty string")
+
+    if not (has_image or has_build or has_services):
+        errs.append("engagement.target must declare an image, a build, or at least one service")
 
 
 def _validate_objective(obj, hosts, in_nets, out_nets, lateral, errs):

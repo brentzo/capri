@@ -57,6 +57,13 @@ engagement:
   authorized_by: brent / TICKET-1234        # human or ticket of record
   window:        { start: 2026-11-08T20:00, end: 2026-11-08T23:59 }
   max_blast_tier: 2                          # 0..3, see section 7
+  target:                                    # optional: a real app + datastore the range stands up
+    build: { context: ., dockerfile: Dockerfile }   # OR image: myapp:local
+    port: 3000                               # the app's listen port (joins allowed_ports)
+    env:  { DATABASE_URL: postgres://app:app@db:5432/app }
+    ready: { path: /healthz, timeout_s: 60 } # polled before proofs/recon
+    services:                                # backing services, in-range, reachable by the app only
+      - { name: db, engine: postgres, version: "16", init_sql: ./seed.sql }
 
 scope:
   in_scope_hosts:  [app.sandbox.local, api.sandbox.local]
@@ -78,6 +85,7 @@ policy:
 - `max_blast_tier` caps the whole run; a technique card above it is skipped as `blocked_by_policy` (see SPEC.md#6.1).
 - Validation is fail-closed: a missing, malformed, or contradictory field aborts the run before any VM is provisioned.
 - The harness refuses to start if any resolved target IP falls outside `in_scope_cidrs`, or if `in_scope_cidrs` overlaps the operator's own management network.
+- `target` is optional; absent, the range runs a bundled listener as before. It declares a real app by exactly one of `image` or `build` (built on the host before the range is sealed), its listen `port`, `env`, a `ready` probe, and a closed set of backing `services` by known `engine` (only `postgres` today), each with optional `init_sql`, `version`, and credentials. We own this surface deliberately: it cannot express a host volume, a published port, or an external network, so a contract cannot describe a target that would breach the range. An unsupported key is rejected, not ignored, so a containment-breaking directive fails loudly.
 
 ### 4.3 Target resolution and IP pinning (anti-TOCTOU)
 
@@ -132,6 +140,7 @@ It drops to `passive-only` and marks every lead `needs_validation`.
 - The isolated L2 range is the "cyber range": target VMs plus one attacker VM where tool adapters execute.
 - The attacker VM has two interfaces: a data interface on the range (subject to the scope guard) and a control interface to the operator host (host-only, policy-restricted).
 - The control plane carries only tool-adapter commands and artifact collection; it is not a route to the internet or the operator LAN, and the orchestrator treats everything returning over it as untrusted output.
+- A target may depend on backing services (a datastore). Each declared service runs as its own in-range container on its own IP with a network alias the app resolves; the service is reachable by the target over the internal network but is never pinned into the scope guard, so the attacker cannot reach the datastore directly. This models reality: the app is the attack surface, its database is not.
 
 ### 6.2 Isolation (G4)
 
@@ -237,6 +246,8 @@ Every Docker call goes through an injected runner, so the provisioning and proof
 `restore` also serves the Verifier's per-run golden baseline (§4.2), so the backend drives a full engagement end to end: `tools/run_engagement.py` parses a contract, provisions the range, gates on `proofs_pass`, and runs the control loop with the live HTTP probe adapter `harness/sandbox/probe.py:DockerProbe`, which executes on the attacker container and reports the raw signals the harness triages into a lead; a run against a real range confirms an exposed-service finding with finder and verifier disjoint and produces a validated report, all under sandbox enforcement.
 A separate no-route gateway host further hardens G4, and a managed or cloud-provisioned range is an optional backend behind this same interface too, never a prerequisite for self-hosting.
 
+The optional `engagement.target` block lets a user stand up their own app and its datastore, which is what makes the harness runnable against anyone's app rather than only the bundled stdlib practice targets. Its contract surface is parsed and validated in `harness/substrate/contract.py` (`_validate_target`/`_normalize_target`), fail-closed and with unsupported keys rejected. The first increment runs the backing services: `DockerSandbox._bring_up_services` pulls each declared engine's image on the host before the range is sealed (§13), runs it in-range on its own IP with a `--network-alias`, waits on `pg_isready`, and applies `init_sql` with `psql -v ON_ERROR_STOP=1`; the sidecar is never added to the pinned allow list and is swept on teardown. Covered by `tests/test_substrate.py` (the target contract) and `tests/test_sandbox.py` (the Postgres bring-up and seed, via the injected runner). Running a user-supplied app image in place of the bundled listener, and extending snapshot/restore/kill so G3 and G5 hold for the stateful app-plus-datastore unit, are the next increments.
+
 The control loop runs `sandbox.proofs_pass()` once at startup, then checks `sandbox.guard_proof()` before every dispatch and before confirming a finding; a failed or raised check halts hunting and verification, records the failure in the audit log, and leaves outstanding leads at `needs_validation`.
 The passive-only report explains that containment was not proven throughout the run and omits previously confirmed findings; those records remain in the store.
 
@@ -263,7 +274,7 @@ The passive-only report explains that containment was not proven throughout the 
 
 ## 13. Open questions
 
-- Provisioning dependencies: some golden images need package installs that require internet; resolve by building golden images in a separate, pre-lockdown bake step, never during a live engagement.
+- Provisioning dependencies: some golden images need package installs that require internet; resolve by building golden images in a separate, pre-lockdown bake step, never during a live engagement. Resolved for the target app and its backing services: `engagement.target` images are built or pulled on the host before the range is sealed, and the egress-denied range only ever runs the already-built images.
 - Multi-host and segmented ranges: whether lateral movement across sub-segments is in scope for v1, or deferred.
 - IPv6: the scope guard must deny IPv6 egress explicitly, not only IPv4, or disable IPv6 on the range entirely (leaning toward disable for v1).
 - Realistic data: if a target ever mirrors production-like data, decide retention and redaction here in coordination with HC-DATA-01's PII tagging.

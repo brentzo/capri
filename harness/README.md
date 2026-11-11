@@ -689,6 +689,31 @@ probe, and caps what a run can spend.
 - Out of scope here: standing the real React Router + Postgres dashboard up in the range (the
   sandbox provisions only single-process targets today) and two-session IDOR confirmation.
 
+## What's here (the target contract and a Postgres backing service)
+
+The range could only run a bundled single-process stdlib listener, so it could not host anyone
+else's app - which is the point of the product, since others run it against their own apps. This
+is the first increment toward standing an arbitrary app and its datastore up in the range: the
+contract to declare one, and the backing-service machinery that runs its database.
+
+- `substrate/contract.py` - an optional `engagement.target` block, parsed and validated
+  fail-closed into `eng.target`. It declares a real app by exactly one of `image` or `build`, its
+  `port`, `env`, a `ready` probe, and a closed set of backing `services` by known `engine` (only
+  `postgres` today), each with optional `init_sql`, `version`, and credentials. We own this
+  surface on purpose: it cannot express a host volume, a published port, or an external network,
+  and an unsupported key is rejected rather than ignored, so a containment-breaking directive
+  fails loudly instead of slipping through.
+- `sandbox/docker.py` - `provision` brings each declared service up before the targets:
+  `_bring_up_services` pulls the engine image on the host (before the range is sealed, where it
+  still has internet), runs it in-range on its own IP with a `--network-alias` the app resolves,
+  waits on `pg_isready`, and applies `init_sql` with `psql -v ON_ERROR_STOP=1`. The sidecar is
+  never added to the pinned allow list, so the scope guard keeps the attacker off the datastore
+  while the app reaches it over the internal network; teardown sweeps it.
+- `tests/test_substrate.py` and `tests/test_sandbox.py` cover the target contract and the Postgres
+  bring-up and seed through the injected runner, so there is no Docker and no network in the test.
+- Next increments: run a user-supplied app image in place of the bundled listener, and extend
+  snapshot/restore/kill so G3 and G5 hold for the stateful app-plus-datastore unit.
+
 ## Run
 
 ```sh

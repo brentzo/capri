@@ -266,6 +266,49 @@ def test_provision_without_a_collaborator_keeps_the_target_at_the_third_address(
     assert eng.pinned["t1.sandbox.local"].compressed == "10.90.0.3"
 
 
+def _eng_with_target(block):
+    text = CONTRACT.replace("  max_blast_tier: 2", "  max_blast_tier: 2\n" + block)
+    eng, errs = contract.parse(text)
+    assert not errs, errs
+    return eng
+
+
+def test_provision_brings_up_a_declared_postgres_backing_service():
+    run = FakeRunner()
+    eng = _eng_with_target(
+        '  target:\n    services:\n      - { name: db, engine: postgres, version: "16" }\n')
+    DockerSandbox(run=run).provision(eng)
+    assert run.ran("pull", "postgres:16")                      # host pull, pre-seal (§13)
+    # the service runs on its own in-range IP with the alias the app resolves, and the harness
+    # waits for it to accept connections before the range is used
+    assert run.ran("run", "--ip", "10.90.0.3", "--network-alias", "db", "postgres:16")
+    assert run.ran("exec", "pg_isready")
+    # the service sits at .3 (before the target at .4) and is never pinned, so the scope guard
+    # keeps the attacker off the datastore while the app reaches it over the internal network
+    assert eng.pinned["t1.sandbox.local"].compressed == "10.90.0.4"
+    assert "10.90.0.3" not in {ip.compressed for ip in eng.pinned.values()}
+
+
+def test_provision_seeds_postgres_from_init_sql():
+    import tempfile
+    run = FakeRunner()
+    fd, seed_path = tempfile.mkstemp(suffix=".sql")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write("CREATE TABLE note (id int);\n")
+        eng = _eng_with_target(
+            "  target:\n    services:\n      - name: db\n        engine: postgres\n"
+            f"        init_sql: {seed_path}\n")
+        DockerSandbox(run=run).provision(eng)
+    finally:
+        os.unlink(seed_path)
+    # the declared fixture is piped into the fresh database over `psql`, with ON_ERROR_STOP so a
+    # bad fixture aborts provisioning rather than leaving a half-seeded datastore
+    psql = [c for c in run.calls if "psql" in c and "ON_ERROR_STOP=1" in c]
+    assert psql, "psql was not invoked to seed the database"
+    assert run.inputs[tuple(psql[0])] == "CREATE TABLE note (id int);\n"
+
+
 def test_guard_proof_passes_only_when_the_range_enforces_scope():
     eng = _eng()
     # a correctly enforcing range: only the pinned in-scope target:port connects

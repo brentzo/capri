@@ -33,6 +33,10 @@ from harness.substrate import scope
 
 GOLDEN = "golden"   # the per-run baseline snapshot id the loop restores before verifying (§4.2)
 
+# How long to wait for a backing service (e.g. Postgres) to accept connections before the
+# range is declared unprovisionable. A real engine answers in a few seconds on a warm host.
+_SERVICE_READY_TIMEOUT_S = 60
+
 # Probes the attacker container runs; stdlib python3 only, so the node image stays tiny.
 # The guard runs default-deny DROP, so a connection to a blocked destination never gets a
 # refusal, it just goes silent: the probe waits out its bound, and that silence IS the
@@ -129,6 +133,11 @@ class DockerSandbox(Sandbox):
         self._provisioned = False
         self._targets = {}          # host -> (container_name, ip_str)
         self._target_ports = {}     # host -> [ports], to restart listeners after restore
+        # Backing services the target app depends on (e.g. a Postgres sidecar), declared by
+        # engagement.target.services. They run in-range on their own IPs with a network alias
+        # the app resolves, are reachable by the target but never pinned into the scope guard
+        # (so the attacker cannot reach the datastore directly), and are torn down with the range.
+        self._services = {}         # alias -> (container_name, ip_str)
         self._snapshots = {}        # snapshot_id -> {host: (name, ip, image_tag)}
         self._snap_seq = 0
         self._out_of_scope_ip = None
@@ -174,6 +183,12 @@ class DockerSandbox(Sandbox):
             self._docker(*self._run_args(self.collaborator, collab_ip, self.node_image))
             self._start_listeners(self.collaborator, [self.collab_port], app=self.collaborator_app)
             self.collab_addr = f"{collab_ip}:{self.collab_port}"
+
+        # Backing services come up before the targets so the app can reach them the moment it
+        # starts. They take in-range IPs but are never added to the guard's pinned allow list,
+        # so the attacker cannot reach the datastore while the app can (the app->service flow is
+        # target-side, not governed by the attacker-netns guard).
+        self._bring_up_services(hosts)
 
         pinned, pinned_ports = {}, []
         for host in engagement.in_scope_hosts:
@@ -345,9 +360,15 @@ class DockerSandbox(Sandbox):
         network, and delete the snapshot and forensics images. Best-effort and
         idempotent, so it doubles as pre-provision cleanup."""
         names = [self.attacker, self.collaborator,
-                 *[f"{self.network}-tgt-{i}" for i in range(max(len(self._targets), 8))]]
+                 *[f"{self.network}-tgt-{i}" for i in range(max(len(self._targets), 8))],
+                 *[name for name, _ in self._services.values()]]
         for name in names:
             self._run(["docker", "rm", "-f", name])
+        # Sweep any backing-service sidecars whose aliases we no longer track (e.g. a prior
+        # run with different services), so pre-provision cleanup starts from a clean range.
+        stale = self._run(["docker", "ps", "-aq", "--filter", f"name={self.network}-svc-"])
+        for cid in stale.out.split():
+            self._run(["docker", "rm", "-f", cid])
         self._run(["docker", "network", "rm", self.network])
         images = [img for snap in self._snapshots.values() for _, _, img in snap.values()]
         for image in images + self._forensics:
@@ -355,6 +376,7 @@ class DockerSandbox(Sandbox):
         self._provisioned = False
         self.collab_addr = None
         self._targets, self._target_ports, self._snapshots, self._forensics = {}, {}, {}, []
+        self._services = {}
         return True
 
     # --- helpers --------------------------------------------------------
@@ -396,6 +418,66 @@ class DockerSandbox(Sandbox):
                 self._docker("exec", "-d", name, "python3", "/tmp/app.py", str(port))
             else:
                 self._docker("exec", "-d", name, "python3", "-m", "http.server", str(port))
+
+    def _bring_up_services(self, hosts):
+        """Stand up each `engagement.target` backing service as an in-range sidecar.
+
+        Postgres is the first supported engine. The image is pulled on the host, which runs
+        before the range is sealed and still has internet (§13); the sealed range then only
+        runs it. The container takes an in-range IP and a `--network-alias` the app resolves,
+        waits until it accepts connections, and is seeded with the declared init_sql. The IP
+        is never added to the guard's pinned allow list, so the datastore is unreachable from
+        the attacker while the app reaches it over the internal network."""
+        target = (self._eng.target if self._eng else None) or {}
+        for svc in target.get("services", []):
+            if svc["engine"] != "postgres":
+                raise SandboxError(f"unsupported service engine: {svc['engine']}")
+            ip = str(next(hosts))
+            name = f"{self.network}-svc-{svc['name']}"
+            self._bring_up_postgres(name, ip, svc)
+            self._services[svc["name"]] = (name, ip)
+
+    def _bring_up_postgres(self, name, ip, svc):
+        image = f"postgres:{svc['version']}"
+        self._docker("pull", image)                            # host pull, pre-seal (§13)
+        args = ["run", "-d", "--name", name, "--network", self.network, "--ip", ip,
+                "--network-alias", svc["name"]]
+        if self._runtime:
+            args += ["--runtime", self._runtime]
+        args += ["-e", f"POSTGRES_USER={svc['user']}",
+                 "-e", f"POSTGRES_PASSWORD={svc['password']}",
+                 "-e", f"POSTGRES_DB={svc['db']}", image]
+        self._docker(*args)
+        self._wait_pg_ready(name, svc)
+        if svc.get("init_sql"):
+            self._seed_postgres(name, svc)
+
+    def _wait_pg_ready(self, name, svc):
+        """Poll `pg_isready` until the server accepts connections or the budget elapses, so
+        the app never starts against a datastore that is not up (fail-closed on timeout)."""
+        deadline = time.monotonic() + _SERVICE_READY_TIMEOUT_S
+        while True:
+            r = self._run(["docker", "exec", name, "pg_isready", "-U", svc["user"], "-d", svc["db"]])
+            if r.rc == 0:
+                return
+            if time.monotonic() >= deadline:
+                raise SandboxError(f"service '{svc['name']}' (postgres) did not accept "
+                                   f"connections within {_SERVICE_READY_TIMEOUT_S}s")
+            time.sleep(0.5)
+
+    def _seed_postgres(self, name, svc):
+        """Apply the declared init_sql into the fresh database. ON_ERROR_STOP aborts
+        provisioning loudly on a bad fixture rather than leaving a half-seeded datastore."""
+        try:
+            with open(svc["init_sql"], "r", encoding="utf-8") as fh:
+                sql = fh.read()
+        except OSError as ex:
+            raise SandboxError(f"cannot read init_sql for service '{svc['name']}': {ex}")
+        r = self._run(["docker", "exec", "-i", name, "psql", "-v", "ON_ERROR_STOP=1",
+                       "-U", svc["user"], "-d", svc["db"]], input=sql)
+        if r.rc != 0:
+            raise SandboxError(f"seeding service '{svc['name']}' from {svc['init_sql']} failed: "
+                               f"{r.err.strip() or r.out.strip()}")
 
     def _write_file(self, name, path, content):
         self._exec(name, "sh", "-c", f"echo {content} > {path}")
