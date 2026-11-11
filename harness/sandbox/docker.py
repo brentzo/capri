@@ -19,8 +19,10 @@ logic is unit-tested against a stub with no Docker present (`tests/test_sandbox.
 the live path uses the default subprocess runner and works on Linux and Docker Desktop.
 """
 import ipaddress
+import io
 import posixpath
 import socket
+import tarfile
 import time
 
 from harness.sandbox.base import (
@@ -341,6 +343,12 @@ class DockerSandbox(Sandbox):
                 self._recreate_service(r["alias"], r["name"], r["ip"], r["image"])
             else:
                 self._recreate_target(r["host"], r["name"], r["ip"], r["image"])
+        # A recreated app is a fresh process that has to boot again; wait for its health path the
+        # way provisioning does, so a drill (G3/G5) or a tier-2 restore hands back a range that is
+        # actually ready, not one recon races while a heavy app is still starting (the service
+        # re-wait above is the datastore's equivalent).
+        if self._app_image:
+            self._wait_app_targets_ready()
         return True
 
     def escape_attempt(self):
@@ -426,6 +434,11 @@ class DockerSandbox(Sandbox):
         paused = self._run(["docker", "inspect", "-f", "{{.State.Status}}",
                             self.attacker]).out.strip() == "paused"
         self._run(["docker", "unpause", self.attacker])        # revive; range stays usable
+        # The kill recreated the app from golden, a fresh process still booting; with the attacker
+        # live again, wait for its health path so the range handed to recon is actually ready and
+        # the drill keeps its promise to leave the range usable (restore() does the same for G3).
+        if self._app_image:
+            self._wait_app_targets_ready()
         return {"pass": bool(frozen_ok and wiped and paused), "frozen_ms": res["frozen_ms"],
                 "budget_ms": self.kill_budget_ms, "restored_from_golden": res["restored_from_golden"]}
 
@@ -643,14 +656,39 @@ class DockerSandbox(Sandbox):
                                f"{r.err.strip() or r.out.strip()}")
 
     def _write_file(self, name, path, content):
-        self._exec(name, "sh", "-c", f"echo {content} > {path}")
+        """Write a small marker file into a container through a `docker cp` tar stream on stdin,
+        not a shell and not a host temp file. A real app image is routinely distroless (no `sh`,
+        no coreutils), so a shell write fails on exactly the targets the product exists to test;
+        and a snap or rootless Docker daemon cannot read the host's /tmp, so a temp-file
+        `docker cp` fails on exactly those hosts. A tar on stdin needs neither: Docker extracts it
+        into the container, and the file lands in the writable layer a later commit captures."""
+        dirn, base = posixpath.split(path)
+        data = content.encode("utf-8")
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w", format=tarfile.USTAR_FORMAT) as tar:
+            info = tarfile.TarInfo(base)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+        r = self._run(["docker", "cp", "-", f"{name}:{dirn or '/'}"], input=buf.getvalue())
+        if r.rc != 0:
+            raise SandboxError(f"docker cp into {name}:{path} failed: {r.err.strip()}")
 
     def _read_file(self, name, path):
-        """Read a file from a container, returning empty when it is absent (a missing
-        file is a valid state, e.g. a marker wiped by a golden restore), so a read never
-        fails the caller the way a bare `cat` on a missing path would."""
-        return self._run(["docker", "exec", name, "sh", "-c",
-                          f"cat {path} 2>/dev/null || true"]).out.strip()
+        """Read a file from a container through a `docker cp` tar stream on stdout, returning
+        empty when it is absent (a missing file is a valid state, e.g. a marker wiped by a golden
+        restore). Shell-free and host-temp-free, so it works on a distroless target with no `cat`
+        and under a confined daemon that cannot touch the host filesystem."""
+        r = self._run(["docker", "cp", f"{name}:{path}", "-"], input=b"")
+        if r.rc != 0 or not r.out:
+            return ""
+        try:
+            raw = r.out.encode("utf-8", "replace")
+            with tarfile.open(fileobj=io.BytesIO(raw), mode="r") as tar:
+                member = tar.next()
+                fh = tar.extractfile(member) if member is not None else None
+                return fh.read().decode("utf-8", "replace").strip() if fh is not None else ""
+        except (tarfile.TarError, OSError, ValueError):
+            return ""
 
     def _exec(self, name, *args, input=None):
         r = self._run(["docker", "exec", name, *args], input=input)

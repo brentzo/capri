@@ -10,10 +10,12 @@ proven separately by `tools/sandbox_selftest.py` on a real Docker host.
 
 Zero-dependency: `python3 tests/test_sandbox.py`.
 """
+import io
 import json
 import os
 import subprocess
 import sys
+import tarfile
 import tempfile
 from unittest.mock import patch
 from urllib.parse import urlparse
@@ -106,6 +108,29 @@ class FakeRunner:
             self.files.pop(argv[3], None)
             self.paused.discard(argv[3])
             return RunResult(0, "", "")
+        if argv[:2] == ["docker", "cp"]:           # shell-free marker write/read via a tar stream
+            src, dst = argv[2], argv[3]
+            if src == "-" and ":" in dst:          # tar on stdin -> container dir
+                name, dirn = dst.split(":", 1)
+                with tarfile.open(fileobj=io.BytesIO(input or b""), mode="r") as tar:
+                    for m in tar.getmembers():
+                        fh = tar.extractfile(m)
+                        content = fh.read().decode("utf-8") if fh else ""
+                        key = ("/" + m.name) if dirn == "/" else dirn.rstrip("/") + "/" + m.name
+                        self.files.setdefault(name, {})[key] = content
+                return RunResult(0, "", "")
+            if dst == "-" and ":" in src:          # container file -> tar on stdout
+                name, path = src.split(":", 1)
+                store = self.files.get(name, {})
+                if path not in store:
+                    return RunResult(1, "", "no such file or directory in container")
+                buf, data = io.BytesIO(), store[path].encode("utf-8")
+                with tarfile.open(fileobj=buf, mode="w", format=tarfile.USTAR_FORMAT) as tar:
+                    info = tarfile.TarInfo(path.rsplit("/", 1)[-1])
+                    info.size = len(data)
+                    tar.addfile(info, io.BytesIO(data))
+                return RunResult(0, buf.getvalue().decode("utf-8", "replace"), "")
+            return RunResult(0, "", "")
         if argv[:2] == ["docker", "exec"]:
             i = 2
             while argv[i].startswith("-"):
@@ -114,14 +139,6 @@ class FakeRunner:
             if rest[:1] == ["timeout"]:            # a probe bounded by the container's timeout
                 rest = rest[2:]
             if rest[:2] == ["sh", "-c"]:
-                cmd = rest[2]
-                if cmd.startswith("echo "):                    # echo <content> > <path>
-                    token, path = cmd[len("echo "):].split(">", 1)
-                    self.files.setdefault(name, {})[path.strip()] = token.strip()
-                    return RunResult(0, "", "")
-                if cmd.startswith("cat "):                     # cat <path> 2>/dev/null || true
-                    path = cmd[len("cat "):].split()[0]
-                    return RunResult(0, self.files.get(name, {}).get(path, ""), "")
                 return RunResult(0, "", "")
             if rest[0] == "python3" and "-c" in rest:
                 src = rest[rest.index("-c") + 1]
@@ -423,6 +440,19 @@ def test_restore_recreates_the_datastore_before_the_app_target():
     assert first_run("hc-golden:hc-range-svc-db") < first_run("myapp:local")
 
 
+def test_restore_waits_for_a_recreated_app_target_to_become_ready():
+    # A recreated app is a fresh process still booting; restore must poll its health path, or
+    # recon (and the next probe) races a heavy app that has not finished starting, which is what
+    # the first dashboard run hit - the app passed readiness at provision, a proof drill recreated
+    # it, and recon then found port 3000 closed. The service re-wait is the datastore's analogue.
+    run = FakeRunner(reachable=[("10.90.0.4", 3000)])
+    sb = DockerSandbox(run=run)
+    sb.provision(_app_eng())
+    run.calls.clear()
+    sb.restore(GOLDEN)
+    assert any("urlopen" in " ".join(c) and "10.90.0.4" in c for c in run.calls)   # health poll ran
+
+
 def test_restore_golden_recreates_a_service_from_its_seeded_image():
     run = FakeRunner()
     sb = DockerSandbox(run=run)
@@ -486,6 +516,19 @@ def test_snapshot_round_trip_restores_the_original_marker():
     res = sb.snapshot_round_trip()
     assert res["pass"] is True, res
     assert res["got"] == "hc-marker-original"                  # overwrite was undone by restore
+
+
+def test_marker_write_and_read_are_shell_free_for_a_distroless_target():
+    # A real app image is routinely distroless (no sh, no cat), so the G3 proof must move its
+    # marker with docker cp, never docker exec sh -c - otherwise the snapshot round-trip fails on
+    # exactly the apps the product exists to test, which is what the first dashboard run hit.
+    run = FakeRunner()
+    sb = DockerSandbox(run=run)
+    sb._write_file("hc-range-tgt-0", "/hc_marker", "hc-marker-original")
+    assert sb._read_file("hc-range-tgt-0", "/hc_marker") == "hc-marker-original"
+    assert sb._read_file("hc-range-tgt-0", "/absent") == ""    # a missing file reads back empty
+    assert run.ran("docker", "cp")
+    assert not any(c[:2] == ["docker", "exec"] and "sh" in c for c in run.calls)
 
 
 def test_restore_recreates_each_target_at_its_pinned_ip():
