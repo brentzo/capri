@@ -127,6 +127,12 @@ class Verifier:
 OPERATOR_ROUTE = "deepseek/deepseek-chat"
 VERIFIER_ROUTE = "openai/gpt-4o-mini"
 
+# Each role answers with one JSON probe, far below this, but a reasoning model spends
+# completion tokens thinking first, so the cap leaves it room. Without a cap a provider
+# such as OpenRouter reserves its own default (65536) per call and refuses a key whose
+# remaining credit cannot cover that reservation.
+MAX_OUTPUT_TOKENS = 8192
+
 
 def build_roles(conn, eng):
     """The Operator and Verifier for this run, on Bifrost when it is configured.
@@ -154,8 +160,10 @@ def build_roles(conn, eng):
     # run's total spend reaches it (and each role cannot exceed it alone), so a run is bounded
     # rather than open-ended. Cost is counted in tokens (in + out) per call.
     budget = eng.model_budget
-    vkeys = [VirtualKey("operator", [op_route], cache=False, fallback="within_set", budget=budget),
-             VirtualKey("verifier", [ver_route], cache=False, fallback="none", budget=budget)]
+    vkeys = [VirtualKey("operator", [op_route], cache=False, fallback="within_set", budget=budget,
+                        max_output_tokens=MAX_OUTPUT_TOKENS),
+             VirtualKey("verifier", [ver_route], cache=False, fallback="none", budget=budget,
+                        max_output_tokens=MAX_OUTPUT_TOKENS)]
     plane = ModelPlane(vkeys, transport, conn, eng.id, engagement_budget=budget)  # diversity asserted
     return (ModelOperator(plane), ModelVerifier(plane),
             f"Bifrost at {base_url}  (operator={op_route}, verifier={ver_route}; "

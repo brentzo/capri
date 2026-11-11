@@ -221,6 +221,23 @@ def test_an_out_of_credit_verifier_stops_the_role_instead_of_crashing_the_run():
         srv.shutdown()
 
 
+def test_a_role_output_cap_reaches_the_gateway_as_max_completion_tokens():
+    # Regression: with no cap, OpenRouter reserved its 65536-token default per call and
+    # refused a key with a few dollars left. Bifrost's canonical field is
+    # max_completion_tokens, which it translates per provider.
+    srv, base = _serve(lambda body: (200, _ok_body()))
+    try:
+        plane = ModelPlane([VirtualKey("operator", ["openai/strong"], max_output_tokens=512),
+                            VirtualKey("verifier", ["anthropic/strong"])],
+                           BifrostTransport(base, SECRETS), db.connect(), "eng-cap")
+        plane.call("operator", MSGS)
+        assert srv.last["body"]["max_completion_tokens"] == 512, srv.last["body"]
+        plane.call("verifier", MSGS)
+        assert "max_completion_tokens" not in srv.last["body"], srv.last["body"]
+    finally:
+        srv.shutdown()
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

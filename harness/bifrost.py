@@ -60,7 +60,13 @@ class BifrostTransport:
         if secret is None:
             raise BifrostError(f"no Bifrost secret for virtual key {vkey!r}")
 
-        body = json.dumps({"model": provider, "messages": messages}).encode("utf-8")
+        payload = {"model": provider, "messages": messages}
+        cap = (metadata or {}).get("max_output_tokens")
+        if cap is not None:
+            # Bifrost's canonical field; it translates it per provider (max_tokens for
+            # Anthropic). Without it a provider may reserve its own large default.
+            payload["max_completion_tokens"] = cap
+        body = json.dumps(payload).encode("utf-8")
         headers = {"Authorization": f"Bearer {secret}", "Content-Type": "application/json",
                    "X-Correlation-Id": str((metadata or {}).get("correlation_id") or "")}
         req = urllib.request.Request(self.base_url + "/v1/chat/completions",

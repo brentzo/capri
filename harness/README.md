@@ -229,7 +229,9 @@ gateway is out of repo.
   provider outage (a 502/503/504 or an unreachable gateway) maps to `ProviderDown`
   so the plane falls back. A 402 maps to `ProviderDown` flagged `out_of_credit`, so a
   role whose providers are all out of credit stops with `provider_out_of_credit` and
-  the run summary says so; any other 4xx or a malformed body is a hard `BifrostError`. It
+  the run summary says so; any other 4xx or a malformed body is a hard `BifrostError`. A
+  role's per-call output cap rides on its virtual key and goes out as Bifrost's
+  `max_completion_tokens`, so a provider never reserves its own large default. It
   is exercised against an in-process stdlib mock Bifrost in CI, so the wire
   contract is tested without a live gateway; pointing it at a real one is config.
 

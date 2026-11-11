@@ -45,6 +45,25 @@ def test_run_summary_is_silent_when_no_role_stopped():
     assert run_engagement.model_stop_lines({}) == []
 
 
+def test_a_live_run_caps_every_role_output_so_a_small_balance_still_serves():
+    import os
+    import types
+    from unittest.mock import patch
+
+    from harness.store import db
+    from tools import run_engagement
+    env = {"HC_VK_OPERATOR": "op-secret", "HC_VK_VERIFIER": "ver-secret",
+           "HC_OPERATOR_ROUTE": "openai/gpt-4o-mini",
+           "HC_VERIFIER_ROUTE": "openrouter/anthropic/claude-haiku-5.5"}
+    with patch.dict(os.environ, env):
+        operator, verifier, _ = run_engagement.build_roles(
+            db.connect(), types.SimpleNamespace(model_budget=1000, id="eng-cap"))
+    caps = {role: vk.max_output_tokens for role, vk in operator.plane.vkeys.items()}
+    assert caps == {"operator": run_engagement.MAX_OUTPUT_TOKENS,
+                    "verifier": run_engagement.MAX_OUTPUT_TOKENS}, caps
+    assert 0 < run_engagement.MAX_OUTPUT_TOKENS <= 16384
+
+
 def test_help_shows_branded_commands_and_windows_invocation():
     result = subprocess.run([sys.executable, str(ROOT / "capri"), "help"],
                             cwd=ROOT, capture_output=True, text=True,

@@ -76,12 +76,13 @@ class PlaneStop(Exception):
 
 class VirtualKey:
     """One role's binding: a provider set, a cache policy, a fallback policy, a
-    child budget, a per-vkey rate, and any brokered MCP tools (enrich only)."""
+    child budget, a per-vkey rate, a per-call output cap, and any brokered MCP
+    tools (enrich only)."""
     __slots__ = ("role", "vkey", "providers", "cache", "fallback", "budget",
-                 "rate", "mcp_tools")
+                 "rate", "max_output_tokens", "mcp_tools")
 
     def __init__(self, role, providers, *, cache=False, fallback="free",
-                 budget=None, rate=None, mcp_tools=()):
+                 budget=None, rate=None, max_output_tokens=None, mcp_tools=()):
         self.role = role
         self.vkey = f"vk-{role}"
         self.providers = tuple(providers)
@@ -89,6 +90,7 @@ class VirtualKey:
         self.fallback = fallback        # "free" | "within_set" | "none"
         self.budget = budget            # child budget in cost units, or None
         self.rate = rate                # per-vkey requests/sec, or None
+        self.max_output_tokens = max_output_tokens   # completion cap per call, or None
         self.mcp_tools = tuple(mcp_tools)
 
 
@@ -189,6 +191,8 @@ class ModelPlane:
         order = (vk.providers[:1] if vk.fallback == "none" else vk.providers)
         # the transport (the only credential holder) gets the role's vkey to present
         md = {**metadata, "vkey": vk.vkey}
+        if vk.max_output_tokens is not None:
+            md["max_output_tokens"] = vk.max_output_tokens
         failures = set()
         for provider in order:
             try:
@@ -259,6 +263,7 @@ class ModelPlane:
             vkeys.append(VirtualKey(
                 role, spec.get("providers", []), cache=spec.get("cache", False),
                 fallback=spec.get("fallback", "free"), rate=spec.get("rate"),
+                max_output_tokens=spec.get("max_output_tokens"),
                 budget=role_budgets.get(vkid), mcp_tools=spec.get("mcp_tools", ())))
         return cls(vkeys, transport, conn, engagement_id,
                    engagement_budget=budgets.get("limit"), clock=clock)
