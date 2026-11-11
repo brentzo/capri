@@ -19,6 +19,7 @@ logic is unit-tested against a stub with no Docker present (`tests/test_sandbox.
 the live path uses the default subprocess runner and works on Linux and Docker Desktop.
 """
 import ipaddress
+import os
 import socket
 import time
 
@@ -59,6 +60,15 @@ _DNS_PROBE = (
     "try:\n"
     "    socket.getaddrinfo(sys.argv[1], 443); print('RESOLVED')\n"
     "except Exception as e: print('REFUSED:'+type(e).__name__)\n"
+)
+# Readiness: a GET to the app's declared health path from the attacker, so "ready" means ready
+# as the agent will see it, over the real in-range path and through the scope guard.
+_READY_PROBE = (
+    "import sys,urllib.request\n"
+    "try:\n"
+    "    r=urllib.request.urlopen('http://%s:%s%s' % (sys.argv[1], sys.argv[2], sys.argv[3]), timeout=2)\n"
+    "    print('READY' if 200 <= r.status < 400 else 'NOT:%d' % r.status)\n"
+    "except Exception as e: print('NOT:'+type(e).__name__)\n"
 )
 
 
@@ -138,6 +148,12 @@ class DockerSandbox(Sandbox):
         # the app resolves, are reachable by the target but never pinned into the scope guard
         # (so the attacker cannot reach the datastore directly), and are torn down with the range.
         self._services = {}         # alias -> (container_name, ip_str)
+        # When the engagement declares a target app, the image built/pulled for it (so restore
+        # and the kill switch recreate the real app, not the bundled stdlib node image), and the
+        # base image each target was created from.
+        self._app_image = None
+        self._target_image = {}     # host -> base image tag
+        self._app_port = None       # the app's listen port, the live port the proofs probe
         self._snapshots = {}        # snapshot_id -> {host: (name, ip, image_tag)}
         self._snap_seq = 0
         self._out_of_scope_ip = None
@@ -170,6 +186,18 @@ class DockerSandbox(Sandbox):
         self._runtime = self._detect_runtime()                 # gVisor if the host offers it (§6.2)
         self.hardened = self._runtime == "runsc"
         self._host_ip = self._discover_host_ip()
+        # A declared app port is in scope for the app target. Add it to the allowed ports so the
+        # software pre-check (scope.validate) and the guard are built from one policy and agree by
+        # construction (§5.3), rather than making the operator repeat the port under scope.
+        self._app_port = None
+        if engagement.target and engagement.target.get("port"):
+            self._app_port = int(engagement.target["port"])
+            dflt = engagement.allowed_ports.setdefault("default", [])
+            if self._app_port not in dflt:
+                dflt.append(self._app_port)
+        # Build or pull the target app image on the host now, before the range is sealed and while
+        # the host still has internet (§13); the sealed range then only runs the already-built image.
+        self._app_image = self._prepare_app_image()
 
         hosts = self.subnet.hosts()
         self._out_of_scope_ip = str(next(hosts))               # .1: in-range, never in scope
@@ -194,15 +222,23 @@ class DockerSandbox(Sandbox):
         for host in engagement.in_scope_hosts:
             ip = str(next(hosts))
             name = f"{self.network}-tgt-{len(self._targets)}"
-            self._docker(*self._run_args(name, ip, self.node_image))
+            ports = scope.ports_for(engagement, ipaddress.ip_address(ip))
+            base = self._app_image or self.node_image
+            if self._app_image:                                # run the user's own app image
+                self._docker(*self._app_run_args(name, ip, base))
+            else:                                              # the bundled stdlib listener
+                self._docker(*self._run_args(name, ip, base))
+                self._start_listeners(name, ports)             # a listener so §8.1(d) connects
             pinned[host] = ip
             self._targets[host] = (name, ip)
-            ports = scope.ports_for(engagement, ipaddress.ip_address(ip))
+            self._target_image[host] = base
             self._target_ports[host] = ports
             pinned_ports.append((ip, ports))
-            self._start_listeners(name, ports)                 # a listener so §8.1(d) connects
             if self._in_scope_ip is None and ports:
-                self._in_scope_ip, self._guard_port = ip, int(ports[0])
+                # Probe the app's own port for an app target (other declared ports may have no
+                # listener); for a bundled target any allowed port has the stdlib listener.
+                self._in_scope_ip = ip
+                self._guard_port = self._app_port if self._app_image else int(ports[0])
 
         errs = engagement.pin({h: ip for h, ip in pinned.items()})
         if errs:
@@ -215,6 +251,10 @@ class DockerSandbox(Sandbox):
                           "nft", "-f", "-"]
         ruleset = guard_ruleset(self.guard_table, pinned_ports).encode("utf-8")
         self._docker(*guard_command, input=ruleset)
+        # With the guard installed, wait for the app to answer its health path over the real
+        # in-range path before the range is used, so recon and the proofs never race its startup.
+        if self._app_image:
+            self._wait_app_targets_ready()
         self._provisioned = True
         return {"range_id": self.network, "attacker": self.attacker, "mode": "sandboxed",
                 "pinned_targets": dict(pinned), "provisioned_at": self._clock()}
@@ -265,15 +305,15 @@ class DockerSandbox(Sandbox):
         attacker and the scope guard are untouched, since the guard lives in the
         attacker netns and the IPs are preserved."""
         if snapshot_id == GOLDEN:
-            targets = {h: (name, ip, self.node_image) for h, (name, ip) in self._targets.items()}
+            targets = {h: (name, ip, self._target_image.get(h, self.node_image))
+                       for h, (name, ip) in self._targets.items()}
         else:
             targets = self._snapshots.get(snapshot_id)
             if targets is None:
                 raise SandboxError(f"unknown snapshot {snapshot_id}")
         for host, (name, ip, image) in targets.items():
             self._run(["docker", "rm", "-f", name])
-            self._docker(*self._run_args(name, ip, image))
-            self._start_listeners(name, self._target_ports.get(host, []))
+            self._recreate_target(host, name, ip, image)
         return True
 
     def escape_attempt(self):
@@ -331,8 +371,7 @@ class DockerSandbox(Sandbox):
         restored = []
         for host, (name, ip) in self._targets.items():         # targets back to golden
             self._run(["docker", "rm", "-f", name])
-            self._docker(*self._run_args(name, ip, self.node_image))
-            self._start_listeners(name, self._target_ports.get(host, []))
+            self._recreate_target(host, name, ip, self._target_image.get(host, self.node_image))
             restored.append(host)
         return {"ok": True, "frozen_ms": frozen_ms, "forensics": forensics,
                 "restored_from_golden": restored}
@@ -377,6 +416,7 @@ class DockerSandbox(Sandbox):
         self.collab_addr = None
         self._targets, self._target_ports, self._snapshots, self._forensics = {}, {}, {}, []
         self._services = {}
+        self._app_image, self._target_image, self._app_port = None, {}, None
         return True
 
     # --- helpers --------------------------------------------------------
@@ -418,6 +458,60 @@ class DockerSandbox(Sandbox):
                 self._docker("exec", "-d", name, "python3", "/tmp/app.py", str(port))
             else:
                 self._docker("exec", "-d", name, "python3", "-m", "http.server", str(port))
+
+    def _prepare_app_image(self):
+        """Build or pull the target app image on the host, before the range is sealed (§13), and
+        return its tag; None when the engagement declares no app (the bundled listener runs)."""
+        t = (self._eng.target if self._eng else None) or {}
+        if t.get("image"):
+            img = t["image"]
+            if self._run(["docker", "image", "inspect", img]).rc != 0:
+                self._docker("pull", img)          # not present locally; fetch it (host has internet)
+            return img
+        if t.get("build"):
+            b = t["build"]
+            tag = f"hc-target:{self.network}"
+            dockerfile = os.path.join(b["context"], b["dockerfile"])
+            self._docker("build", "-t", tag, "-f", dockerfile, b["context"])
+            return tag
+        return None
+
+    def _app_run_args(self, name, ip, image):
+        """`docker run` args for a target running the user's app image: the engagement's env is
+        injected so the app finds its datastore by the service alias, and the image's own entry
+        point runs (no seeded listener). Under the hardened runtime when the host offers one."""
+        args = ["run", "-d", "--name", name, "--network", self.network, "--ip", ip]
+        if self._runtime:
+            args += ["--runtime", self._runtime]
+        for k, v in ((self._eng.target or {}).get("env") or {}).items():
+            args += ["-e", f"{k}={v}"]
+        return [*args, image]
+
+    def _recreate_target(self, host, name, ip, image):
+        """Recreate one target from `image` at its pinned IP. An app target runs the app image
+        with its env; a bundled target runs the node image and gets its stdlib listener back."""
+        if self._app_image:
+            self._docker(*self._app_run_args(name, ip, image))
+        else:
+            self._docker(*self._run_args(name, ip, image))
+            self._start_listeners(name, self._target_ports.get(host, []))
+
+    def _wait_app_targets_ready(self):
+        """Poll each app target's health path from the attacker until it answers or the declared
+        timeout elapses, so recon and the proofs never race the app's startup (fail-closed)."""
+        ready = (self._eng.target or {}).get("ready") or {}
+        path, timeout_s = ready.get("path", "/"), ready.get("timeout_s", 60)
+        deadline = time.monotonic() + timeout_s
+        for host, (name, ip) in self._targets.items():
+            port = self._app_port
+            while True:
+                out = self._exec_attacker("python3", "-c", _READY_PROBE, ip, str(port), path).out
+                if "READY" in out:
+                    break
+                if time.monotonic() >= deadline:
+                    raise SandboxError(f"target app at {ip}:{port}{path} was not ready within "
+                                       f"{timeout_s}s (last: {out.strip()})")
+                time.sleep(0.5)
 
     def _bring_up_services(self, hosts):
         """Stand up each `engagement.target` backing service as an in-range sidecar.

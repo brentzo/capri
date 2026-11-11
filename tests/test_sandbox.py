@@ -20,9 +20,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from harness.sandbox import PassiveOnlySandbox, guard_proof_result                 # noqa: E402
 from harness.sandbox.base import RunResult, SandboxError, default_run                # noqa: E402
-from harness.sandbox.docker import DockerSandbox, guard_ruleset                     # noqa: E402
+from harness.sandbox.docker import DockerSandbox, GOLDEN, guard_ruleset             # noqa: E402
 from harness.sandbox.probe import DockerProbe                                       # noqa: E402
-from harness.substrate import contract                                             # noqa: E402
+from harness.substrate import contract, scope                                      # noqa: E402
 from tools.run_engagement import _install_teardown_on_signal                       # noqa: E402
 
 CONTRACT = """
@@ -126,6 +126,10 @@ class FakeRunner:
                 args = rest[rest.index("-c") + 2:]
                 if "getaddrinfo" in src:
                     return RunResult(0, "RESOLVED" if self.dns_resolves else "REFUSED", "")
+                if "urlopen" in src:                           # the app health-path readiness probe
+                    ip, port = args[0], int(args[1])
+                    return RunResult(0, "READY" if (ip, port) in self.reachable
+                                     else "NOT:TimeoutError", "")
                 ip, port = args[0], int(args[1])
                 return RunResult(0, "CONNECTED" if (ip, port) in self.reachable
                                  else "BLOCKED:TimeoutError", "")
@@ -307,6 +311,82 @@ def test_provision_seeds_postgres_from_init_sql():
     psql = [c for c in run.calls if "psql" in c and "ON_ERROR_STOP=1" in c]
     assert psql, "psql was not invoked to seed the database"
     assert run.inputs[tuple(psql[0])] == "CREATE TABLE note (id int);\n"
+
+
+# --- an arbitrary app image as the target (HC-SUB-01 §4, §6.1) ------------------------
+APP_CONTRACT = """
+engagement:
+  id: eng-app-001
+  authorized_by: test
+  window: { start: 2026-11-09T20:00, end: 2026-11-09T23:59 }
+  max_blast_tier: 2
+  target:
+    image: myapp:local
+    port: 3000
+    env: { DATABASE_URL: "postgres://app:app@db:5432/app" }
+    ready: { path: /healthz, timeout_s: 30 }
+    services:
+      - { name: db, engine: postgres }
+scope:
+  in_scope_hosts: [t1.sandbox.local]
+  in_scope_cidrs: [10.90.0.0/24]
+"""   # no allowed_ports: the declared app port is auto-added, proving the §5.3 agreement
+
+
+def _app_eng(text=APP_CONTRACT):
+    eng, errs = contract.parse(text)
+    assert not errs, errs
+    return eng
+
+
+def test_provision_runs_a_user_app_image_with_its_env_in_place_of_the_listener():
+    # .1 oos, .2 attacker, .3 the db service, .4 the app target
+    run = FakeRunner(reachable=[("10.90.0.4", 3000)])
+    DockerSandbox(run=run).provision(_app_eng())
+    assert run.ran("run", "--name", "hc-range-tgt-0", "--ip", "10.90.0.4", "myapp:local")
+    assert run.ran("run", "-e", "DATABASE_URL=postgres://app:app@db:5432/app", "myapp:local")
+    assert not run.ran("http.server")                          # the image is the app, no stand-in
+    assert not run.ran("cat > /tmp/app.py")                    # nothing seeded over stdin
+    assert run.ran("python3", "-c", "10.90.0.4", "3000", "/healthz")   # readiness over the real path
+
+
+def test_provision_builds_a_target_image_from_a_dockerfile():
+    build = APP_CONTRACT.replace(
+        "    image: myapp:local\n",
+        "    build: { context: infra/sandbox/nodepg, dockerfile: Dockerfile }\n")
+    run = FakeRunner(reachable=[("10.90.0.4", 3000)])
+    DockerSandbox(run=run).provision(_app_eng(build))
+    assert run.ran("build", "-t", "hc-target:hc-range", "-f",
+                   "infra/sandbox/nodepg/Dockerfile", "infra/sandbox/nodepg")
+    assert run.ran("run", "--ip", "10.90.0.4", "hc-target:hc-range")   # the built image is the target
+
+
+def test_the_declared_app_port_is_allowed_so_the_precheck_and_guard_agree():
+    run = FakeRunner(reachable=[("10.90.0.4", 3000)])
+    eng = _app_eng()
+    DockerSandbox(run=run).provision(eng)
+    # the app port joined the allowed ports, so the software pre-check allows exactly the port the
+    # guard opened: no §5.3 stop-the-line disagreement between the two layers
+    assert scope.scope_validate(eng, "10.90.0.4", 3000) == ("allow", None)
+
+
+def test_an_app_target_is_recreated_from_its_app_image_on_restore():
+    run = FakeRunner(reachable=[("10.90.0.4", 3000)])
+    sb = DockerSandbox(run=run)
+    sb.provision(_app_eng())
+    run.calls.clear()
+    sb.restore(GOLDEN)
+    assert run.ran("run", "--name", "hc-range-tgt-0", "myapp:local")   # the app image, not node
+    assert not run.ran("hc-node:golden")
+    assert not run.ran("http.server")
+
+
+def test_proofs_pass_for_an_app_target_backed_by_a_service():
+    # the full five-guarantee path holds with a real app image plus a backing service
+    run = FakeRunner(reachable=[("10.90.0.4", 3000)])
+    sb = DockerSandbox(run=run)
+    sb.provision(_app_eng())
+    assert sb.proofs_pass()
 
 
 def test_guard_proof_passes_only_when_the_range_enforces_scope():

@@ -709,10 +709,21 @@ contract to declare one, and the backing-service machinery that runs its databas
   waits on `pg_isready`, and applies `init_sql` with `psql -v ON_ERROR_STOP=1`. The sidecar is
   never added to the pinned allow list, so the scope guard keeps the attacker off the datastore
   while the app reaches it over the internal network; teardown sweeps it.
-- `tests/test_substrate.py` and `tests/test_sandbox.py` cover the target contract and the Postgres
-  bring-up and seed through the injected runner, so there is no Docker and no network in the test.
-- Next increments: run a user-supplied app image in place of the bundled listener, and extend
-  snapshot/restore/kill so G3 and G5 hold for the stateful app-plus-datastore unit.
+- `sandbox/docker.py` - when the engagement declares an app, `_prepare_app_image` builds its
+  `build` context or pulls its `image` on the host before the range is sealed, and the target runs
+  that image with the engagement `env` injected in place of the bundled listener. The declared
+  `port` is added to the allowed ports so the pre-check and the guard agree (§5.3); after the guard
+  is up the harness polls the app's `ready` health path from the attacker over the real in-range
+  path, and restore and the kill switch recreate the app from its own image.
+- `infra/sandbox/nodepg/` - a bundled, deliberately vulnerable Node + Postgres practice target
+  (Dockerfile, `server.js`, `seed.sql`), so the app-image path is proven on a genuine app image and
+  datastore, not a stdlib stand-in. It is the Node+Postgres analogue of `vulnweb.py`/`noteapp.py`.
+- `tests/test_substrate.py` and `tests/test_sandbox.py` cover the target contract and, through the
+  injected runner (no Docker, no network), the Postgres bring-up and seed, the app image running
+  with its env, the Dockerfile build, the port agreement, and the five guarantees holding for an
+  app-plus-service target.
+- Next increment: make the datastore part of snapshot/restore/kill so G3 and G5 reproduce a
+  mutating action's database state, not only the app's filesystem.
 
 ## Run
 

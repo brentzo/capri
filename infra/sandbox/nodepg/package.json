@@ -1,0 +1,9 @@
+{
+  "name": "hc-nodepg-practice",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A deliberately vulnerable Node + Postgres app, a bundled practice target for the Capri range.",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "dependencies": { "pg": "8.13.1" }
+}
