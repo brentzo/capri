@@ -79,7 +79,7 @@ def test_source_assessment_uses_only_local_rules_and_redacts_snippets():
         assert "--json" in command
         assert "--exclude" in command and ".env.*" in command
         assert ".claude" in command and "*.md" in command
-        assert str(project) in command
+        assert str(project.resolve()) in command  # assess_source passes the real path
         assert invocation["kwargs"]["timeout"] > 0
         assert not (project / ".capri").exists()
 
