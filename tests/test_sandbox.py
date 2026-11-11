@@ -406,6 +406,21 @@ def test_a_backing_service_is_snapshotted_and_restored_with_its_state():
     assert sb._read_file("hc-range-svc-db", "/data_marker") == "seeded"
 
 
+def test_restore_recreates_the_datastore_before_the_app_target():
+    # Dependencies first: the app must come back up against a datastore that is already accepting
+    # connections, or its dropped pool connections crash it (caught by the live run, not a mock).
+    run = FakeRunner(reachable=[("10.90.0.4", 3000)])
+    sb = DockerSandbox(run=run)
+    sb.provision(_app_eng())
+    run.calls.clear()
+    sb.restore(GOLDEN)
+
+    def first_run(image):
+        return next(i for i, c in enumerate(run.calls) if "run" in c and image in c)
+
+    assert first_run("hc-golden:hc-range-svc-db") < first_run("myapp:local")
+
+
 def test_restore_golden_recreates_a_service_from_its_seeded_image():
     run = FakeRunner()
     sb = DockerSandbox(run=run)

@@ -18,6 +18,10 @@ const { Pool } = require("pg");
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+// A pooled client whose backend connection drops (e.g. the datastore is restored underneath us)
+// emits an 'error' on the pool; without a handler Node treats it as unhandled and exits. Swallow
+// it so the app rides out a datastore blip and reconnects on the next query, as a real app should.
+pool.on("error", (err) => console.error("pg pool error:", err.message));
 
 async function connectWithRetry(attempts = 30) {
   // Provisioning waits on pg_isready before starting us, but a short retry keeps the app robust

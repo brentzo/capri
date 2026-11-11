@@ -324,7 +324,9 @@ class DockerSandbox(Sandbox):
             records = self._snapshots.get(snapshot_id)
             if records is None:
                 raise SandboxError(f"unknown snapshot {snapshot_id}")
-        for r in records:
+        # Recreate backing services before the targets (dependencies first, as provisioning does),
+        # so an app comes back up against a datastore that is already accepting connections.
+        for r in sorted(records, key=lambda rec: 0 if rec["kind"] == "service" else 1):
             self._run(["docker", "rm", "-f", r["name"]])
             if r["kind"] == "service":
                 self._recreate_service(r["alias"], r["name"], r["ip"], r["image"])
@@ -389,14 +391,14 @@ class DockerSandbox(Sandbox):
             forensics.append(image)
         self._forensics.extend(forensics)
         restored = []
+        for alias, (name, ip) in self._services.items():       # datastore first, so the app that
+            self._run(["docker", "rm", "-f", name])            # follows comes back against a ready db
+            self._recreate_service(alias, name, ip, self._service_golden[alias])
+            restored.append(alias)
         for host, (name, ip) in self._targets.items():         # targets back to golden
             self._run(["docker", "rm", "-f", name])
             self._recreate_target(host, name, ip, self._target_image.get(host, self.node_image))
             restored.append(host)
-        for alias, (name, ip) in self._services.items():       # datastore back to its seeded golden
-            self._run(["docker", "rm", "-f", name])
-            self._recreate_service(alias, name, ip, self._service_golden[alias])
-            restored.append(alias)
         return {"ok": True, "frozen_ms": frozen_ms, "forensics": forensics,
                 "restored_from_golden": restored}
 
