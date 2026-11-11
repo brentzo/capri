@@ -148,6 +148,8 @@ class DockerSandbox(Sandbox):
         # the app resolves, are reachable by the target but never pinned into the scope guard
         # (so the attacker cannot reach the datastore directly), and are torn down with the range.
         self._services = {}         # alias -> (container_name, ip_str)
+        self._service_spec = {}     # alias -> the normalized service dict (engine, creds, ...)
+        self._service_golden = {}   # alias -> the seeded golden image, the §4.2 baseline to restore
         # When the engagement declares a target app, the image built/pulled for it (so restore
         # and the kill switch recreate the real app, not the bundled stdlib node image), and the
         # base image each target was created from.
@@ -290,12 +292,19 @@ class DockerSandbox(Sandbox):
             raise SandboxError("no range to snapshot: not provisioned")
         self._snap_seq += 1
         snap_id = f"{self.network}-snap-{self._snap_seq}"
-        images = {}
-        for host, (name, ip) in self._targets.items():
-            image = f"hc-snap:{snap_id}-{len(images)}"
+        records = []
+        for i, (host, (name, ip)) in enumerate(self._targets.items()):
+            image = f"hc-snap:{snap_id}-t{i}"
             self._docker("commit", name, image)
-            images[host] = (name, ip, image)
-        self._snapshots[snap_id] = images
+            records.append({"kind": "target", "host": host, "name": name, "ip": ip, "image": image})
+        for alias, (name, ip) in self._services.items():
+            # Flush a clean data dir before the commit so the restored datastore replays little or
+            # no WAL; Postgres is crash-safe, so even without this the committed image recovers.
+            self._pg_checkpoint(name, alias)
+            image = f"hc-snap:{snap_id}-s-{alias}"
+            self._docker("commit", name, image)
+            records.append({"kind": "service", "alias": alias, "name": name, "ip": ip, "image": image})
+        self._snapshots[snap_id] = records
         return snap_id
 
     def restore(self, snapshot_id):
@@ -305,15 +314,22 @@ class DockerSandbox(Sandbox):
         attacker and the scope guard are untouched, since the guard lives in the
         attacker netns and the IPs are preserved."""
         if snapshot_id == GOLDEN:
-            targets = {h: (name, ip, self._target_image.get(h, self.node_image))
-                       for h, (name, ip) in self._targets.items()}
+            records = [{"kind": "target", "host": h, "name": name, "ip": ip,
+                        "image": self._target_image.get(h, self.node_image)}
+                       for h, (name, ip) in self._targets.items()]
+            records += [{"kind": "service", "alias": a, "name": name, "ip": ip,
+                         "image": self._service_golden[a]}
+                        for a, (name, ip) in self._services.items()]
         else:
-            targets = self._snapshots.get(snapshot_id)
-            if targets is None:
+            records = self._snapshots.get(snapshot_id)
+            if records is None:
                 raise SandboxError(f"unknown snapshot {snapshot_id}")
-        for host, (name, ip, image) in targets.items():
-            self._run(["docker", "rm", "-f", name])
-            self._recreate_target(host, name, ip, image)
+        for r in records:
+            self._run(["docker", "rm", "-f", r["name"]])
+            if r["kind"] == "service":
+                self._recreate_service(r["alias"], r["name"], r["ip"], r["image"])
+            else:
+                self._recreate_target(r["host"], r["name"], r["ip"], r["image"])
         return True
 
     def escape_attempt(self):
@@ -358,7 +374,11 @@ class DockerSandbox(Sandbox):
         was restored."""
         if not self._provisioned:
             return {"ok": True, "frozen_ms": 0, "forensics": [], "restored_from_golden": []}
-        containers = [self.attacker, *[name for name, _ in self._targets.values()]]
+        # Freeze the whole range at once: the attacker, every target, and every backing service, so
+        # a mutating datastore stops with the app rather than running on under a frozen attacker.
+        containers = [self.attacker,
+                      *[name for name, _ in self._targets.values()],
+                      *[name for name, _ in self._services.values()]]
         t0 = time.monotonic()
         self._run(["docker", "pause", *containers])            # instant freeze (cgroup freezer)
         frozen_ms = int((time.monotonic() - t0) * 1000)
@@ -373,6 +393,10 @@ class DockerSandbox(Sandbox):
             self._run(["docker", "rm", "-f", name])
             self._recreate_target(host, name, ip, self._target_image.get(host, self.node_image))
             restored.append(host)
+        for alias, (name, ip) in self._services.items():       # datastore back to its seeded golden
+            self._run(["docker", "rm", "-f", name])
+            self._recreate_service(alias, name, ip, self._service_golden[alias])
+            restored.append(alias)
         return {"ok": True, "frozen_ms": frozen_ms, "forensics": forensics,
                 "restored_from_golden": restored}
 
@@ -409,13 +433,13 @@ class DockerSandbox(Sandbox):
         for cid in stale.out.split():
             self._run(["docker", "rm", "-f", cid])
         self._run(["docker", "network", "rm", self.network])
-        images = [img for snap in self._snapshots.values() for _, _, img in snap.values()]
-        for image in images + self._forensics:
+        images = [r["image"] for snap in self._snapshots.values() for r in snap]
+        for image in images + list(self._service_golden.values()) + self._forensics:
             self._run(["docker", "rmi", "-f", image])
         self._provisioned = False
         self.collab_addr = None
         self._targets, self._target_ports, self._snapshots, self._forensics = {}, {}, {}, []
-        self._services = {}
+        self._services, self._service_spec, self._service_golden = {}, {}, {}
         self._app_image, self._target_image, self._app_port = None, {}, None
         return True
 
@@ -530,6 +554,12 @@ class DockerSandbox(Sandbox):
             name = f"{self.network}-svc-{svc['name']}"
             self._bring_up_postgres(name, ip, svc)
             self._services[svc["name"]] = (name, ip)
+            self._service_spec[svc["name"]] = svc
+            # The seeded datastore is this service's golden baseline, committed once so restore and
+            # the kill switch return it to the known post-seed state the Verifier reproduces against.
+            golden = f"hc-golden:{self.network}-svc-{svc['name']}"
+            self._docker("commit", name, golden)
+            self._service_golden[svc["name"]] = golden
 
     def _bring_up_postgres(self, name, ip, svc):
         image = f"postgres:{svc['version']}"
@@ -545,6 +575,30 @@ class DockerSandbox(Sandbox):
         self._wait_pg_ready(name, svc)
         if svc.get("init_sql"):
             self._seed_postgres(name, svc)
+
+    def _recreate_service(self, alias, name, ip, image):
+        """Recreate a backing service from `image` (a snapshot or the seeded golden) at its pinned
+        IP and alias, then wait for it to accept connections again. Postgres replays its WAL on
+        start, so a committed data dir comes back crash-consistent; the init env is unused on a
+        populated data dir but is passed for parity with the first start."""
+        svc = self._service_spec[alias]
+        args = ["run", "-d", "--name", name, "--network", self.network, "--ip", ip,
+                "--network-alias", alias]
+        if self._runtime:
+            args += ["--runtime", self._runtime]
+        args += ["-e", f"POSTGRES_USER={svc['user']}",
+                 "-e", f"POSTGRES_PASSWORD={svc['password']}",
+                 "-e", f"POSTGRES_DB={svc['db']}", image]
+        self._docker(*args)
+        self._wait_pg_ready(name, svc)
+
+    def _pg_checkpoint(self, name, alias):
+        """Best-effort CHECKPOINT so a snapshot's committed data dir needs little WAL replay on
+        restore. A failure here does not fail the snapshot: Postgres recovers either way."""
+        svc = self._service_spec.get(alias)
+        if svc:
+            self._run(["docker", "exec", name, "psql", "-U", svc["user"], "-d", svc["db"],
+                       "-c", "CHECKPOINT;"])
 
     def _wait_pg_ready(self, name, svc):
         """Poll `pg_isready` until the server accepts connections or the budget elapses, so

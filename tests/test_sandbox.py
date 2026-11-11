@@ -389,6 +389,44 @@ def test_proofs_pass_for_an_app_target_backed_by_a_service():
     assert sb.proofs_pass()
 
 
+# --- the datastore is part of snapshot/restore/kill (HC-SUB-01 §6.3, §6.4; G3, G5) ----
+_PG = '  target:\n    services:\n      - { name: db, engine: postgres }\n'
+
+
+def test_a_backing_service_is_snapshotted_and_restored_with_its_state():
+    # G3 must reproduce database state, not only the app's filesystem: a value written to the
+    # datastore, snapshotted, then overwritten, comes back on restore of that snapshot.
+    run = FakeRunner()
+    sb = DockerSandbox(run=run)
+    sb.provision(_eng_with_target(_PG))
+    sb._write_file("hc-range-svc-db", "/data_marker", "seeded")
+    snap = sb.snapshot()
+    sb._write_file("hc-range-svc-db", "/data_marker", "mutated")
+    sb.restore(snap)
+    assert sb._read_file("hc-range-svc-db", "/data_marker") == "seeded"
+
+
+def test_restore_golden_recreates_a_service_from_its_seeded_image():
+    run = FakeRunner()
+    sb = DockerSandbox(run=run)
+    sb.provision(_eng_with_target(_PG))
+    run.calls.clear()
+    sb.restore(GOLDEN)
+    # the datastore returns to the golden committed right after seeding (the §4.2 baseline), with
+    # its alias so the app still resolves it
+    assert run.ran("run", "--network-alias", "db", "hc-golden:hc-range-svc-db")
+
+
+def test_the_kill_switch_freezes_and_restores_the_backing_service():
+    run = FakeRunner()
+    sb = DockerSandbox(run=run)
+    sb.provision(_eng_with_target(_PG))
+    res = sb.kill()
+    assert run.ran("pause", "hc-range-svc-db")                 # frozen with the rest of the range
+    assert "db" in res["restored_from_golden"]
+    assert run.ran("run", "--network-alias", "db", "hc-golden:hc-range-svc-db")
+
+
 def test_guard_proof_passes_only_when_the_range_enforces_scope():
     eng = _eng()
     # a correctly enforcing range: only the pinned in-scope target:port connects

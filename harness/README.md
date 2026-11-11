@@ -722,8 +722,11 @@ contract to declare one, and the backing-service machinery that runs its databas
   injected runner (no Docker, no network), the Postgres bring-up and seed, the app image running
   with its env, the Dockerfile build, the port agreement, and the five guarantees holding for an
   app-plus-service target.
-- Next increment: make the datastore part of snapshot/restore/kill so G3 and G5 reproduce a
-  mutating action's database state, not only the app's filesystem.
+- `sandbox/docker.py` - the datastore is part of snapshot/restore/kill, so G3 and G5 reproduce a
+  mutating action's database state, not only the app's filesystem. `snapshot` commits each service
+  container (a `CHECKPOINT` first), `restore` recreates it from the snapshot or from a per-service
+  golden committed right after seeding, and the kill switch freezes and restores it with the range.
+  Postgres is crash-safe, so a committed data directory recovers on restart.
 
 ## Run
 
