@@ -469,7 +469,7 @@ HC-MODEL-01: `capri`, the one command a self-hoster runs, and the terminal UI be
 cloud account, no browser. The gateway (Bifrost) is infrastructure, the way Docker is
 for the sandbox; the harness itself stays dependency-free and is handed a gateway URL.
 
-- `capri` (repo root) - the entry point: `capri setup`, `capri run`, `capri gateway
+- `capri` (repo root) - the entry point: `capri setup`, `capri run`, `capri source --project <path>`, `capri gateway
   <status|env|down|destroy|…>`, `capri help` (with a banner). `make install` symlinks it
   onto the PATH. `capri run` loads the gateway handles into its own env (resolving the
   invoking user's home under sudo), so there is no manual export step.
@@ -503,6 +503,12 @@ for the sandbox; the harness itself stays dependency-free and is handed a gatewa
   (`tests/test_catalog.py`, `tests/test_modelplane_setup.py`); the live bring-up and a
   confirmed finding from real models are proven on a real Docker host (dev notes in
   `infra/modelplane/`).
+
+## What's here (local source assessment)
+
+HC-PROJ-01: `capri source --project <path>` runs a read-only source scan of any local project with Capri's local Semgrep rules.
+It disables metrics and version checks, never executes the selected project, omits matched source text from reports, and writes the report outside the project under `~/.capri/reports/` by default.
+The report labels static findings as advisory and says runtime assessment was not run because the live runner still targets Capri's built-in demo.
 
 ## What's here (the real KB in the live run)
 

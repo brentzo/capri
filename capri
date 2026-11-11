@@ -65,6 +65,7 @@ def _help():
     commands = "\n\n".join((
         group("Setup", [("setup", "choose Operator and Verifier models, then start Bifrost")]),
         group("Run", [("run", "run an engagement against the sandbox")]),
+        group("Local source assessment", [("source --project <path>", "scan project source with Capri's local rules")]),
         group("Gateway", [("gateway up", "start the saved gateway"),
                            ("gateway status", "show gateway status"),
                            ("gateway keys", "update provider keys"),
@@ -160,6 +161,9 @@ def main(argv):
         return setup.main(rest)
     if cmd == "run":
         return _cmd_run(rest)
+    if cmd == "source":
+        from tools import project_assessment
+        return project_assessment.main(rest)
     if cmd == "gateway":
         if not rest:
             print("usage: capri gateway <up|keys|env|status|down|destroy>")

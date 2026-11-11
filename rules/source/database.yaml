@@ -1,0 +1,27 @@
+rules:
+  - id: source.database.rls-disabled
+    languages: [generic]
+    severity: ERROR
+    message: Row Level Security is explicitly disabled on a table.
+    metadata:
+      category: database-rls
+      confidence: high
+    pattern-regex: (?i)alter\s+table\s+(?:if\s+exists\s+)?[\w." ]+\s+disable\s+row\s+level\s+security
+
+  - id: source.database.unrestricted-policy
+    languages: [generic]
+    severity: WARNING
+    message: A database policy may allow every row; verify the intended owner boundary.
+    metadata:
+      category: database-rls
+      confidence: medium
+    pattern-regex: (?is)create\s+policy\b[^;]*(?:using|with\s+check)\s*\(\s*true\s*\)
+
+  - id: source.database.definer-search-path
+    languages: [generic]
+    severity: WARNING
+    message: SECURITY DEFINER function may lack a fixed search_path.
+    metadata:
+      category: database-rls
+      confidence: low
+    pattern-regex: (?is)security\s+definer(?![^;]*set\s+search_path)

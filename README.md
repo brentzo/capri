@@ -145,6 +145,15 @@ A live engagement needs three things, all self-hostable on your own machine:
    Those commands use the repo's locked `uv` environment; add `--plain` to setup for line-by-line prompts.
 
    `capri setup` offers a catalog of providers (OpenAI, Anthropic, Gemini, DeepSeek, and more) and keeps the two roles on different providers; the gateway (Bifrost) runs on `127.0.0.1` and never appears. See the [gateway setup walkthrough](infra/modelplane/README.md) and the [model-plane spec](docs/specs/HC-MODEL-01.md).
+
+For a local, read-only source assessment of any project, install Semgrep locally and run:
+
+```powershell
+python .\capri source --project C:\path\to\project
+```
+
+This uses Capri's local rule pack with metrics and version checks disabled, does not execute the project or contact a model provider, and writes a snippet-free report under `~/.capri/reports/`.
+This command assesses source only; it does not run the app or its backing services.
 3. **Tool adapters** behind the allow-listed `dispatch()` interface (nmap, httpx, ffuf, sqlmap, nuclei, a headless browser), optionally with the Tavily enrichment service.
 
 Until the five sandbox self-tests pass, the harness stays in `passive-only`: no active probe runs and every lead is held unverified.

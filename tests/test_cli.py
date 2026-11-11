@@ -35,6 +35,7 @@ def test_help_shows_branded_commands_and_windows_invocation():
                             encoding="utf-8", check=True)
     assert "Commands" in result.stdout
     assert "gateway destroy" in result.stdout
+    assert "source --project <path>" in result.stdout
     assert ("python .\\capri setup" if sys.platform == "win32" else "capri setup") in result.stdout
 
 

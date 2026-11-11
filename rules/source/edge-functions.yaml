@@ -1,0 +1,37 @@
+rules:
+  - id: source.edge.manual-auth-required
+    languages: [generic]
+    severity: INFO
+    message: JWT gateway verification is disabled here; confirm the handler validates the user or worker secret before privileged operations.
+    metadata:
+      category: edge-function-auth
+      confidence: low
+    pattern-regex: (?im)^\s*verify_jwt\s*=\s*false\s*$
+
+  - id: source.edge.service-role-in-client
+    languages: [generic]
+    severity: ERROR
+    message: A Supabase service-role credential is referenced in client-side source.
+    metadata:
+      category: edge-function-auth
+      confidence: high
+    paths:
+      include:
+        - frontend
+        - client
+        - web
+        - mobile
+    pattern-regex: (?i)(?:service[_-]?role[_-]?key|supabase[_-]?service[_-]?role)
+
+  - id: source.upload.server-validation-review
+    languages: [generic]
+    severity: INFO
+    message: Confirm uploaded bytes are validated for size, type, and ownership at the trusted server boundary.
+    metadata:
+      category: uploads
+      confidence: low
+    paths:
+      include:
+        - "*upload*"
+        - "*Upload*"
+    pattern-regex: \.arrayBuffer\(\)

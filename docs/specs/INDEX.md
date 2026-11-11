@@ -23,6 +23,7 @@ Areas:
 - `SAFE` - safety and guardrails
 - `EVAL` - evaluation
 - `REPORT` - operator report rendering, reasoning record, and the local run dashboard
+- `PROJ` - local project assessment
 
 Each spec file opens with this frontmatter:
 
@@ -64,6 +65,7 @@ updated: 2026-11-08
 | HC-SAFE-01  | Safety and guardrails                                  | SPEC.md#11       | draft   |
 | HC-EVAL-01  | Evaluation harness and seeded vulns                    | SPEC.md#14       | draft   |
 | HC-REPORT-01| Operator report rendering, reasoning record, local dashboard | SPEC.md#8, #9 | draft |
+| HC-PROJ-01  | Local project assessment                               | SPEC.md#1, #4    | draft   |
 
 ## Status legend
 

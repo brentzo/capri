@@ -31,3 +31,4 @@ authorizes it), or an **auditor** actually uses the system. These are the
 | BR-08 | Full evidence and a tamper-evident audit trail | HC-DATA-01, HC-SAFE-01 |
 | BR-09 | Bounded cost and controlled model access | HC-MODEL-01 |
 | BR-10 | Optional external intel that never touches the sandbox | HC-ENRICH-01, HC-MODEL-01 |
+| BR-11 | Assess local project source privately | HC-PROJ-01 |
