@@ -10,6 +10,7 @@ Read-only throughout.
 
 Zero-dependency: `python3 tests/test_dashboard.py`.
 """
+from contextlib import closing
 import os
 import sys
 import tempfile
@@ -59,8 +60,7 @@ def _seed(path):
 
 
 def test_index_lists_runs_most_recent_first():
-    with tempfile.TemporaryDirectory() as d:
-        c = _seed(os.path.join(d, "e.db"))
+    with tempfile.TemporaryDirectory() as d, closing(_seed(os.path.join(d, "e.db"))) as c:
         status, body = dashboard.route(c, "/")
         assert status == 200
         assert "eng-new" in body and "eng-old" in body
@@ -69,8 +69,7 @@ def test_index_lists_runs_most_recent_first():
 
 
 def test_run_page_renders_the_report_with_back_nav():
-    with tempfile.TemporaryDirectory() as d:
-        c = _seed(os.path.join(d, "e.db"))
+    with tempfile.TemporaryDirectory() as d, closing(_seed(os.path.join(d, "e.db"))) as c:
         status, body = dashboard.route(c, "/run/eng-new")
         assert status == 200
         assert "KB-WEB-INJ-SQLI-001" in body and "reads rows" in body
@@ -80,8 +79,7 @@ def test_run_page_renders_the_report_with_back_nav():
 
 
 def test_reasoning_page_shows_both_roles_as_escaped_text():
-    with tempfile.TemporaryDirectory() as d:
-        c = _seed(os.path.join(d, "e.db"))
+    with tempfile.TemporaryDirectory() as d, closing(_seed(os.path.join(d, "e.db"))) as c:
         status, body = dashboard.route(c, "/run/eng-new/reasoning")
         assert status == 200
         assert "operator" in body and "verifier" in body         # both sessions shown, distinct
@@ -92,16 +90,14 @@ def test_reasoning_page_shows_both_roles_as_escaped_text():
 
 
 def test_reasoning_page_for_a_run_without_turns_is_friendly():
-    with tempfile.TemporaryDirectory() as d:
-        c = db.connect(os.path.join(d, "e.db"))
+    with tempfile.TemporaryDirectory() as d, closing(db.connect(os.path.join(d, "e.db"))) as c:
         engagements.save(c, _report("eng-x"))
         status, body = dashboard.route(c, "/run/eng-x/reasoning")
         assert status == 200 and "No role turns" in body
 
 
 def test_audit_page_shows_rows_and_chain_intact():
-    with tempfile.TemporaryDirectory() as d:
-        c = _seed(os.path.join(d, "e.db"))
+    with tempfile.TemporaryDirectory() as d, closing(_seed(os.path.join(d, "e.db"))) as c:
         status, body = dashboard.route(c, "/run/eng-new/audit")
         assert status == 200
         assert "intact" in body and "sandbox_proof" in body and "in scope" in body
@@ -109,22 +105,19 @@ def test_audit_page_shows_rows_and_chain_intact():
 
 
 def test_trailing_slash_and_query_are_normalized():
-    with tempfile.TemporaryDirectory() as d:
-        c = _seed(os.path.join(d, "e.db"))
+    with tempfile.TemporaryDirectory() as d, closing(_seed(os.path.join(d, "e.db"))) as c:
         assert dashboard.route(c, "/run/eng-new/")[0] == 200
         assert dashboard.route(c, "/run/eng-new?x=1")[0] == 200
 
 
 def test_unknown_run_and_unknown_path_are_404():
-    with tempfile.TemporaryDirectory() as d:
-        c = _seed(os.path.join(d, "e.db"))
+    with tempfile.TemporaryDirectory() as d, closing(_seed(os.path.join(d, "e.db"))) as c:
         assert dashboard.route(c, "/run/nope")[0] == 404
         assert dashboard.route(c, "/anything-else")[0] == 404
 
 
 def test_empty_store_shows_a_friendly_message():
-    with tempfile.TemporaryDirectory() as d:
-        c = db.connect(os.path.join(d, "e.db"))
+    with tempfile.TemporaryDirectory() as d, closing(db.connect(os.path.join(d, "e.db"))) as c:
         status, body = dashboard.route(c, "/")
         assert status == 200 and "No runs yet" in body
 

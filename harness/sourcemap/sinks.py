@@ -121,7 +121,7 @@ def _resolve(spec, importer_file, aliases):
         if spec.startswith(prefix):
             rest = spec[len(prefix):]
             for base in dirs:
-                hit = _resolve_file(os.path.join(base, rest))
+                hit = _resolve_file(os.path.normpath(os.path.join(base, rest)))
                 if hit:
                     return hit
             return None

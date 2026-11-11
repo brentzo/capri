@@ -9,6 +9,7 @@ reopening it between write and read to prove the data survives the process.
 
 Zero-dependency: `python3 tests/test_engagements_store.py`.
 """
+from contextlib import closing
 import os
 import sys
 import tempfile
@@ -43,49 +44,48 @@ def test_a_saved_run_lists_and_reopens_after_the_writer_is_closed():
         engagements.save(w, _report("eng-1"), valid=True)
         w.close()                                             # the engagement process exits
 
-        r = db.connect(path)                                  # the dashboard opens it later
-        rows = engagements.list_all(r)
+        with closing(db.connect(path)) as r:                  # the dashboard opens it later
+            rows = engagements.list_all(r)
+            got = engagements.get(r, "eng-1")
         assert len(rows) == 1 and rows[0]["id"] == "eng-1"
         assert rows[0]["mode"] == "sandboxed" and rows[0]["valid"] is True
         assert rows[0]["coverage_summary"]["confirmed"] == 3
         assert rows[0]["in_scope_hosts"] == ["t1.sandbox.local"]
-
-        got = engagements.get(r, "eng-1")
         assert got["report"]["findings"][0]["technique_id"] == "KB-WEB-INJ-SQLI-001"
         assert got["report"]["findings"][0]["found_by"] != got["report"]["findings"][0]["verified_by"]
 
 
 def test_list_orders_most_recent_first():
     with tempfile.TemporaryDirectory() as d:
-        c = db.connect(os.path.join(d, "e.db"))
-        engagements.save(c, _report("eng-old"), started_at="2026-11-10T08:00:00+00:00")
-        engagements.save(c, _report("eng-new"), started_at="2026-11-10T20:00:00+00:00")
-        ids = [r["id"] for r in engagements.list_all(c)]
+        with closing(db.connect(os.path.join(d, "e.db"))) as c:
+            engagements.save(c, _report("eng-old"), started_at="2026-11-10T08:00:00+00:00")
+            engagements.save(c, _report("eng-new"), started_at="2026-11-10T20:00:00+00:00")
+            ids = [r["id"] for r in engagements.list_all(c)]
         assert ids == ["eng-new", "eng-old"]
 
 
 def test_get_unknown_run_is_none():
     with tempfile.TemporaryDirectory() as d:
-        c = db.connect(os.path.join(d, "e.db"))
-        assert engagements.get(c, "nope") is None
+        with closing(db.connect(os.path.join(d, "e.db"))) as c:
+            assert engagements.get(c, "nope") is None
 
 
 def test_save_is_idempotent_by_id():
     with tempfile.TemporaryDirectory() as d:
-        c = db.connect(os.path.join(d, "e.db"))
-        engagements.save(c, _report("eng-x", mode="sandboxed"))
-        engagements.save(c, _report("eng-x", mode="passive-only"))   # same run, re-saved
-        rows = engagements.list_all(c)
+        with closing(db.connect(os.path.join(d, "e.db"))) as c:
+            engagements.save(c, _report("eng-x", mode="sandboxed"))
+            engagements.save(c, _report("eng-x", mode="passive-only"))   # same run, re-saved
+            rows = engagements.list_all(c)
         assert len(rows) == 1 and rows[0]["mode"] == "passive-only"
 
 
 def test_audit_trail_filters_by_run_and_reports_chain_integrity():
     with tempfile.TemporaryDirectory() as d:
-        c = db.connect(os.path.join(d, "e.db"))
-        audit.record(c, "eng-1", "harness", "sandbox_proof", decision="ok")
-        audit.record(c, "eng-1", "dispatcher", "probe", decision="allow")
-        audit.record(c, "eng-2", "harness", "sandbox_proof", decision="ok")   # a different run
-        trail = engagements.audit(c, "eng-1")
+        with closing(db.connect(os.path.join(d, "e.db"))) as c:
+            audit.record(c, "eng-1", "harness", "sandbox_proof", decision="ok")
+            audit.record(c, "eng-1", "dispatcher", "probe", decision="allow")
+            audit.record(c, "eng-2", "harness", "sandbox_proof", decision="ok")   # a different run
+            trail = engagements.audit(c, "eng-1")
         assert len(trail["rows"]) == 2 and trail["chain_ok"] is True
         assert all(row["engagement_id"] == "eng-1" for row in trail["rows"])
 
