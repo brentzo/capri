@@ -5,6 +5,8 @@
 // end to end against a genuine app image, not a stdlib stand-in.
 //
 // Routes:
+//   GET /              -> an HTML index linking to the notes endpoint, so a black-box crawl finds
+//                         /notes and its `tag` parameter (a real app has an entry page to follow)
 //   GET /healthz        -> 200 "ok", the readiness probe the harness polls before proofs/recon
 //   GET /notes?tag=...  -> notes whose tag matches; the `tag` value is inlined into the query,
 //                          so `' OR '1'='1` returns every row including the seeded secret.
@@ -46,6 +48,16 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (url.pathname === "/healthz") return send(res, 200, "ok");
+
+  if (url.pathname === "/") {
+    const html =
+      "<!doctype html><html><head><title>Notes</title></head><body>" +
+      "<h1>Notes</h1><ul>" +
+      '<li><a href="/notes?tag=public">public notes</a></li>' +
+      '<li><a href="/notes?tag=todo">todo notes</a></li>' +
+      "</ul></body></html>";
+    return send(res, 200, html, "text/html");
+  }
 
   if (url.pathname === "/notes") {
     const tag = url.searchParams.get("tag") || "";
