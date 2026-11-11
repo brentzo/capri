@@ -22,7 +22,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from harness.sandbox import PassiveOnlySandbox, guard_proof_result, rangelock      # noqa: E402
 from harness.sandbox.base import RunResult, SandboxError, default_run                # noqa: E402
-from harness.sandbox.docker import DockerSandbox, GOLDEN, guard_ruleset             # noqa: E402
+from harness.sandbox.docker import DockerSandbox, GOLDEN, _PG_DATA_DIR, guard_ruleset  # noqa: E402
 from harness.sandbox.probe import DockerProbe                                       # noqa: E402
 from harness.substrate import contract, scope                                      # noqa: E402
 from tools.run_engagement import _install_teardown_on_signal                       # noqa: E402
@@ -432,6 +432,22 @@ def test_restore_golden_recreates_a_service_from_its_seeded_image():
     # the datastore returns to the golden committed right after seeding (the §4.2 baseline), with
     # its alias so the app still resolves it
     assert run.ran("run", "--network-alias", "db", "hc-golden:hc-range-svc-db")
+
+
+def test_postgres_data_dir_sits_outside_the_image_volume_so_commit_captures_it():
+    # The postgres image declares /var/lib/postgresql/data a VOLUME, and `docker commit` does
+    # not capture volume contents: a golden or snapshot committed with the data there comes back
+    # empty and silently drops the seed, so the stateful snapshot/restore guarantee only appears
+    # to hold. PGDATA must point outside that volume, into the layer commit does capture, both on
+    # first bring-up and on every recreate (restore / kill).
+    assert not _PG_DATA_DIR.startswith("/var/lib/postgresql/data")   # outside the declared VOLUME
+    run = FakeRunner()
+    sb = DockerSandbox(run=run)
+    sb.provision(_eng_with_target(_PG))
+    assert run.ran("run", "postgres:16", f"PGDATA={_PG_DATA_DIR}")    # first bring-up
+    run.calls.clear()
+    sb.restore(GOLDEN)
+    assert run.ran("run", "hc-golden:hc-range-svc-db", f"PGDATA={_PG_DATA_DIR}")   # recreate
 
 
 def test_the_kill_switch_freezes_and_restores_the_backing_service():

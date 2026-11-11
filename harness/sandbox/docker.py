@@ -38,6 +38,15 @@ GOLDEN = "golden"   # the per-run baseline snapshot id the loop restores before 
 # range is declared unprovisionable. A real engine answers in a few seconds on a warm host.
 _SERVICE_READY_TIMEOUT_S = 60
 
+# Postgres must keep its data directory in the container's writable layer, not the image's
+# declared VOLUME at /var/lib/postgresql/data: `docker commit` does not capture volume
+# contents, so a golden or snapshot committed with the data in the volume comes back with an
+# empty, freshly initialized database. That silently dropped the seeded fixture on every
+# restore and kill, so the stateful snapshot/restore guarantee was not actually holding. We
+# point PGDATA at a sibling path outside the VOLUME, where the data lives in the layer commit
+# does capture (Postgres is crash-safe, so the committed dir recovers on the next start).
+_PG_DATA_DIR = "/var/lib/postgresql/hcdata"
+
 # Probes the attacker container runs; stdlib python3 only, so the node image stays tiny.
 # The guard runs default-deny DROP, so a connection to a blocked destination never gets a
 # refusal, it just goes silent: the probe waits out its bound, and that silence IS the
@@ -574,7 +583,8 @@ class DockerSandbox(Sandbox):
             args += ["--runtime", self._runtime]
         args += ["-e", f"POSTGRES_USER={svc['user']}",
                  "-e", f"POSTGRES_PASSWORD={svc['password']}",
-                 "-e", f"POSTGRES_DB={svc['db']}", image]
+                 "-e", f"POSTGRES_DB={svc['db']}",
+                 "-e", f"PGDATA={_PG_DATA_DIR}", image]
         self._docker(*args)
         self._wait_pg_ready(name, svc)
         if svc.get("init_sql"):
@@ -592,7 +602,8 @@ class DockerSandbox(Sandbox):
             args += ["--runtime", self._runtime]
         args += ["-e", f"POSTGRES_USER={svc['user']}",
                  "-e", f"POSTGRES_PASSWORD={svc['password']}",
-                 "-e", f"POSTGRES_DB={svc['db']}", image]
+                 "-e", f"POSTGRES_DB={svc['db']}",
+                 "-e", f"PGDATA={_PG_DATA_DIR}", image]
         self._docker(*args)
         self._wait_pg_ready(name, svc)
 
