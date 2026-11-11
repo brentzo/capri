@@ -349,7 +349,10 @@ Desktop without requiring host `nsenter` or root.
   at once, commits it for forensics, and restores the targets from golden;
   `kill_switch_drill` proves it per §8.4 (freeze within a budget, target wiped to
   golden), then revives the range. `kill` is distinct from `teardown`, which destroys
-  the range. `proofs_pass` runs all five drills and returns `True` only when every
+  the range. `sandbox/rangelock.py` keeps one engagement per range: the live callers
+  hold its OS file lock from before `provision` (which first clears any same-named
+  range) until after `teardown`, so a second run is refused instead of destroying a
+  live range, and a crashed holder releases it on exit. `proofs_pass` runs all five drills and returns `True` only when every
   guarantee holds, so the harness may leave passive-only; any failed proof keeps it
   passive-only.
 - `sandbox/probe.py` - `DockerProbe`, the live tool adapter. After the dispatcher

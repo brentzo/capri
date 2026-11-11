@@ -18,6 +18,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+from harness.sandbox import rangelock                   # noqa: E402
 from harness.sandbox.docker import DockerSandbox        # noqa: E402
 from harness.substrate import contract                  # noqa: E402
 
@@ -44,6 +45,11 @@ def main():
         return 1
     sb = DockerSandbox()
     try:
+        lock = rangelock.RangeLock(sb.network).acquire()   # never over a live engagement's range
+    except rangelock.RangeBusy as busy:
+        print(busy)
+        return 1
+    try:
         desc = sb.provision(eng)
         print(f"provisioned {desc['range_id']}  pinned={desc['pinned_targets']}")
         guard = sb.guard_proof()
@@ -69,8 +75,11 @@ def main():
               else "- the harness stays passive-only")
         return 0 if all_ok else 1
     finally:
-        sb.teardown()
-        print("range torn down")
+        try:
+            sb.teardown()
+            print("range torn down")
+        finally:
+            lock.release()
 
 
 if __name__ == "__main__":

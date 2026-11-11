@@ -12,13 +12,15 @@ Zero-dependency: `python3 tests/test_sandbox.py`.
 """
 import json
 import os
+import subprocess
 import sys
+import tempfile
 from unittest.mock import patch
 from urllib.parse import urlparse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-from harness.sandbox import PassiveOnlySandbox, guard_proof_result                 # noqa: E402
+from harness.sandbox import PassiveOnlySandbox, guard_proof_result, rangelock      # noqa: E402
 from harness.sandbox.base import RunResult, SandboxError, default_run                # noqa: E402
 from harness.sandbox.docker import DockerSandbox, GOLDEN, guard_ruleset             # noqa: E402
 from harness.sandbox.probe import DockerProbe                                       # noqa: E402
@@ -789,6 +791,34 @@ def test_install_teardown_on_signal_is_noop_off_main_thread():
     t.start()
     t.join()
     assert out.get("unchanged") is True, "off-main-thread install changed the disposition"
+
+
+# --- one engagement per range ---------------------------------------------
+def test_a_live_range_refuses_a_second_engagement_until_it_is_released():
+    with tempfile.TemporaryDirectory() as lock_dir:
+        first = rangelock.RangeLock("hc-range", lock_dir=lock_dir).acquire()
+        try:
+            try:
+                rangelock.RangeLock("hc-range", lock_dir=lock_dir).acquire()
+                raise AssertionError("expected the second engagement to be refused")
+            except rangelock.RangeBusy as busy:
+                assert isinstance(busy, SandboxError)
+                assert "already running" in str(busy) and "hc-range" in str(busy), busy
+            rangelock.RangeLock("hc-other", lock_dir=lock_dir).acquire().release()
+        finally:
+            first.release()
+        rangelock.RangeLock("hc-range", lock_dir=lock_dir).acquire().release()
+
+
+def test_a_crashed_engagement_does_not_leave_its_range_locked():
+    # The holder dies without releasing, as a crashed run would; the OS drops the lock,
+    # so the next run can clean up the leftover range instead of being blocked forever.
+    holder = ("import os, sys; sys.path.insert(0, sys.argv[1]); "
+              "from harness.sandbox import rangelock; "
+              "rangelock.RangeLock('hc-range', lock_dir=sys.argv[2]).acquire(); os._exit(0)")
+    with tempfile.TemporaryDirectory() as lock_dir:
+        subprocess.run([sys.executable, "-c", holder, ROOT, lock_dir], check=True, timeout=60)
+        rangelock.RangeLock("hc-range", lock_dir=lock_dir).acquire().release()
 
 
 def main():

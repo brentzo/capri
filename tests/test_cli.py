@@ -64,6 +64,41 @@ def test_a_live_run_caps_every_role_output_so_a_small_balance_still_serves():
     assert 0 < run_engagement.MAX_OUTPUT_TOKENS <= 16384
 
 
+def test_a_second_run_is_refused_without_touching_the_live_range():
+    # Regression: a second `capri run` provisioned over the range of the run already in
+    # progress, and its cleanup deleted that run's network mid-engagement.
+    import tempfile as tempfile_module
+    from unittest.mock import patch
+
+    from harness.sandbox import rangelock
+    from tools import run_engagement
+
+    class LiveRange:
+        network = "hc-range"
+
+        def __init__(self, **_kwargs):
+            pass
+
+        def provision(self, _engagement):
+            raise AssertionError("provisioned over a live range")
+
+        def teardown(self):
+            raise AssertionError("tore down a live range")
+
+    lines = []
+    with tempfile.TemporaryDirectory() as lock_dir, \
+            patch.object(tempfile_module, "tempdir", lock_dir):
+        live = rangelock.RangeLock("hc-range").acquire()
+        try:
+            with patch.object(run_engagement, "DockerSandbox", LiveRange), \
+                    patch.object(run_engagement.shutil, "which", return_value="docker"):
+                code = run_engagement.main(progress=lines.append)
+        finally:
+            live.release()
+    assert code == 1, (code, lines)
+    assert any("already running" in line for line in lines), lines
+
+
 def test_help_shows_branded_commands_and_windows_invocation():
     result = subprocess.run([sys.executable, str(ROOT / "capri"), "help"],
                             cwd=ROOT, capture_output=True, text=True,

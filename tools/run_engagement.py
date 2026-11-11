@@ -44,6 +44,7 @@ from harness.sandbox.adapters import (                         # noqa: E402
     NmapAdapter, OpenRedirectAdapter, PathAdapter, ProtoPolluteAdapter, SessAdapter, SqliAdapter,
     SsrfAdapter, SstiAdapter, WsHijackAdapter)
 from harness.sandbox.crawler import CrawlerAdapter             # noqa: E402
+from harness.sandbox import rangelock                         # noqa: E402
 from harness.sandbox.docker import DockerSandbox               # noqa: E402
 from harness.sandbox.probe import DockerProbe                  # noqa: E402
 from harness.store import blobstore, datadir, db, engagements  # noqa: E402
@@ -221,6 +222,13 @@ def main(progress=None):
         emit(f"contract invalid: {errs}")
         return 1
     sb = DockerSandbox(listener_app=VULNWEB, collaborator_app=COLLABORATOR)
+    # Held from before provisioning (which first tears down any same-named range) until
+    # after teardown, so a second run never destroys the range of one in progress.
+    try:
+        lock = rangelock.RangeLock(sb.network).acquire()
+    except rangelock.RangeBusy as busy:
+        emit(str(busy))
+        return 1
     _install_teardown_on_signal()  # a SIGTERM kill still runs the teardown below
     try:
         desc = sb.provision(eng)
@@ -289,8 +297,11 @@ def main(progress=None):
         emit("\ninterrupted; tearing down the range")
         return 130
     finally:
-        sb.teardown()
-        emit("range torn down")
+        try:
+            sb.teardown()
+            emit("range torn down")
+        finally:
+            lock.release()
 
 
 if __name__ == "__main__":
