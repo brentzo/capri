@@ -23,7 +23,9 @@ Bifrost virtual keys exported from the gateway's own env (never pasted in):
 import contextlib
 import os
 import shutil
+import signal
 import sys
+import threading
 import types
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -157,6 +159,30 @@ def build_roles(conn, eng):
             f"budget={budget} model tokens)")
 
 
+def _install_teardown_on_signal():
+    """Turn a SIGTERM into a KeyboardInterrupt so the run's ``finally: sb.teardown()``
+    still fires on an external kill.
+
+    A supervisor or a wall-clock ``timeout`` sends SIGTERM, whose default disposition
+    terminates the process without unwinding ``finally`` - which leaks the range's
+    containers and network. SIGINT (Ctrl-C) already raises KeyboardInterrupt, so only
+    the external-kill path needed closing. The handler is one-shot: it restores the
+    default disposition before raising, so a second signal hard-kills rather than
+    interrupting teardown midway.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        return  # signal handlers can only be installed from the main thread
+
+    def _handler(signum, _frame):
+        signal.signal(signum, signal.SIG_DFL)
+        raise KeyboardInterrupt
+
+    try:
+        signal.signal(signal.SIGTERM, _handler)
+    except (ValueError, OSError):
+        pass  # some environments disallow it; fall back to the default disposition
+
+
 def main(progress=None):
     emit = progress or print
     if shutil.which("docker") is None:
@@ -167,6 +193,7 @@ def main(progress=None):
         emit(f"contract invalid: {errs}")
         return 1
     sb = DockerSandbox(listener_app=VULNWEB, collaborator_app=COLLABORATOR)
+    _install_teardown_on_signal()  # a SIGTERM kill still runs the teardown below
     try:
         desc = sb.provision(eng)
         emit(f"provisioned {desc['range_id']}  pinned={desc['pinned_targets']}")
@@ -228,6 +255,9 @@ def main(progress=None):
             emit("  (no confirmed findings)")
         emit(f"saved run {eng.id} -> {datadir.db_path()}")
         return 0 if res.valid else 1
+    except KeyboardInterrupt:
+        emit("\ninterrupted; tearing down the range")
+        return 130
     finally:
         sb.teardown()
         emit("range torn down")

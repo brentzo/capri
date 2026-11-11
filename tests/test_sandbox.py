@@ -23,6 +23,7 @@ from harness.sandbox.base import RunResult, SandboxError, default_run           
 from harness.sandbox.docker import DockerSandbox, guard_ruleset                     # noqa: E402
 from harness.sandbox.probe import DockerProbe                                       # noqa: E402
 from harness.substrate import contract                                             # noqa: E402
+from tools.run_engagement import _install_teardown_on_signal                       # noqa: E402
 
 CONTRACT = """
 engagement:
@@ -572,6 +573,46 @@ def test_phase_recon_without_a_crawler_is_unchanged():
     run = _recon_runner(open_ports=[("10.90.0.3", 8080)], http=[("10.90.0.3", 8080)], pages=pages)
     model = phase_recon("a", _pinned_eng(), run=run)            # no crawler passed
     assert set(model) == {"t1"}                                 # only the host asset, as before
+
+
+def test_sigterm_handler_raises_keyboardinterrupt_and_is_oneshot():
+    # A SIGTERM (what an external `timeout`/supervisor sends) must become a
+    # KeyboardInterrupt so the runner's `finally: sb.teardown()` still fires and the
+    # range is not leaked. The handler is one-shot: it restores the default disposition
+    # before raising, so a second signal hard-kills rather than interrupting teardown.
+    import signal
+    prev = signal.getsignal(signal.SIGTERM)
+    try:
+        _install_teardown_on_signal()
+        handler = signal.getsignal(signal.SIGTERM)
+        assert callable(handler) and handler is not signal.SIG_DFL, "no handler installed"
+        raised = False
+        try:
+            handler(signal.SIGTERM, None)
+        except KeyboardInterrupt:
+            raised = True
+        assert raised, "handler did not raise KeyboardInterrupt"
+        assert signal.getsignal(signal.SIGTERM) == signal.SIG_DFL, "handler was not one-shot"
+    finally:
+        signal.signal(signal.SIGTERM, prev)
+
+
+def test_install_teardown_on_signal_is_noop_off_main_thread():
+    # signal.signal() only works on the main thread; installing from a worker must be a
+    # harmless no-op rather than raising, so a threaded caller (e.g. a TUI) stays safe.
+    import signal
+    import threading
+    out = {}
+
+    def worker():
+        before = signal.getsignal(signal.SIGTERM)
+        _install_teardown_on_signal()
+        out["unchanged"] = signal.getsignal(signal.SIGTERM) is before
+
+    t = threading.Thread(target=worker)
+    t.start()
+    t.join()
+    assert out.get("unchanged") is True, "off-main-thread install changed the disposition"
 
 
 def main():
