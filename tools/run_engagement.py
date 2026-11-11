@@ -186,6 +186,23 @@ def _install_teardown_on_signal():
         pass  # some environments disallow it; fall back to the default disposition
 
 
+_STOP_EXPLANATIONS = {
+    "provider_out_of_credit": "its provider account is out of credit; add credit, "
+                              "or pick another provider with `capri setup`",
+    "provider_unavailable": "its provider could not be reached",
+    "budget_exhausted": "it used its token budget",
+    "engagement_budget_exhausted": "the engagement used its token budget",
+    "rate_limited": "it hit its request rate limit",
+}
+
+
+def model_stop_lines(stops):
+    """One line per (role, reason) the model plane stopped a role for, so a run that
+    confirmed nothing says why instead of looking like a clean miss."""
+    return [f"  model stop: {role} x{count} - {_STOP_EXPLANATIONS.get(reason, reason)}"
+            for (role, reason), count in sorted(stops.items())]
+
+
 def main(progress=None):
     emit = progress or print
     if shutil.which("docker") is None:
@@ -256,6 +273,8 @@ def main(progress=None):
                  f"found_by={f['found_by']} verified_by={f['verified_by']} cvss={f['cvss']['band']}")
         if not res.report["findings"]:
             emit("  (no confirmed findings)")
+        for line in model_stop_lines(operator.plane.stops):
+            emit(line)
         emit(f"saved run {eng.id} -> {datadir.db_path()}")
         return 0 if res.valid else 1
     except KeyboardInterrupt:

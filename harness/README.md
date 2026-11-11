@@ -227,7 +227,9 @@ gateway is out of repo.
   hands it the role's virtual key name, and the client resolves it to the Bifrost
   secret and presents it as the bearer token, so no role holds a provider key. A
   provider outage (a 502/503/504 or an unreachable gateway) maps to `ProviderDown`
-  so the plane falls back; a 4xx or a malformed body is a hard `BifrostError`. It
+  so the plane falls back. A 402 maps to `ProviderDown` flagged `out_of_credit`, so a
+  role whose providers are all out of credit stops with `provider_out_of_credit` and
+  the run summary says so; any other 4xx or a malformed body is a hard `BifrostError`. It
   is exercised against an in-process stdlib mock Bifrost in CI, so the wire
   contract is tested without a live gateway; pointing it at a real one is config.
 

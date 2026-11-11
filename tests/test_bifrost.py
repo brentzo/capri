@@ -9,7 +9,9 @@ gateway and stays CI-green and zero-dependency. Proves:
     token, and the correlation id is forwarded, so no role holds a key;
   - an OpenAI-shaped completion is parsed into text, model, and token counts;
   - a provider outage (502/503/504 or an unreachable gateway) maps to ProviderDown
-    so the plane falls back, while a 4xx or a malformed body is a hard BifrostError;
+    so the plane falls back, a 402 (the provider account is out of credit) is a
+    ProviderDown that says so, and any other 4xx or a malformed body is a hard
+    BifrostError;
   - the transport plugs into the real ModelPlane and serves a call end to end.
 
 Zero-dependency: `python3 tests/test_bifrost.py`.
@@ -23,7 +25,8 @@ import threading
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from harness.bifrost import BifrostError, BifrostTransport                 # noqa: E402
-from harness.modelplane import ModelPlane, ProviderDown, VirtualKey        # noqa: E402
+from harness.modelplane import (ModelPlane, PlaneStop, ProviderDown,       # noqa: E402
+                                VirtualKey)
 from harness.store import db                                              # noqa: E402
 
 MSGS = [{"role": "system", "content": "probe"}, {"role": "user", "content": "data"}]
@@ -162,6 +165,19 @@ def test_a_malformed_completion_is_a_hard_error():
         srv.shutdown()
 
 
+def test_an_out_of_credit_provider_maps_to_provider_down_not_a_hard_error():
+    srv, base = _serve(lambda body: (402, {"error": {"message": "Insufficient Balance"}}))
+    try:
+        tx = BifrostTransport(base, SECRETS)
+        try:
+            tx.complete("openai/strong", MSGS, {"vkey": "vk-operator"})
+            raise AssertionError("expected ProviderDown for a 402")
+        except ProviderDown as down:
+            assert down.reason == "out_of_credit", down.reason
+    finally:
+        srv.shutdown()
+
+
 # --- end to end through the plane ----------------------------------------
 def test_plugs_into_the_model_plane_end_to_end():
     captured = {}
@@ -182,6 +198,25 @@ def test_plugs_into_the_model_plane_end_to_end():
         assert comp.tokens_in == 11 and comp.cost == 33   # 11 + 22, charged by the plane
         assert srv.last["auth"] == "Bearer secret-op"     # the plane handed over vk-operator
         assert captured["auth_body"]["model"] == "openai/strong"
+    finally:
+        srv.shutdown()
+
+
+def test_an_out_of_credit_verifier_stops_the_role_instead_of_crashing_the_run():
+    # Regression: a 402 from the verifier's provider escaped as a hard BifrostError
+    # and aborted the whole engagement at its first verification.
+    srv, base = _serve(lambda body: (402, {"error": {"message": "requires more credits"}}))
+    try:
+        plane = ModelPlane([VirtualKey("operator", ["openai/strong"], cache=False),
+                            VirtualKey("verifier", ["anthropic/strong"], cache=False,
+                                       fallback="none")],
+                           BifrostTransport(base, SECRETS), db.connect(), "eng-credit")
+        try:
+            plane.call("verifier", MSGS, {"correlation_id": "c1"})
+            raise AssertionError("expected the verifier to stop")
+        except PlaneStop as stop:
+            assert stop.reason == "provider_out_of_credit", stop.reason
+        assert plane.stops == {("verifier", "provider_out_of_credit"): 1}, plane.stops
     finally:
         srv.shutdown()
 

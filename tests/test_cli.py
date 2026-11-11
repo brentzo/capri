@@ -29,6 +29,22 @@ def test_command_uses_a_windows_friendly_invocation_on_windows():
     assert terminal.command("setup") == expected
 
 
+def test_run_summary_says_which_role_ran_out_of_credit_and_how_to_fix_it():
+    from tools import run_engagement
+    lines = run_engagement.model_stop_lines({("verifier", "provider_out_of_credit"): 3,
+                                             ("operator", "budget_exhausted"): 1})
+    assert len(lines) == 2, lines
+    operator_line, verifier_line = lines
+    assert "operator" in operator_line and "token budget" in operator_line, operator_line
+    assert "verifier" in verifier_line and "3" in verifier_line, verifier_line
+    assert "out of credit" in verifier_line and "capri setup" in verifier_line, verifier_line
+
+
+def test_run_summary_is_silent_when_no_role_stopped():
+    from tools import run_engagement
+    assert run_engagement.model_stop_lines({}) == []
+
+
 def test_help_shows_branded_commands_and_windows_invocation():
     result = subprocess.run([sys.executable, str(ROOT / "capri"), "help"],
                             cwd=ROOT, capture_output=True, text=True,

@@ -35,6 +35,7 @@ never name a provider or hold a key (§13.1). What the plane enforces:
 - Observability (§9): every call and every stop is an append-only audit row tying
   the model turn to its engagement and action.
 """
+import collections
 import hashlib
 import json
 import time
@@ -54,11 +55,13 @@ class PlaneConfigError(Exception):
 
 class ProviderDown(Exception):
     """A transport signals that one provider cannot serve; the plane applies the
-    vkey's fallback policy."""
+    vkey's fallback policy. `reason` is `outage` or `out_of_credit`, so a role that
+    runs out of providers stops with the cause the operator has to act on."""
 
-    def __init__(self, provider):
+    def __init__(self, provider, reason="outage"):
         super().__init__(provider)
         self.provider = provider
+        self.reason = reason
 
 
 class PlaneStop(Exception):
@@ -125,6 +128,7 @@ class ModelPlane:
         self._cache = {}                            # (eng, role, hash) -> Completion
         self._spend = {role: 0 for role in self.vkeys}
         self._total = 0
+        self.stops = collections.Counter()          # (role, reason) -> how often it stopped
         self._rate = {vk.role: RateLimiter(vk.rate, now=clock)
                       for vk in vkeys if vk.rate is not None}
         self._validate_config()
@@ -185,10 +189,12 @@ class ModelPlane:
         order = (vk.providers[:1] if vk.fallback == "none" else vk.providers)
         # the transport (the only credential holder) gets the role's vkey to present
         md = {**metadata, "vkey": vk.vkey}
+        failures = set()
         for provider in order:
             try:
                 raw = self.transport.complete(provider, messages, md)
-            except ProviderDown:
+            except ProviderDown as down:
+                failures.add(down.reason)
                 continue                            # fallback within the ordered set
             cost = _cost(raw.tokens_in, raw.tokens_out)
             self._spend[vk.role] += cost
@@ -201,7 +207,9 @@ class ModelPlane:
             return comp
         # The Verifier reaches here with its single pinned provider down and never
         # falls back onto the Operator's provider (§10): the lead stays unverified.
-        self._stop(vk, "provider_unavailable", metadata)
+        # Out of credit only when every provider said so; one outage could clear by itself.
+        reason = "provider_out_of_credit" if failures == {"out_of_credit"} else "provider_unavailable"
+        self._stop(vk, reason, metadata)
 
     # --- helpers --------------------------------------------------------
     def _cacheable(self, vk):
@@ -234,6 +242,7 @@ class ModelPlane:
         audit.record(self.conn, self.engagement_id, vk.vkey, "model_stop",
                      decision=reason, correlation_id=metadata.get("correlation_id"),
                      detail={"role": vk.role, "vkey": vk.vkey})
+        self.stops[(vk.role, reason)] += 1
         raise PlaneStop(reason, vk.role)
 
     # --- config sketch (§11) --------------------------------------------

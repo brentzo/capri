@@ -45,8 +45,9 @@ class StubTransport:
     """Records every (provider, messages) it is asked to serve; raises ProviderDown
     for providers marked down, so fallback order is observable."""
 
-    def __init__(self, down=(), tokens=(10, 20)):
+    def __init__(self, down=(), broke=(), tokens=(10, 20)):
         self.down = set(down)
+        self.broke = set(broke)       # providers whose account is out of credit
         self.tokens = tokens
         self.calls = []
 
@@ -54,6 +55,8 @@ class StubTransport:
         self.calls.append((provider, messages))
         if provider in self.down:
             raise ProviderDown(provider)
+        if provider in self.broke:
+            raise ProviderDown(provider, reason="out_of_credit")
         ti, to = self.tokens
         return Raw(model=f"{provider}-model", tokens_in=ti, tokens_out=to)
 
@@ -206,6 +209,28 @@ def test_verifier_does_not_fall_back_onto_the_operators_provider():
     except PlaneStop as e:
         assert e.reason == "provider_unavailable"
     assert "provA/strong" not in tx.providers_tried()  # never the operator's provider
+
+
+def test_a_role_whose_providers_are_all_out_of_credit_stops_with_that_reason():
+    conn = db.connect()
+    plane = _plane(StubTransport(broke=["provA1", "provA2"]), conn, op=("provA1", "provA2"))
+    try:
+        plane.call("operator", MSGS)
+        raise AssertionError("expected the operator to stop")
+    except PlaneStop as e:
+        assert e.reason == "provider_out_of_credit", e.reason
+    assert plane.stops == {("operator", "provider_out_of_credit"): 1}, plane.stops
+
+
+def test_an_outage_in_the_fallback_set_reads_as_unavailable_not_out_of_credit():
+    conn = db.connect()
+    plane = _plane(StubTransport(down=["provA1"], broke=["provA2"]), conn,
+                   op=("provA1", "provA2"))
+    try:
+        plane.call("operator", MSGS)
+        raise AssertionError("expected the operator to stop")
+    except PlaneStop as e:
+        assert e.reason == "provider_unavailable", e.reason
 
 
 def test_a_pinned_verifier_serves_when_its_provider_is_up():

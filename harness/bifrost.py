@@ -12,8 +12,10 @@ Bifrost speaks the OpenAI chat-completions shape. The plane resolves a provider
 route and its own fallback order (so the Verifier's pin is enforced in the harness,
 not left to the gateway), and this client issues one request per route: a provider
 outage (a 502/503/504 or an unreachable gateway) maps to `ProviderDown` so the
-plane falls back, while a 4xx or a malformed body is a `BifrostError` that fails
-loud rather than being mistaken for an outage.
+plane falls back, and so does a 402, flagged `out_of_credit`: the provider account
+cannot pay for the call, which is an operating condition the role stops on, not a
+harness bug. Any other 4xx or a malformed body is a `BifrostError` that fails loud
+rather than being mistaken for an outage.
 """
 import json
 import time
@@ -23,6 +25,7 @@ import urllib.request
 from harness.modelplane import ProviderDown
 
 _OUTAGE_STATUS = frozenset({502, 503, 504})
+_OUT_OF_CREDIT_STATUS = 402     # Payment Required: the provider account has no credit left
 
 
 class BifrostError(Exception):
@@ -69,6 +72,8 @@ class BifrostTransport:
         except urllib.error.HTTPError as e:         # a response with a non-2xx status
             if e.code in _OUTAGE_STATUS:
                 raise ProviderDown(provider)
+            if e.code == _OUT_OF_CREDIT_STATUS:
+                raise ProviderDown(provider, reason="out_of_credit")
             raise BifrostError(f"bifrost returned status {e.code}")
         except (urllib.error.URLError, TimeoutError):   # unreachable, DNS, timeout: an outage
             raise ProviderDown(provider)
