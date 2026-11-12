@@ -189,7 +189,9 @@ Missing KVM, emulator boot failure, ADB failure, malformed APK, and absent deep 
 
 ## Implementation pointer
 
-Implemented in `harness/mobile.py`, `harness/sandbox/docker.py`, `harness/dispatch.py`, `harness/recon.py`, and `tools/run_engagement.py`.
+Mobile-specific APK and deep-link behavior lives in `harness/mobile/`.
+Shared sandbox, dispatch, recon, and engagement orchestration remain in their existing modules.
+The implementation is integrated through `harness/sandbox/docker.py`, `harness/dispatch.py`, `harness/recon.py`, and `tools/run_engagement.py`.
 Package build pins live in `infra/sandbox/Dockerfile.attacker`.
 `tests/test_mobile.py` covers manifest inventory, contract and scope authorization, deep-link construction, dispatch through independent verification, egress policy, and unsupported-host behavior.
 Canary source and a pinned-toolchain build script live in `tests/fixtures/mobile/canary/` and `tools/build_mobile_canaries.sh`.

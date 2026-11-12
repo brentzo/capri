@@ -75,3 +75,13 @@ _Avoid_: best practices, lint
 **Vulnerability database**:
 A local, operator-provisioned copy of published advisories that a dependency assessment reads without network access.
 _Avoid_: feed, rule pack
+
+## Runtime penetration testing
+
+**Application attack surface**:
+The scoped interfaces and behaviors of a running application that an engagement can test, including screens, workflows, APIs, and mobile components.
+_Avoid_: feature list (which can imply completeness before coverage is known)
+
+**Feature coverage**:
+A record that maps known application capabilities and workflows to applicable techniques and shows what was attempted, skipped, or not run.
+_Avoid_: findings list (which does not show what was tested)

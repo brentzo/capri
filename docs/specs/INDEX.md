@@ -24,6 +24,7 @@ Areas:
 - `EVAL` - evaluation
 - `REPORT` - operator report rendering, reasoning record, and the local run dashboard
 - `PROJ` - local project assessment
+- `MOB` - native mobile runtime pentesting
 
 Each spec file opens with this frontmatter:
 
@@ -67,6 +68,7 @@ updated: 2026-11-08
 | HC-REPORT-01| Operator report rendering, reasoning record, local dashboard | SPEC.md#8, #9 | draft |
 | HC-PROJ-01  | Local project assessment                               | SPEC.md#1, #4    | draft   |
 | HC-PROJ-02  | Dependency assessment                                   | SPEC.md#1        | draft   |
+| HC-MOB-01   | Android mobile runtime pentesting                       | SPEC.md#3, #4, #6, #7 | draft |
 
 ## Status legend
 

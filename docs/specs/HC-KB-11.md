@@ -4,7 +4,7 @@ title: Mobile and local-IPC technique-card starter set
 status: draft
 parent: SPEC.md#7
 depends_on: [HC-KB-01, HC-SUB-01]
-depended_on_by: [HC-EVAL-01]
+depended_on_by: [HC-EVAL-01, HC-MOB-01]
 updated: 2026-11-08
 ---
 

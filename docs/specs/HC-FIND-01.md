@@ -4,7 +4,7 @@ title: Findings model and verification protocol
 status: draft
 parent: SPEC.md#8
 depends_on: [HC-KB-01, HC-AGENT-01, HC-SUB-01, HC-DATA-01, HC-MODEL-02]
-depended_on_by: [HC-AGENT-01, HC-DATA-01, HC-EVAL-01, HC-REPORT-01]
+depended_on_by: [HC-AGENT-01, HC-DATA-01, HC-EVAL-01, HC-REPORT-01, HC-MOB-01]
 updated: 2026-11-08
 ---
 

@@ -33,3 +33,4 @@ authorizes it), or an **auditor** actually uses the system. These are the
 | BR-10 | Optional external intel that never touches the sandbox | HC-ENRICH-01, HC-MODEL-01 |
 | BR-11 | Assess local project source privately | HC-PROJ-01 |
 | BR-12 | Assess project dependencies privately | HC-PROJ-02 |
+| BR-13 | Pentest native Android apps | HC-MOB-01 |
