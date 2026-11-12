@@ -17,7 +17,7 @@ Spec: Technical Design > "Module layout", "Recognised files", "Data model", "Alg
 - [ ] Loose ranges (`*`, `""`, `latest`, `x`, open lower bounds) are flagged; `^` and `~` ranges are not.
 - [ ] git, http(s), `github:`-style and `owner/repo` sources are flagged; `workspace:` and in-project `file:`/`link:` are not; `file:`/`link:` escaping the project are.
 - [ ] Each hygiene finding carries ecosystem, severity, confidence, message, project-relative location and `related_technique` naming its HC-KB-06 card.
-- [ ] Coverage per ecosystem and the weakest-wins overall status follow the spec; the vulnerable area is `not_run` with the reason when Trivy is absent.
+- [ ] Coverage per ecosystem and the overall status rule follow the spec; the vulnerable area is `not_run` with the reason when Trivy is absent.
 - [ ] The report contains no source snippets and no full dependency inventory; `dependency_inventory_sent_to_network` is false; `source_assessment` fields keep their meaning.
 - [ ] `capri source` prints a one-line summary per dependency area.
 - [ ] BR-12 ("Assess a project's dependencies privately", with Gherkin scenarios) and HC-PROJ-02 ("Dependency assessment", depends on HC-PROJ-01) are written and added to both registries; `make features` regenerated.

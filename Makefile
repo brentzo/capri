@@ -54,6 +54,7 @@ test:
 	python3 tests/test_report_render.py
 	python3 tests/test_dashboard.py
 	python3 tests/test_project_assessment.py
+	python3 tests/test_mobile.py
 
 ## contract: validate the example engagement contract (HC-SUB-01 §4)
 contract:

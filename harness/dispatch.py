@@ -84,7 +84,10 @@ class Dispatcher:
             return deny("unknown_tool")
 
         # guard 2: scope (HC-SUB-01 §5.3) - out_of_scope wins, unpinned host denied
-        verdict, reason = scope_validate(self.eng, req["target"], req["port"])
+        adapter = self.adapters[req["tool"]]
+        verdict, reason = scope_validate(
+            self.eng, req["target"], req["port"],
+            allow_mobile=getattr(adapter, "local_mobile_target", False))
         if verdict != "allow":
             self._audit(ctx, "dispatch_denial", "out_of_scope", reason=reason, req=req)
             return deny("out_of_scope")
@@ -105,7 +108,6 @@ class Dispatcher:
         # dispose: execute on the attacker VM. An adapter error is an observation
         # the role adapts to (§9), never a user-facing failure; the detail is kept
         # in the probe_event, not surfaced in the normalized result.
-        adapter = self.adapters[req["tool"]]
         try:
             raw = adapter.run(req) if hasattr(adapter, "run") else adapter(req)
             status = raw.get("status", "ok")

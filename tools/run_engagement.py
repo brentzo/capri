@@ -37,6 +37,7 @@ from harness.loop import Loop                                  # noqa: E402
 from harness.modelplane import ModelPlane, VirtualKey          # noqa: E402
 from harness.planner import DeterministicPlanner               # noqa: E402
 from harness.recon import phase_recon                          # noqa: E402
+from harness.recon import project_mobile_inventory             # noqa: E402
 from harness.roles import ModelOperator, ModelVerifier         # noqa: E402
 from harness.sandbox.adapters import (                         # noqa: E402
     BflaAdapter, CacheAdapter, ClickjackAdapter, CmdiAdapter, CorsAdapter, CspAdapter,
@@ -46,8 +47,9 @@ from harness.sandbox.adapters import (                         # noqa: E402
 from harness.sandbox.crawler import CrawlerAdapter             # noqa: E402
 from harness.sandbox import rangelock                         # noqa: E402
 from harness.sandbox.docker import DockerSandbox               # noqa: E402
+from harness.mobile import ANDROID_EMULATOR_IMAGE, DeepLinkProbe  # noqa: E402
 from harness.sandbox.probe import DockerProbe                  # noqa: E402
-from harness.store import blobstore, datadir, db, engagements  # noqa: E402
+from harness.store import audit, blobstore, datadir, db, engagements  # noqa: E402
 from harness.substrate import contract                         # noqa: E402
 
 CONTRACT = """
@@ -93,8 +95,10 @@ class Operator:
     def begin(self, pair, facts=None):
         facts = facts or {}
         ports = facts.get("open_ports") or []
-        return types.SimpleNamespace(step=0, id="live-operator", addr=facts.get("addr"),
-                                     port=(ports[0] if ports else 8080))
+        return types.SimpleNamespace(step=0, id="live-operator",
+                                     addr=facts.get("addr", facts.get("host")),
+                                     port=(ports[0] if ports else
+                                           (0 if facts.get("asset.type") == "mobile_app" else 8080)))
 
     def propose_next(self, session, card, role_context):
         if session.step >= 1:
@@ -217,7 +221,16 @@ def main(progress=None):
     if shutil.which("docker") is None:
         emit("docker not found; skipping live engagement run")
         return 0
-    eng, errs = contract.parse(CONTRACT)
+    contract_text = CONTRACT
+    contract_path = os.environ.get("HC_ENGAGEMENT_CONTRACT")
+    if contract_path:
+        try:
+            with open(contract_path, encoding="utf-8") as contract_file:
+                contract_text = contract_file.read()
+        except OSError as exc:
+            emit(f"cannot read HC_ENGAGEMENT_CONTRACT: {exc}")
+            return 1
+    eng, errs = contract.parse(contract_text)
     if errs:
         emit(f"contract invalid: {errs}")
         return 1
@@ -244,9 +257,21 @@ def main(progress=None):
         else:
             crawler = CrawlerAdapter(sb.attacker, eng.pinned)  # black-box endpoint discovery
             target_model = phase_recon(sb.attacker, eng, crawler=crawler)   # live recon, not hand-built
+        if sb.mobile_inventory:
+            target_model.update(project_mobile_inventory(sb.mobile_inventory))
+            emit(f"mobile recon: {sb.mobile_inventory['package']} "
+                 f"sha256={sb.mobile_inventory['sha256']} "
+                 f"links={len(sb.mobile_inventory['deep_links'])}")
         emit(f"recon: {target_model}")
         with contextlib.nullcontext(datadir.blob_root()) as root:  # persist, not a temp dir
             conn = db.connect(datadir.db_path())
+            if sb.mobile_inventory:
+                audit.record(conn, eng.id, "harness", "mobile_apk_inventory", decision="ok",
+                             detail={"package": sb.mobile_inventory["package"],
+                                     "sha256": sb.mobile_inventory["sha256"],
+                                     "emulator_image": ANDROID_EMULATOR_IMAGE,
+                                     "component_count": len(sb.mobile_inventory["components"]),
+                                     "deep_link_count": len(sb.mobile_inventory["deep_links"])})
             operator, verifier, plane_label = build_roles(conn, eng)
             emit(f"model plane: {plane_label}")
             # The caller-supplied session (if any) rides on every HTTP adapter, so a probe
@@ -276,6 +301,13 @@ def main(progress=None):
                         "cspexec": CspAdapter(sb.attacker, eng.pinned, session_headers=sess),
                         "domclobber": DomClobberAdapter(sb.attacker, eng.pinned, session_headers=sess),
                         "protopollute": ProtoPolluteAdapter(sb.attacker, eng.pinned, session_headers=sess)}
+            if sb.mobile_inventory:
+                adapters["mobile"] = DeepLinkProbe(
+                    sb.mobile_inventory["package"], sb.mobile_inventory["deep_links"],
+                    adb=sb._adb,
+                    collaborator=lambda: sb._run(["docker", "exec", sb.collaborator,
+                                                  "cat", "/tmp/hits.log"]).out,
+                    collab_addr=sb.collab_addr, expected_source=sb.android_ip)
             disp = Dispatcher(conn, blobstore.BlobStore(root), eng, adapters,
                               ratelimit.RateLimiter(1000, now=lambda: 0.0))
             res = Loop(conn, eng, kb_index=KB, dispatcher=disp, sandbox=sb,

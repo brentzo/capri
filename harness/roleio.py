@@ -34,7 +34,7 @@ MAX_PORT = 65535
 
 SCHEMA_HINT = (
     "emit exactly one JSON object and nothing else, with keys tool (string), "
-    "intent (string), target (string), port (integer 1-65535), args (object); "
+    "intent (string), target (string), port (integer 1-65535; mobile uses 0), args (object); "
     "no other keys, no prose, no shell command"
 )
 
@@ -124,7 +124,10 @@ def parse_request(raw):
     port = obj["port"]
     if isinstance(port, bool) or not isinstance(port, int):
         return _reject("bad_type", "port must be an integer")
-    if not (1 <= port <= MAX_PORT):
+    if obj["tool"] == "mobile":
+        if port != 0:
+            return _reject("port_range", "mobile requests use the virtual port 0")
+    elif not (1 <= port <= MAX_PORT):
         return _reject("port_range", f"port must be in 1..{MAX_PORT}")
     if not isinstance(obj["args"], dict):
         return _reject("bad_type", "args must be an object")

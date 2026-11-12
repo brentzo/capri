@@ -49,6 +49,7 @@ CAPABILITIES = {
     "KB-CLIENT-DOM-CLOBBER-001": ("domclobber", {"path": "/clobber", "param": "html"}),
     "KB-CLIENT-PROTO-POLLUTE-001": ("protopollute", {"path": "/profile",
                                                      "pollute_key": "__proto__.hcxpoll"}),
+    "KB-MOBILE-LINK-DEEPLINK-001": ("mobile", {"link_id": "{asset.mobile_link_id}"}),
 }
 
 

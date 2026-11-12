@@ -4,7 +4,7 @@ title: Local project assessment
 status: draft
 parent: SPEC.md#1, SPEC.md#4
 depends_on: []
-depended_on_by: []
+depended_on_by: [HC-PROJ-02]
 updated: 2026-11-11
 ---
 
@@ -25,6 +25,7 @@ It disables Semgrep metrics and version checks and does not fetch rules, install
 The scanner excludes private environment files, dependencies, generated/build output, documentation, test fixtures, and binary data.
 It reports only the rule id, category, severity, confidence, message, and relative code location.
 It omits matched source lines and writes the report outside the selected project, defaulting to `~/.capri/reports/`.
+On Windows, snapshot paths near the legacy 260-character limit are skipped and listed as source coverage reasons, so the assessment reports partial coverage instead of failing while copying.
 
 The initial rule pack checks for committed credential patterns, disabled or unrestricted database RLS policies, missing fixed search paths on `SECURITY DEFINER` functions, frontend references to Supabase service-role credentials, Edge Function configuration that requires manual authentication review, and upload handling that requires a trusted-server validation review.
 Rules that only apply to client-side code are scoped by directory names (`frontend`, `client`, `web`, `mobile`) or file names containing `upload` at any depth, not by one app's fixed layout, so they fire in monorepos and nested app folders.

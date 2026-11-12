@@ -29,6 +29,53 @@ def test_command_uses_a_windows_friendly_invocation_on_windows():
     assert terminal.command("setup") == expected
 
 
+def _load_capri():
+    import importlib.machinery
+    import importlib.util
+    loader = importlib.machinery.SourceFileLoader("capri_cli", str(ROOT / "capri"))
+    spec = importlib.util.spec_from_loader("capri_cli", loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def _run_with_engagement_forbidden(argv):
+    """Call `capri <argv>` in-process; fail loudly if it would start an engagement.
+
+    Output is redirected, so stdout is not a terminal and `capri run` takes its plain path,
+    which always goes through `tools.run_engagement.main`."""
+    from contextlib import redirect_stderr, redirect_stdout
+    from unittest.mock import patch
+
+    capri = _load_capri()
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError(f"capri {' '.join(argv)} started an engagement")
+
+    out, err = io.StringIO(), io.StringIO()
+    with patch.object(capri, "_prepare_ui_runtime", return_value=None), \
+            patch("tools.run_engagement.main", forbidden), \
+            redirect_stdout(out), redirect_stderr(err):
+        try:
+            code = capri.main(argv)
+        except SystemExit as exit_:
+            code = exit_.code
+    return code, out.getvalue(), err.getvalue()
+
+
+def test_run_help_prints_usage_instead_of_starting_an_engagement():
+    for flag in ("--help", "-h"):
+        code, out, _ = _run_with_engagement_forbidden(["run", flag])
+        assert code == 0, (flag, code)
+        assert "capri run" in out and "--plain" in out, out
+
+
+def test_run_rejects_unknown_arguments_instead_of_starting_an_engagement():
+    code, _, err = _run_with_engagement_forbidden(["run", "--target", "sidequest"])
+    assert code == 2, code
+    assert "unrecognized arguments" in err, err
+
+
 def test_run_summary_says_which_role_ran_out_of_credit_and_how_to_fix_it():
     from tools import run_engagement
     lines = run_engagement.model_stop_lines({("verifier", "provider_out_of_credit"): 3,

@@ -1,0 +1,95 @@
+rules:
+  - id: source.deps.npm-http-registry
+    languages: [generic]
+    severity: ERROR
+    message: A package registry uses HTTP and can be changed in transit.
+    metadata:
+      category: dependency-hygiene
+      ecosystem: npm
+      confidence: high
+      related_technique: KB-SUPPLY-DEP-CONFUSION-001
+    paths:
+      include: ["**/.npmrc", "**/.yarnrc", "**/.yarnrc.yml"]
+    pattern-regex: (?m)^\s*(?:@[\w.-]+:)?registry\s*=\s*http://|registry\s+"http://|npmRegistryServer:\s*["']?http://
+
+  - id: source.deps.pod-git-unpinned
+    languages: [generic]
+    severity: WARNING
+    message: A pod uses a git source without a tag or commit pin.
+    metadata:
+      category: dependency-hygiene
+      ecosystem: cocoapods
+      confidence: medium
+      related_technique: KB-SUPPLY-LOCKFILE-TAMPER-001
+    paths:
+      include: ["**/Podfile"]
+    pattern-regex: (?m)^\s*pod\s+['"][^'"]+['"][^\n#]*(?::git\s*=>|git:)(?![^\n#]*(?::tag|:commit|tag:|commit:))
+
+  - id: source.deps.swiftpm-branch-pin
+    languages: [generic]
+    severity: WARNING
+    message: A Swift package is pinned to a moving branch.
+    metadata:
+      category: dependency-hygiene
+      ecosystem: swiftpm
+      confidence: medium
+      related_technique: KB-SUPPLY-LOCKFILE-TAMPER-001
+    paths:
+      include: ["**/Package.resolved", "**/Package.swift"]
+    pattern-regex: >-
+      "branch"\s*:\s*"[^"]+"|\.branch\(|\bbranch:\s*"
+
+  - id: source.deps.pub-git-or-path
+    languages: [generic]
+    severity: WARNING
+    message: A Pub dependency uses a git or path source.
+    metadata:
+      category: dependency-hygiene
+      ecosystem: pub
+      confidence: medium
+      related_technique: KB-SUPPLY-DEP-CONFUSION-001
+    paths:
+      include: ["**/pubspec.lock", "**/pubspec.yaml"]
+    pattern-regex: >-
+      (?m)^\s+source:\s*(?:git|path)\s*$|^\s{4}(?:git|path):
+
+  - id: source.deps.gradle-dynamic-version
+    languages: [generic]
+    severity: WARNING
+    message: A Gradle dependency uses a dynamic version.
+    metadata:
+      category: dependency-hygiene
+      ecosystem: gradle
+      confidence: high
+      related_technique: KB-SUPPLY-LOCKFILE-TAMPER-001
+    paths:
+      include: ["**/*.gradle", "**/*.gradle.kts", "**/libs.versions.toml"]
+    pattern-regex: >-
+      ['"][\w.\-]+:[\w.\-]+:[^"'\s]*(?:\+|latest\.(?:release|integration))['"]|=\s*"[^"]*(?:\+|latest\.)[^"]*"
+
+  - id: source.deps.gradle-http-repository
+    languages: [generic]
+    severity: ERROR
+    message: A Gradle repository uses HTTP and can be changed in transit.
+    metadata:
+      category: dependency-hygiene
+      ecosystem: gradle
+      confidence: high
+      related_technique: KB-SUPPLY-DEP-CONFUSION-001
+    paths:
+      include: ["**/*.gradle", "**/*.gradle.kts"]
+    pattern-regex: >-
+      url\s*[=(]?\s*(?:uri\()?\s*["']http://
+
+  - id: source.deps.gradle-maven-local
+    languages: [generic]
+    severity: INFO
+    message: Maven local can supply dependencies outside the declared repositories.
+    metadata:
+      category: dependency-hygiene
+      ecosystem: gradle
+      confidence: medium
+      related_technique: KB-SUPPLY-DEP-CONFUSION-001
+    paths:
+      include: ["**/*.gradle", "**/*.gradle.kts"]
+    pattern-regex: \bmavenLocal\(\)

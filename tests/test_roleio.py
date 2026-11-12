@@ -109,6 +109,13 @@ def test_rejects_an_out_of_range_port():
     assert _reason(json.dumps(dict(GOOD, port=70000))) == "port_range"
 
 
+def test_virtual_port_zero_is_reserved_for_mobile_requests():
+    mobile = dict(GOOD, tool="mobile", target="mobile-app", port=0)
+    assert roleio.parse_request(json.dumps(mobile)).ok
+    assert _reason(json.dumps(dict(mobile, port=1))) == "port_range"
+    assert _reason(json.dumps(dict(GOOD, port=0))) == "port_range"
+
+
 def test_rejects_args_that_are_not_an_object():
     assert _reason(json.dumps(dict(GOOD, args=["x"]))) == "bad_type"
 

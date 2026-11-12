@@ -44,6 +44,32 @@ python3 tools/validate_kb.py --from-specs   # check the condensed spec blocks
 python3 tools/validate_kb.py kb/ai-llm/KB-AILLM-INJ-DIRECT-001.yaml   # one card
 ```
 
+## Dependency assessment verification (HC-PROJ-02)
+
+Install Semgrep 1.180.0 and Trivy 0.75.0 or newer on the verification host.
+Run `python .\capri source update-db` once on a connected host; the command uses `trivy image --download-db-only` and prints the database timestamp.
+For an air-gapped host, copy `trivy.db` and `metadata.json` into `~/.capri/trivy/db/` before scanning.
+
+Run each recorded ecosystem fixture and the mixed and monorepo fixtures from PowerShell:
+
+```powershell
+$fixtures = @('npm', 'cocoapods', 'swiftpm', 'pub', 'gradle', 'mixed', 'monorepo')
+foreach ($fixture in $fixtures) {
+  python .\capri source --project (Join-Path 'tests\fixtures\dependency-assessment' $fixture) `
+    --output (Join-Path $env:TEMP "capri-$fixture.json")
+}
+```
+
+The individual fixtures report complete vulnerability coverage for their ecosystem.
+The mixed fixture reports npm and CocoaPods as `complete`, Gradle as `partial` because only literal declared versions are available, and the overall vulnerable-dependency area as `partial`.
+The monorepo fixture reports both nested npm lockfiles separately and the overall area as `complete`.
+The scanner JSON captured from these real runs is stored beside the fixtures as `trivy-results-*.json` and replayed through the public assessment entry point in CI.
+
+The assessment command does not download data.
+The public-entry tests check that the Trivy process receives `--offline-scan`, all four update and version skip flags, `--disable-telemetry`, empty config and ignore-file arguments, and no inherited `TRIVY_*` variables.
+They also assert project-controlled scanner settings are absent from the snapshot, so the assessment uses only Capri's rules and the Capri-owned database.
+The stale-database warning is exercised with an injected clock and recorded database timestamp, leaving the scan coverage status unchanged.
+
 ## What it checks (HC-KB-01 §9)
 
 - id naming `KB-<CLASS>-<...>-<nnn>` and a known class

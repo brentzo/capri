@@ -529,6 +529,11 @@ class Loop:
         own target and port: the override applies only when the request is aimed at the asset's
         own address."""
         facts = self.target_model.get(asset) or {}
+        if facts.get("asset.type") == "mobile_app" and request.get("tool") == "mobile":
+            request["target"] = "mobile-app"
+            request["port"] = 0
+            request["args"] = {"link_id": facts.get("asset.mobile_link_id")}
+            return request
         ports = facts.get("open_ports")
         if ports and request.get("target") == facts.get("addr"):
             request["port"] = ports[0]

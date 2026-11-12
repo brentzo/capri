@@ -7,6 +7,7 @@ out_of_scope always wins (§4.2).
 """
 import ipaddress
 
+MOBILE_TARGET = "mobile-app"
 
 def _ports_for(eng, ip):
     """The allowed ports for a target IP: the most specific matching CIDR key,
@@ -33,11 +34,16 @@ def ports_for(eng, ip):
     return list(_ports_for(eng, ip))
 
 
-def scope_validate(eng, target, port):
+def scope_validate(eng, target, port, *, allow_mobile=False):
     """Return ('allow', None) or ('deny', reason).
 
     `target` is an IP literal or a pinned in-scope hostname; an unpinned host
     is denied (anti-TOCTOU, §4.3)."""
+    if allow_mobile:
+        if (target == MOBILE_TARGET and port == 0 and eng.android_app is not None):
+            return "allow", None
+        return "deny", "mobile_target_not_authorized"
+
     try:
         ip = ipaddress.ip_address(target)
     except ValueError:

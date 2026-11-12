@@ -15,7 +15,7 @@ _Avoid_: category, check group
 
 **Coverage status**:
 Whether an assessment area, or one ecosystem within it, was `complete`, `partial` with a stated reason, `not_applicable` because the project has nothing it examines, or `not_run` with a stated reason.
-An area's overall status is the weakest of its ecosystems' statuses.
+An area's overall status is `complete` only when every ecosystem in it is, `not_run` only when none of them ran, and `partial` otherwise.
 _Avoid_: zero findings (as a stand-in for "not checked")
 
 **Advisory finding**:

@@ -65,7 +65,8 @@ def _help():
     commands = "\n\n".join((
         group("Setup", [("setup", "choose Operator and Verifier models, then start Bifrost")]),
         group("Run", [("run", "run an engagement against the sandbox")]),
-        group("Local source assessment", [("source --project <path>", "scan project source with Capri's local rules")]),
+        group("Local source assessment", [("source --project <path>", "scan source and dependencies offline"),
+                                           ("source update-db", "download the local Trivy advisory database")]),
         group("Gateway", [("gateway up", "start the saved gateway"),
                            ("gateway status", "show gateway status"),
                            ("gateway keys", "update provider keys"),
@@ -130,13 +131,25 @@ def _state_dir_for_run():
 
 
 def _cmd_run(rest):
+    import argparse
+
+    # Parse before anything else: a help flag or a typo must never provision the range
+    # or spend model tokens.
+    parser = argparse.ArgumentParser(
+        prog="capri run",
+        description="Run an engagement against the sandbox range. "
+                    "The target is Capri's built-in demo app; the sandbox is validated before active probes.")
+    parser.add_argument("--plain", action="store_true",
+                        help="print progress line by line instead of the full-screen view")
+    args = parser.parse_args(rest)
+
     from tools import modelplane
 
     env = modelplane.runtime_env(_state_dir_for_run())
     if env:
         for k, v in env.items():
             os.environ.setdefault(k, v)          # wire the gateway handles in-process
-    if "--plain" not in rest and sys.stdin.isatty() and sys.stdout.isatty():
+    if not args.plain and sys.stdin.isatty() and sys.stdout.isatty():
         from cli.ui import RunApp
         return RunApp().run()
     terminal.print_banner("RUN ENGAGEMENT", "The sandbox is validated before active probes.")

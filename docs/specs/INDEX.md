@@ -66,6 +66,7 @@ updated: 2026-11-08
 | HC-EVAL-01  | Evaluation harness and seeded vulns                    | SPEC.md#14       | draft   |
 | HC-REPORT-01| Operator report rendering, reasoning record, local dashboard | SPEC.md#8, #9 | draft |
 | HC-PROJ-01  | Local project assessment                               | SPEC.md#1, #4    | draft   |
+| HC-PROJ-02  | Dependency assessment                                   | SPEC.md#1        | draft   |
 
 ## Status legend
 

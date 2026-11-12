@@ -1,0 +1,29 @@
+{
+  "SchemaVersion": 2,
+  "Trivy": {
+    "Version": "0.75.0"
+  },
+  "ReportID": "01a1c870-3672-7a2c-907b-3f92af6b0240",
+  "CreatedAt": "2026-11-11T10:29:19.6026667+08:00",
+  "ArtifactName": "dependency-assessment/cocoapods",
+  "ArtifactType": "filesystem",
+  "Results": [
+    {
+      "Target": "Podfile.lock",
+      "Class": "lang-pkgs",
+      "Type": "cocoapods",
+      "Packages": [
+        {
+          "ID": "AFNetworking@4.0.1",
+          "Name": "AFNetworking",
+          "Identifier": {
+            "PURL": "pkg:cocoapods/AFNetworking@4.0.1",
+            "UID": "14dbd3cbb8f39212"
+          },
+          "Version": "4.0.1",
+          "AnalyzedBy": "cocoapods"
+        }
+      ]
+    }
+  ]
+}

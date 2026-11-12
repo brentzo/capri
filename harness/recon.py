@@ -107,6 +107,27 @@ def phase_recon(attacker, eng, *, run=None, crawler=None, source_root=None):
     return model
 
 
+def project_mobile_inventory(inventory):
+    """Project manifest facts into one app asset and one asset per supported deep link."""
+    package = inventory["package"]
+    base = {"host": "mobile-app", "addr": "mobile-app", "reachable": True,
+            "asset.type": "mobile_app", "mobile_app": True, "has_deep_link": False,
+            "mobile.package": package,
+            "mobile.sha256": inventory["sha256"],
+            "mobile.components": inventory["components"],
+            "mobile.permissions": inventory["permissions"]}
+    model = {"mobile-app": base}
+    for link in inventory["deep_links"]:
+        model[f"mobile-app::{link['id']}"] = {
+            **base, "has_deep_link": True, "asset.has_deep_link": True,
+            "asset.mobile_link_id": link["id"],
+            "mobile.component": link["component"],
+            "mobile.link_filter_index": link["filter_index"],
+            "mobile.link_scheme": link["scheme"], "mobile.link_host": link["host"],
+            "mobile.link_path": link["path"]}
+    return model
+
+
 # A benign value a path parameter is concretized to when it stands in the probe path for
 # a *different* injection point (e.g. probing `?search=` on `/api/accounts/:id/transactions`
 # needs a value for `:id`). It is deliberately innocuous: recon never attacks the path here.

@@ -20,3 +20,12 @@ Spec: `.scratch/dependency-assessment/spec.md`, Technical Design > "Discovery wa
 - [ ] Semgrep runs with `--max-target-bytes` raised to 50 MB, metrics and version check off, and an environment with user `SEMGREP_*` variables removed except metrics-off.
 - [ ] Verified end to end with real Semgrep on a fixture project outside the repo.
 - [ ] HC-PROJ-01 and `harness/README.md` describe the snapshot; `SPEC.md` decision log gets a dated line; `make check` green.
+
+## Comments
+
+**2026-11-11:** Running `capri source` on a real Expo project on Windows found two snapshot bugs; both are fixed in the working tree, each with a regression test.
+
+- Windows junctions are directory links that `is_symlink()` does not report, so the walk descended into them. A broken junction crashed the run (`WinError 3`), and a live one would have copied files from outside the project. The walk now prunes junctions alongside symlinks.
+- Android's `.cxx` native build output pushed snapshot paths past Windows' 260-character limit (`WinError 206`). `.cxx` is now skipped with the other build-output folders.
+
+Still open: a genuine source file whose snapshot path exceeds 260 characters on a machine without `LongPathsEnabled` still stops the run. It should either be copied with an extended-length path (if Semgrep and Trivy can read it) or be reported as a coverage gap, never a crash.

@@ -59,7 +59,7 @@ Every assessment area states its coverage per ecosystem as `complete`, `partial`
 38. As a project maintainer, I want hygiene findings to use the same ERROR, WARNING and INFO levels and confidence values as the other source rules, so that the report reads consistently.
 39. As a project maintainer, I want ERROR reserved for configurations that let an attacker substitute a package, so that the highest level means the most urgent fix.
 40. As a project maintainer, I want coverage reported per ecosystem within each dependency area, so that a gap in one ecosystem is not hidden by another.
-41. As a project maintainer, I want an area's overall coverage to be the weakest of its ecosystems, so that the headline never overstates coverage.
+41. As a project maintainer, I want an area's overall coverage to read `partial` when some ecosystems ran and others did not, so that the headline neither overstates nor hides the coverage it actually achieved.
 42. As a project maintainer, I want ecosystems my project does not use reported as `not_applicable`, so that I can tell "nothing to check" from "checked and clean".
 43. As a project maintainer, I want the report to state the vulnerability database's age, so that I know how current the matching was.
 44. As a project maintainer, I want the report to flag the vulnerability database as stale when it is older than 7 days, so that I know to refresh it.
@@ -142,7 +142,8 @@ Every assessment area states its coverage per ecosystem as `complete`, `partial`
   - No full dependency inventory, no source snippets and no file contents appear anywhere in the report.
   - The report's schema version is incremented.
 - Coverage statuses are `complete`, `partial`, `not_applicable` and `not_run`.
-  An area's overall status is the weakest of its ecosystems, in the order not_run < partial < complete, with not_applicable ignored unless every ecosystem is not_applicable.
+  Ignoring not_applicable ecosystems, an area's overall status is complete only when every ecosystem is complete, not_run only when none ran, and partial otherwise; not_applicable when every ecosystem is.
+  This replaces the original weakest-wins rule, which headlined an area `not_run` even when one ecosystem was fully assessed and had findings.
 - The exit code is unchanged: 0 when the assessment completes, whatever the findings.
 - Documentation: a new requirement BR-12, "Assess a project's dependencies privately", with Gherkin acceptance scenarios, and a new spec HC-PROJ-02, "Dependency assessment", that depends on HC-PROJ-01, both added to their registries, with the feature files regenerated.
   HC-PROJ-02 records the answer to HC-KB-06's open question about package-manager fidelity: one set of checks per ecosystem, with the technique cards themselves kept neutral.
@@ -366,7 +367,7 @@ Every rule ships with a positive and a negative fixture line in the tests, run t
   - Some units are assessable and some are not (no lockfile, `bun.lockb` only, oversize, Gradle declared-only, no Trivy result): `partial` with one reason per cause.
   - No unit is assessable: `not_run` with the reasons.
 - Dependency hygiene, per present ecosystem: `complete` unless a file failed to parse or was oversize, which gives `partial`.
-- Overall per area: `not_applicable` when every ecosystem is; otherwise the minimum over the non-`not_applicable` ecosystems in the order `not_run` < `partial` < `complete`.
+- Overall per area: `not_applicable` when every ecosystem is; otherwise, over the non-`not_applicable` ecosystems, `complete` when all are complete, `not_run` when all are not_run, and `partial` for any mix.
 
 ### Report contract (schema_version 2)
 

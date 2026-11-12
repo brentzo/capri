@@ -4,7 +4,7 @@ title: Supply-chain technique-card starter set
 status: draft
 parent: SPEC.md#7
 depends_on: [HC-KB-01, HC-SUB-01]
-depended_on_by: [HC-EVAL-01]
+depended_on_by: [HC-EVAL-01, HC-PROJ-02]
 updated: 2026-11-08
 ---
 
@@ -238,7 +238,7 @@ Probing uses `custom.supply_probe`, a reviewed allowlist adapter (HC-AGENT-01 §
 
 ## 8. Open questions
 
-- Ecosystem fidelity: model one concrete package manager's resolution rules or stay manager-neutral; the cards are written neutrally but a fixture must pick one.
+- Ecosystem fidelity: answered by [HC-PROJ-02](HC-PROJ-02.md), which keeps technique cards manager-neutral and implements format-specific assessment without running package managers or reimplementing their resolution algorithms.
 - Whether build-host execution should run in a dedicated throwaway build VM distinct from the attacker VM, to keep snapshot scope tight.
 - How to express supply-chain impact in CVSS, since build_exec often implies downstream blast far beyond a single host.
 - Whether reproducible-build verification deserves its own card once a build target is standardized.

@@ -28,8 +28,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       nmap \
       chromium \
       procps \
-      wget unzip ca-certificates \
+      wget unzip ca-certificates openjdk-17-jre-headless \
     && rm -rf /var/lib/apt/lists/*
+
+# Google Android SDK command-line tools: apkanalyzer decodes binary APK manifests and
+# platform-tools supplies the private ADB client used only by the harness adapter.
+ARG ANDROID_CMDLINE_TOOLS_REV=15859902
+ARG ANDROID_CMDLINE_TOOLS_SHA256=4e4c464f145a7512b57d088ac6c278c03c9eea610886b35a5e0804e74eedf583
+ARG ANDROID_PLATFORM_TOOLS_REV=37.0.1
+ARG ANDROID_PLATFORM_TOOLS_SHA256=d230f13842f60f782a8645f9c813f8f845bf36089ea7289f28c48f17979313f1
+ENV ANDROID_HOME=/opt/android-sdk
+RUN set -eux; \
+    mkdir -p "$ANDROID_HOME/cmdline-tools"; \
+    wget -qO /tmp/android-tools.zip \
+      "https://dl.google.com/android/repository/commandlinetools-linux-${ANDROID_CMDLINE_TOOLS_REV}_latest.zip"; \
+    echo "${ANDROID_CMDLINE_TOOLS_SHA256}  /tmp/android-tools.zip" | sha256sum -c -; \
+    unzip -q /tmp/android-tools.zip -d "$ANDROID_HOME/cmdline-tools"; \
+    mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"; \
+    rm /tmp/android-tools.zip; \
+    yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" --licenses >/dev/null; \
+    wget -qO /tmp/platform-tools.zip \
+      "https://dl.google.com/android/repository/platform-tools_r${ANDROID_PLATFORM_TOOLS_REV}-linux.zip"; \
+    echo "${ANDROID_PLATFORM_TOOLS_SHA256}  /tmp/platform-tools.zip" | sha256sum -c -; \
+    unzip -q /tmp/platform-tools.zip -d "$ANDROID_HOME"; \
+    rm /tmp/platform-tools.zip; \
+    "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" --help >/dev/null
+ENV PATH="${ANDROID_HOME}/platform-tools:${ANDROID_HOME}/cmdline-tools/latest/bin:${PATH}"
 
 # Playwright drives a real browser for the black-box crawler (recon endpoint discovery). It
 # is container tooling, pinned, installed with its own chromium and that browser's OS deps.

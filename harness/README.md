@@ -515,9 +515,15 @@ for the sandbox; the harness itself stays dependency-free and is handed a gatewa
 
 ## What's here (local source assessment)
 
-HC-PROJ-01: `capri source --project <path>` runs a read-only source scan of any local project with Capri's local Semgrep rules.
-It disables metrics and version checks, never executes the selected project, omits matched source text from reports, and writes the report outside the project under `~/.capri/reports/` by default.
-The report labels static findings as advisory and says runtime assessment was not run because the live runner still targets Capri's built-in demo.
+HC-PROJ-01 and HC-PROJ-02: `capri source --project <path>` scans a temporary snapshot for source rules and dependency hygiene, and optionally matches dependencies against a local Trivy database.
+The snapshot omits project scanner settings, symlinks and installed dependency folders, stays outside the project, and is removed even when a scanner fails.
+Semgrep and Trivy metrics, version checks, project configuration and network access are disabled for assessments; the tools never run project code or package managers.
+The report is written outside the project under `~/.capri/reports/` by default, contains no complete dependency inventory or source snippets, and keeps source, dependency and runtime areas separate.
+Without Trivy or its database, source rules and hygiene still run while vulnerable-dependency coverage is `not_run` with a warning.
+
+Run `capri source update-db` to explicitly download the public Trivy database into `~/.capri/trivy/`.
+On an air-gapped host, copy `trivy.db` and `metadata.json` into `~/.capri/trivy/db/`.
+The database is never refreshed during an assessment.
 
 ## What's here (the real KB in the live run)
 
@@ -771,8 +777,9 @@ the kill switch) and the model gateway now ship as self-hostable backends
 target model, so these are no longer stubs. What remains:
 
 - Coverage: the live run drives the whole web-protocol-auth class (all eleven
-  cards) plus several client-side cards; wiring the other KB classes (ai-llm,
-  cloud, supply-chain, rpc, dos, data, memory-binary, mobile, and the DOM-only
+  cards), several client-side cards, and the first mobile deep-link card; wiring
+  the other KB classes (ai-llm, cloud, supply-chain, rpc, dos, data, memory-binary,
+  the other mobile cards, and the DOM-only
   client-side cards) to concrete adapters is the next work, and the DOM-based and
   fuzzy-judgment cards wait on the Laya decision layer (HC-MODEL-02).
 - Model plane: the Planner and Reporter are still the deterministic stand-ins; a
@@ -784,3 +791,24 @@ target model, so these are no longer stubs. What remains:
 
 What stays out of repo is your own provider and Tavily API keys and the host you
 run the backends on.
+
+## Android mobile assessment (HC-MOB-01)
+
+The first runnable mobile capability accepts an authorized APK in
+`engagement.android_app.apk`, inventories the decoded manifest with the pinned
+Android SDK tools, and adds one coverage item per supported `VIEW` plus
+`BROWSABLE` deep-link filter.
+The manifest-derived probe invokes a fixed Android intent with a harness-created
+callback URL; only a matching nonce observed from the emulator at the in-range
+collaborator can produce a finding.
+The existing Bifrost roles, dispatcher, audit and evidence stores, coverage
+ledger, and independent Verifier remain in the path.
+
+The runtime is a digest-pinned Google API 30 emulator container with an
+ADB-only private control path, guest egress guard, and ephemeral APK copy.
+APK analysis uses Android SDK Command-line Tools `15859902`, and device control
+uses Platform-Tools `37.0.1`; exact checksums and the probe flow are recorded in
+`docs/specs/HC-MOB-01.md`.
+Active runtime assessment requires Linux Docker with KVM.
+The current slice does not include a bundled practice APK or make the other
+mobile technique cards runnable.

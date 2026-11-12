@@ -14,7 +14,7 @@ from harness import capabilities, kb                                      # noqa
 
 _ADAPTERS = {"probe", "nmap", "httpx", "http", "sqli", "idor", "bfla", "jwt", "ssti",
              "cors", "path", "cmdi", "cache", "sess", "ssrf", "redirect", "clickjack", "csrf",
-             "wshijack", "cspexec", "domclobber", "protopollute"}
+             "wshijack", "cspexec", "domclobber", "protopollute", "mobile"}
 _KB = kb.load()
 _ID_TO_VER = {cid: ver for (cid, ver) in _KB}
 

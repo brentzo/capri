@@ -146,14 +146,20 @@ A live engagement needs three things, all self-hostable on your own machine:
 
    `capri setup` offers a catalog of providers (OpenAI, Anthropic, Gemini, DeepSeek, and more) and keeps the two roles on different providers; the gateway (Bifrost) runs on `127.0.0.1` and never appears. See the [gateway setup walkthrough](infra/modelplane/README.md) and the [model-plane spec](docs/specs/HC-MODEL-01.md).
 
-For a local, read-only source assessment of any project, install Semgrep locally and run:
+For a local, read-only source and dependency assessment of any project, install Semgrep and Trivy 0.75.0 or newer, then run:
 
 ```powershell
 python .\capri source --project C:\path\to\project
 ```
 
-This uses Capri's local rule pack with metrics and version checks disabled, does not execute the project or contact a model provider, and writes a snippet-free report under `~/.capri/reports/`.
-This command assesses source only; it does not run the app or its backing services.
+This uses Capri's local Semgrep rules and reports dependency hygiene without a database.
+To enable offline vulnerability matching, explicitly download the public Trivy database with `python .\capri source update-db`.
+The assessment itself does not access the network, execute project code, run package managers, or contact a model provider.
+It writes a snippet-free report under `~/.capri/reports/` and keeps the full dependency inventory on the local machine.
+
+On an air-gapped host, run `capri source update-db` on a connected machine and copy the Trivy database files `trivy.db` and `metadata.json` into `~/.capri/trivy/db/` on the assessment host.
+The source assessment reports vulnerability coverage as `not_run` until that local database is available.
+The assessment scans a temporary snapshot, excludes installed dependencies and project-owned scanner configuration, and removes the snapshot when it finishes.
 3. **Tool adapters** behind the allow-listed `dispatch()` interface (nmap, httpx, ffuf, sqlmap, nuclei, a headless browser), optionally with the Tavily enrichment service.
 
 Until the five sandbox self-tests pass, the harness stays in `passive-only`: no active probe runs and every lead is held unverified.
