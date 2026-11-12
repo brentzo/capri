@@ -543,6 +543,23 @@ class Loop:
             request["port"] = ports[0]
         return request
 
+    def _check_options(self, turn, asset):
+        """A proposal aimed at an asset that publishes options may only pick one of them.
+
+        The check belongs to the adapter that owns the options; an out-of-set proposal is
+        audited and handed back to the role as an ordinary rejected turn, so no command is
+        built from it."""
+        request = turn.request
+        adapter = getattr(self.dispatcher, "adapters", {}).get(request.get("tool"))
+        check = getattr(adapter, "check_options", None)
+        problem = check(self.target_model.get(asset) or {}, request) if check else None
+        if problem is None:
+            return turn
+        audit.record(self.conn, self.eng.id, "harness", "option_rejected", decision="rejected",
+                     reason="unpublished_option",
+                     detail={"asset": asset, "tool": request.get("tool")})
+        return roleio.ParsedTurn(rejection=roleio.Rejection("unpublished_option", problem))
+
     def _hunt(self, pair):
         """Run the Operator inner loop on one pair; return the lead's finding id or
         None. Marks the pair's outcome in the ledger either way."""
@@ -579,6 +596,8 @@ class Loop:
                 if raw is None:                                  # role gives up
                     break
                 turn = roleio.parse_request(raw)                 # harness parses, not the role
+                if turn.rejection is None:
+                    turn = self._check_options(turn, pair.asset)
                 if turn.rejection is not None:                   # unparseable turn (§5.1)
                     invalid += 1
                     observations.append(turn.rejection.as_observation())  # re-prompt (§9)
@@ -679,6 +698,8 @@ class Loop:
             if raw is None:
                 break
             turn = roleio.parse_request(raw)                     # harness parses, not the role
+            if turn.rejection is None:
+                turn = self._check_options(turn, pair.asset)
             if turn.rejection is not None:                       # unparseable turn (§5.1)
                 invalid += 1
                 observations.append(turn.rejection.as_observation())  # re-prompt (§9)

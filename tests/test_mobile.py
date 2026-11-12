@@ -17,11 +17,11 @@ from harness.mobile.sandbox import (ANDROID_EMULATOR_IMAGE,
 from harness.substrate import contract, scope  # noqa: E402
 from harness.sandbox.base import RunResult, SandboxError  # noqa: E402
 from harness.sandbox.docker import DockerSandbox  # noqa: E402
-from harness import capabilities, kb, ratelimit, report as reportmod, roleio  # noqa: E402
+from harness import capabilities, evaluate, kb, ratelimit, report as reportmod, roleio  # noqa: E402
 from harness.dispatch import Dispatcher  # noqa: E402
 from harness.loop import Loop, phase_threat_model  # noqa: E402
 from harness.planner import DeterministicPlanner  # noqa: E402
-from harness.store import blobstore, db, findings  # noqa: E402
+from harness.store import audit, blobstore, db, findings  # noqa: E402
 
 ANDROID = "http://schemas.android.com/apk/res/android"
 MANIFEST = f'''<manifest xmlns:android="{ANDROID}" package="com.example.canary">
@@ -342,7 +342,7 @@ def test_android_provision_fails_closed_before_docker_on_unsupported_host():
     assert ANDROID_EMULATOR_IMAGE.endswith("sha256:e78ac1816acef59e40285e90003acd490ef54bb3242ed088afa31bc982577050")
 
 
-def _deep_link_loop(sandbox_factory=None, manifest=None):
+def _deep_link_loop(sandbox_factory=None, manifest=None, option_id="link-0001", spy=None):
     """Run the whole deep-link engagement (recon, hunt, independent verification, report)
     against fakes; returns the loop result, the store and the engagement."""
     mobile_contract = MOBILE_CONTRACT.replace(
@@ -357,14 +357,18 @@ def _deep_link_loop(sandbox_factory=None, manifest=None):
     mobile_kb = {key: card for key, card in capabilities.runnable_index(kb.load()).items()
                  if key[0] == "KB-MOBILE-LINK-DEEPLINK-001"}
 
-    class Adapter:
-        def run(self, req):
-            assert req["target"] == "mobile-app" and req["port"] == 0
-            assert req["args"] == {"link_id": "link-0001"}
-            return {"status": "ok", "parsed": {"oob_fired": True},
-                    "request_bytes": b"fixed Android VIEW intent",
-                    "response_bytes": b"range-local callback",
-                    "deterministic_signals": {"hit": True, "confidence": 0.95}}
+    spy = {} if spy is None else spy
+    spy["runs"], spy["facts"], spy["requests"] = [], [], []
+    probe, _ = _probe_with_collaborator(lambda nonce, n: f"/{nonce} 10.90.0.4", FakeClock(),
+                                        manifest or MANIFEST)
+    real_run = probe.run
+
+    def counting_run(req):
+        spy["runs"].append(req)
+        reply = real_run(req)
+        spy["requests"].append(reply["request_bytes"])
+        return reply
+    probe.run = counting_run
 
     class Sandbox:
         def proofs_pass(self):
@@ -381,6 +385,7 @@ def _deep_link_loop(sandbox_factory=None, manifest=None):
 
     class Operator:
         def begin(self, pair, facts):
+            spy["facts"].append(facts)
             return SimpleNamespace(id="mobile-operator", step=0)
 
         def propose_next(self, session, card, context):
@@ -389,7 +394,7 @@ def _deep_link_loop(sandbox_factory=None, manifest=None):
             session.step += 1
             return roleio.emit({"tool": "mobile", "intent": "invoke_deeplink",
                                 "target": "mobile-app", "port": 0,
-                                "args": {"link_id": "link-0001"}})
+                                "args": {"option_id": option_id}})
 
     class Verifier:
         def begin(self):
@@ -403,7 +408,7 @@ def _deep_link_loop(sandbox_factory=None, manifest=None):
             return roleio.emit({**step, "intent": "reproduce"})
 
     with tempfile.TemporaryDirectory() as root:
-        dispatcher = Dispatcher(conn, blobstore.BlobStore(root), eng, {"mobile": Adapter()},
+        dispatcher = Dispatcher(conn, blobstore.BlobStore(root), eng, {"mobile": probe},
                                 ratelimit.RateLimiter(1000, now=lambda: 0.0))
         result = Loop(conn, eng, kb_index=mobile_kb, dispatcher=dispatcher,
                       sandbox=(sandbox_factory or Sandbox)(),
@@ -411,6 +416,40 @@ def _deep_link_loop(sandbox_factory=None, manifest=None):
                       operator=Operator(), verifier=Verifier(),
                       mobile_static=static).run(target_model)
     return result, conn, eng
+
+
+def test_an_option_outside_the_published_set_is_rejected_audited_and_never_run():
+    spy = {}
+    result, conn, eng = _deep_link_loop(option_id="link-9999", spy=spy)
+    assert spy["runs"] == []                                   # no device command was built
+    assert findings.confirmed(conn, eng.id) == [] and findings.leads(conn, eng.id) == []
+    [turn] = [dict(r) for r in conn.execute("SELECT * FROM role_turn WHERE role='operator'")]
+    assert turn["rejection"] == "unpublished_option"
+    [row] = [dict(r) for r in conn.execute(
+        "SELECT * FROM audit_log WHERE category='option_rejected'")]
+    assert row["decision"] == "rejected" and "link-9999" not in row["detail"]
+    assert result.valid, result.errors
+
+
+def test_the_operator_sees_the_published_options_and_no_device_internals():
+    spy = {}
+    _deep_link_loop(spy=spy)
+    [facts] = spy["facts"]
+    assert facts["asset.mobile_options"] == [
+        {"id": "link-0001", "kind": "deep_link", "scheme": "capri", "host": "open",
+         "path": "/fetch"}]
+    seen = repr(facts)
+    for private in (".apk", "/tmp", "adb", "ADB_VENDOR_KEYS", "hc-mobile"):
+        assert private not in seen, private
+
+
+def test_the_verifier_reproduces_the_recorded_option_with_a_fresh_canary():
+    spy = {}
+    result, conn, eng = _deep_link_loop(spy=spy)
+    assert len(spy["runs"]) == 2                               # finder run, then verifier run
+    assert spy["runs"][0]["args"] == spy["runs"][1]["args"] == {"option_id": "link-0001"}
+    operator_request, verifier_request = spy["requests"]
+    assert operator_request != verifier_request                # different harness-made nonce
 
 
 def test_deep_link_finding_passes_dispatch_and_independent_verification():
@@ -454,6 +493,24 @@ def test_a_lead_stays_unconfirmed_with_a_reason_when_the_device_baseline_cannot_
     reason = dict(findings.history(conn, lead["id"])[-1])["reason"]
     assert "baseline" in reason and "could not be restored" in reason, reason
     assert result.valid, result.errors
+
+
+def test_a_finished_run_becomes_an_eval_record_from_its_own_store():
+    report = {"baseline_id": "range-android-baseline", "method": "snapshot",
+              "emulator_image": ANDROID_EMULATOR_IMAGE, "restore_ms": 2500}
+    result, conn, eng = _deep_link_loop(_loop_sandbox(lambda snapshot: True, report))
+    audit.record(conn, eng.id, "vk-operator", "model_call", decision="ok",
+                 detail={"tokens_in": 700, "tokens_out": 300})
+    audit.record(conn, eng.id, "harness", "dispatch_denial", decision="out_of_scope",
+                 reason="not_in_scope", detail={})
+    record = evaluate.record_from_run(conn, eng.id, result.report, fixture="seed/x-vuln",
+                                      run=2, wall_s=12.5)
+    assert record == {
+        "fixture": "seed/x-vuln", "run": 2,
+        "findings": [{"technique_id": "KB-MOBILE-LINK-DEEPLINK-001"}],
+        "advisories": ["backup-allowed", "exported-component-unprotected", "deep-link-declared"],
+        "coverage": {"confirmed": 1}, "scope_events": 1, "leads": 1,
+        "cost": {"tokens": 1000, "wall_s": 12.5, "restore_s": 2.5}}
 
 
 def test_every_verification_audits_the_baseline_it_restored_from():
@@ -551,6 +608,7 @@ def test_restoring_the_baseline_removes_state_left_on_the_device():
     report = _restore(runtime)
     assert "/sdcard/leftover" not in device.files
     assert report["method"] == "snapshot" and report["baseline_id"]
+    assert isinstance(report["restore_ms"], int) and report["restore_ms"] >= 0
     assert not any(c[:3] == ["docker", "rm", "-f"] and "android" in c for c in device.calls[-12:])
 
 
@@ -630,7 +688,7 @@ def test_deep_link_probe_uses_fixed_intent_and_only_accepts_nonce_from_expected_
     probe = DeepLinkProbe("com.example.canary", inventory_manifest(MANIFEST)["deep_links"],
                           adb=adb, collaborator=collaborator, collab_addr="10.90.0.3:8080",
                           expected_source="10.90.0.4")
-    result = probe.run({"args": {"link_id": "link-0001"}})
+    result = probe.run({"args": {"option_id": "link-0001"}})
     assert result["deterministic_signals"]["hit"] is True
     assert invocations[0] == ["shell", "pm", "clear", "com.example.canary"]
     launch = invocations[1]
@@ -653,7 +711,7 @@ class FakeClock:
         self.t += seconds
 
 
-def _probe_with_collaborator(responses, clock):
+def _probe_with_collaborator(responses, clock, manifest=MANIFEST):
     """A probe whose collaborator log is `responses(nonce, poll_number)` and whose
     emulator accepts every ADB call; returns the probe and the poll counter."""
     invocations, polls = [], []
@@ -663,13 +721,13 @@ def _probe_with_collaborator(responses, clock):
         return SimpleNamespace(rc=0, out="Success", err="")
 
     def collaborator():
-        launch = next(args for args in invocations if "-d" in args)
+        launch = [args for args in invocations if "-d" in args][-1]
         url = launch[launch.index("-d") + 1]
         nonce = urlparse(parse_qs(urlparse(url).query)["url"][0]).path.lstrip("/")
         polls.append(clock.t)
         return responses(nonce, len(polls))
 
-    probe = DeepLinkProbe("com.example.canary", inventory_manifest(MANIFEST)["deep_links"],
+    probe = DeepLinkProbe("com.example.canary", inventory_manifest(manifest)["deep_links"],
                           adb=adb, collaborator=collaborator, collab_addr="10.90.0.3:8080",
                           expected_source="10.90.0.4", monotonic=clock.monotonic,
                           sleep=clock.sleep)
@@ -680,7 +738,7 @@ def test_a_callback_that_arrives_after_launch_still_confirms_and_stops_the_wait(
     clock = FakeClock()
     probe, polls = _probe_with_collaborator(
         lambda nonce, n: f"/{nonce} 10.90.0.4" if n >= 4 else "", clock)
-    result = probe.run({"args": {"link_id": "link-0001"}})
+    result = probe.run({"args": {"option_id": "link-0001"}})
     assert result["deterministic_signals"]["hit"] is True
     assert len(polls) == 4, polls          # stopped at the first matching line, not the deadline
     assert clock.t == 3 * CALLBACK_POLL_S
@@ -689,7 +747,7 @@ def test_a_callback_that_arrives_after_launch_still_confirms_and_stops_the_wait(
 def test_no_callback_gives_up_at_the_deadline_without_a_hit():
     clock = FakeClock()
     probe, polls = _probe_with_collaborator(lambda nonce, n: "", clock)
-    result = probe.run({"args": {"link_id": "link-0001"}})
+    result = probe.run({"args": {"option_id": "link-0001"}})
     assert result["deterministic_signals"]["hit"] is False
     assert result["status"] == "error"
     assert CALLBACK_WAIT_S <= clock.t <= CALLBACK_WAIT_S + CALLBACK_POLL_S, clock.t
@@ -699,7 +757,7 @@ def test_deep_link_probe_rejects_unknown_manifest_link():
     probe = DeepLinkProbe("com.example.canary", [], adb=lambda args: None,
                           collaborator=lambda: "", collab_addr="10.90.0.3:8080",
                           expected_source="10.90.0.4")
-    assert probe.run({"args": {"link_id": "caller-controlled"}})["deterministic_signals"]["hit"] is False
+    assert probe.run({"args": {"option_id": "caller-controlled"}})["deterministic_signals"]["hit"] is False
 
 
 def test_deep_link_probe_stops_if_app_data_reset_does_not_succeed():
@@ -710,7 +768,7 @@ def test_deep_link_probe_stops_if_app_data_reset_does_not_succeed():
                           adb=adb, collaborator=lambda: "", collab_addr="10.90.0.3:8080",
                           expected_source="10.90.0.4")
     try:
-        probe.run({"args": {"link_id": "link-0001"}})
+        probe.run({"args": {"option_id": "link-0001"}})
     except MobileError as exc:
         assert "reset" in str(exc)
     else:
@@ -735,7 +793,7 @@ def test_callback_source_must_match_the_emulator_ip_exactly():
                           adb=adb, collaborator=collaborator, collab_addr="10.90.0.3:8080",
                           expected_source="10.90.0.4", monotonic=clock.monotonic,
                           sleep=clock.sleep)
-    assert probe.run({"args": {"link_id": "link-0001"}})["deterministic_signals"]["hit"] is False
+    assert probe.run({"args": {"option_id": "link-0001"}})["deterministic_signals"]["hit"] is False
 
 
 def test_android_guard_and_public_adb_key_precede_apk_inspection_and_install():

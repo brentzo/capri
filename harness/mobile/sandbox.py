@@ -176,22 +176,24 @@ class AndroidRuntime:
         reproduces on a device the harness cannot vouch for."""
         if not self.baseline:
             raise SandboxError("no Android device baseline was saved; cannot verify")
+        started = time.monotonic()
         if self.baseline["snapshot"]:
             loaded = self.adb(["emu", "avd", "snapshot", "load", BASELINE_SNAPSHOT], timeout=120)
             if loaded.rc == 0 and "OK" in (loaded.out or ""):
                 self._wait_boot()
                 if self._installed_hash_matches():
-                    return self._baseline_report("snapshot")
+                    return self._baseline_report("snapshot", started)
         self._recreate()
         if not self._installed_hash_matches():
             raise SandboxError("Android device baseline could not be restored: the installed "
                                "package does not match the APK under test")
         self.save_baseline()
-        return self._baseline_report("recreate")
+        return self._baseline_report("recreate", started)
 
-    def _baseline_report(self, method):
+    def _baseline_report(self, method, started):
         self.last_baseline = {"baseline_id": self.baseline["baseline_id"], "method": method,
-                              "emulator_image": ANDROID_EMULATOR_IMAGE}
+                              "emulator_image": ANDROID_EMULATOR_IMAGE,
+                              "restore_ms": int((time.monotonic() - started) * 1000)}
         return self.last_baseline
 
     def _installed_hash_matches(self):

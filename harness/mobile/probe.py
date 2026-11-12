@@ -44,15 +44,23 @@ class DeepLinkProbe:
 
     @staticmethod
     def bind_asset(facts, request):
+        """The virtual target and port are fixed by the harness, never by the model."""
         if facts.get("asset.type") == "mobile_app":
             request["target"] = MOBILE_TARGET
             request["port"] = 0
-            request["args"] = {"link_id": facts.get("asset.mobile_link_id")}
+
+    @staticmethod
+    def check_options(facts, request):
+        """None when the request names one of the asset's published options, else why not."""
+        published = sorted(option["id"] for option in facts.get("asset.mobile_options", []))
+        if (request.get("args") or {}).get("option_id") in published:
+            return None
+        return "option_id must be one of: " + (", ".join(published) or "(none published)")
 
     def run(self, req):
         args = req.get("args") or {}
-        link_id = args.get("link_id")
-        link = self.links.get(link_id) if isinstance(link_id, str) else None
+        option_id = args.get("option_id")
+        link = self.links.get(option_id) if isinstance(option_id, str) else None
         if link is None or not self.collab_addr or not self.collaborator:
             return {"status": "error", "parsed": {"error": "unknown_link"},
                     "request_bytes": b"mobile deep-link", "response_bytes": b"",

@@ -58,6 +58,11 @@ def _project(inventory):
             "has_deep_link": True,
             "asset.has_deep_link": True,
             "asset.mobile_link_id": link["id"],
+            # The closed set the Operator may choose from; display fields only. Canaries,
+            # callback addresses and device commands are never options.
+            "asset.mobile_options": [{"id": link["id"], "kind": "deep_link",
+                                      "scheme": link["scheme"], "host": link["host"],
+                                      "path": link["path"]}],
             "mobile.component": link["component"],
             "mobile.link_filter_index": link["filter_index"],
             "mobile.link_scheme": link["scheme"],
