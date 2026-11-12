@@ -5,6 +5,7 @@ import re
 import xml.etree.ElementTree as ET
 
 from harness.sandbox.base import SandboxError
+from harness.mobile.code_analysis import assess_apk
 
 ANDROID = "http://schemas.android.com/apk/res/android"
 APK_IN_ATTACKER = "/tmp/hc-mobile.apk"
@@ -76,6 +77,8 @@ def inventory_manifest(xml_text):
                      "has_intent_filter": has_filter}
         if node.tag == "provider":
             component.update(
+                authorities=[value for value in node.get(f"{{{ANDROID}}}authorities", "").split(";")
+                             if value],
                 grant_uri_permissions=_flag(node, "grantUriPermissions", False),
                 read_permission=node.get(f"{{{ANDROID}}}readPermission"),
                 write_permission=node.get(f"{{{ANDROID}}}writePermission"))
@@ -141,7 +144,7 @@ def _signing_digest(run, attacker):
     return match.group(1).replace(":", "").lower() if match else None
 
 
-def inspect_apk(apk_path, attacker, *, run, cleanup=True):
+def inspect_apk(apk_path, attacker, *, run, cleanup=True, static_depth="manifest"):
     """Hash and inspect an APK inside the isolated attacker container, then delete it."""
     if not isinstance(apk_path, str) or not os.path.isfile(apk_path):
         raise MobileError("engagement.android_app.apk must name an existing APK file")
@@ -157,8 +160,14 @@ def inspect_apk(apk_path, attacker, *, run, cleanup=True):
                       APK_IN_ATTACKER])
         if result.rc != 0:
             raise MobileError("apkanalyzer could not read the APK manifest")
-        return {**inventory_manifest(result.out), "sha256": digest.hexdigest(),
-                "signing_sha256": _signing_digest(run, attacker)}
+        inventory = {**inventory_manifest(result.out), "sha256": digest.hexdigest(),
+                     "signing_sha256": _signing_digest(run, attacker),
+                     "static_depth": static_depth}
+        if static_depth == "code":
+            findings, status, reason = assess_apk(run, attacker, APK_IN_ATTACKER)
+            inventory.update(code_advisories=findings, code_status=status,
+                             code_reason=reason)
+        return inventory
     finally:
         if cleanup:
             run(["docker", "exec", attacker, "rm", "-f", APK_IN_ATTACKER])

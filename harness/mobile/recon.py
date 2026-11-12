@@ -25,6 +25,8 @@ def mobile_recon(conn, engagement_id, inventory):
             "emulator_image": ANDROID_EMULATOR_IMAGE,
             "component_count": len(inventory["components"]),
             "deep_link_count": len(inventory["deep_links"]),
+            "static_depth": inventory.get("static_depth", "manifest"),
+            "code_coverage": inventory.get("code_status", "not_run"),
         },
     )
     return _project(inventory), assess(inventory)
@@ -48,6 +50,9 @@ def _project(inventory):
         "mobile.application": inventory["application"],
     }
     app = {**core, "asset.backup_allowed": inventory["application"]["allow_backup"]}
+    if any("KB-MOBILE-IPC-WEBVIEW-001" in item.get("related_cards", [])
+           for item in inventory.get("code_advisories", [])):
+        app["asset.has_webview_bridge"] = True
     exposed = [c["name"] for c in exported_components(inventory)]
     if exposed:  # exists() is true even for an empty list
         app.update({"asset.exported_components": exposed, "exported_component": True})

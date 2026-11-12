@@ -232,10 +232,7 @@ class DockerSandbox(Sandbox):
             self._start_listeners(self.collaborator, [self.collab_port], app=self.collaborator_app)
             self.collab_addr = f"{collab_ip}:{self.collab_port}"
 
-        if engagement.android_app:
-            mobile_ip = str(next(hosts))
-            self.mobile.start(engagement.android_app["apk"], mobile_ip, attacker_ip,
-                              runtime=self._runtime)
+        mobile_ip = str(next(hosts)) if engagement.android_app else None
 
         # Backing services come up before the targets so the app can reach them the moment it
         # starts. They take in-range IPs but are never added to the guard's pinned allow list,
@@ -266,13 +263,20 @@ class DockerSandbox(Sandbox):
                 self._guard_port = self._app_port if self._app_image else int(ports[0])
 
         if engagement.android_app:
-            pinned_ports.append((self.mobile.ip, [5555]))
+            pinned_ports.append((mobile_ip, [5555]))
             if self._in_scope_ip is None:
-                self._in_scope_ip, self._guard_port = self.mobile.ip, 5555
+                self._in_scope_ip, self._guard_port = mobile_ip, 5555
 
         errs = engagement.pin({h: ip for h, ip in pinned.items()})
         if errs:
             raise SandboxError("pinning failed: " + "; ".join(errs))
+
+        if engagement.android_app:
+            self.mobile.install_resolver({host.lower(): str(ip) for host, ip in pinned.items()},
+                                         mobile_ip)
+            self.mobile.start(engagement.android_app["apk"], mobile_ip, attacker_ip,
+                              runtime=self._runtime, dns_server=attacker_ip,
+                              static_depth=engagement.android_app["static_depth"])
 
         guard_command = ["run", "--rm", "--network", f"container:{self.attacker}"]
         if self._runtime:
@@ -282,10 +286,11 @@ class DockerSandbox(Sandbox):
         ruleset = guard_ruleset(self.guard_table, pinned_ports).encode("utf-8")
         self._docker(*guard_command, input=ruleset)
         if engagement.android_app:
-            mobile_allowed = list(pinned_ports[:-1])
+            mobile_allowed = [(ip, ports) for ip, ports in pinned_ports if ip != mobile_ip]
             if self.collab_addr:
                 mobile_allowed.append((self.collab_addr.rsplit(":", 1)[0], [self.collab_port]))
             self.mobile.install_guard(attacker_ip, mobile_allowed, runtime=self._runtime,
+                                      dns_server=attacker_ip,
                                       replace=True)
             self.mobile.save_baseline()
         # With the guard installed, wait for the app to answer its health path over the real

@@ -1,5 +1,7 @@
 """Android emulator lifecycle and guest egress controls."""
+import json
 import os
+import re
 import sys
 import time
 
@@ -13,7 +15,7 @@ ANDROID_EMULATOR_IMAGE = (
 )
 
 
-def android_guard_ruleset(table, attacker_ip, allowed_ports, *, replace=False):
+def android_guard_ruleset(table, attacker_ip, allowed_ports, *, dns_server=None, replace=False):
     """Fence emulator egress to scoped APIs/collaborator and ADB ingress to the attacker."""
     lines = ([f"delete table inet {table}"] if replace else []) + [f"table inet {table} {{",
              "\tchain out {",
@@ -24,6 +26,8 @@ def android_guard_ruleset(table, attacker_ip, allowed_ports, *, replace=False):
         ports = sorted({int(port) for port in ports})
         if ports:
             lines.append(f"\t\tip daddr {ip} tcp dport {{ {', '.join(map(str, ports))} }} accept")
+    if dns_server:
+        lines.append(f"\t\tip daddr {dns_server} udp dport 53 accept")
     lines += ["\t}", "\tchain input {", "\t\ttype filter hook input priority 0; policy drop;",
               '\t\tiifname "lo" accept', "\t\tct state established,related accept",
               f"\t\tip saddr {attacker_ip} tcp dport 5555 accept", "\t}", "}", ""]
@@ -68,8 +72,21 @@ class AndroidRuntime:
             raise MobileError(f"required Android emulator image {ANDROID_EMULATOR_IMAGE} is missing; "
                               "pull the pinned image before starting the engagement")
 
-    def start(self, apk_path, ip, attacker_ip, *, runtime=None):
-        self._launch = (apk_path, ip, attacker_ip, runtime)
+    def install_resolver(self, records, source_ip):
+        """Run the in-range, non-recursive resolver inside the guarded attacker namespace."""
+        source = os.path.join(os.path.dirname(__file__), "resolver.py")
+        destination = "/tmp/hc-mobile-resolver.py"
+        copied = self._run(["docker", "cp", source, f"{self.attacker}:{destination}"])
+        if copied.rc != 0:
+            raise SandboxError("could not install the in-range Android resolver")
+        started = self._run(["docker", "exec", "-d", self.attacker, "python3", destination,
+                             json.dumps(records, sort_keys=True), source_ip])
+        if started.rc != 0:
+            raise SandboxError("could not start the in-range Android resolver")
+
+    def start(self, apk_path, ip, attacker_ip, *, runtime=None, dns_server=None,
+              static_depth="manifest"):
+        self._launch = (apk_path, ip, attacker_ip, runtime, dns_server, static_depth)
         self._adb_key_path = f"/tmp/hc-adbkey-{self.container}"
         keygen = self._exec_attacker("adb", "keygen", self._adb_key_path)
         if keygen.rc != 0:
@@ -78,8 +95,10 @@ class AndroidRuntime:
         if not adb_key:
             raise SandboxError("run-local ADB public key was not created")
 
+        dns_option = ["--dns", dns_server] if dns_server else []
         self._docker("run", "-d", "--name", self.container, "--network", self.network,
-                     "--ip", ip, "--device", "/dev/kvm", "-e", f"ADBKEY_PUB={adb_key}",
+                     "--ip", ip, *dns_option,
+                     "--device", "/dev/kvm", "-e", f"ADBKEY_PUB={adb_key}",
                      "--tmpfs", "/data:rw,nosuid,size=1g", *(["--runtime", runtime] if runtime else []),
                      ANDROID_EMULATOR_IMAGE)
         self.ip = ip
@@ -93,8 +112,9 @@ class AndroidRuntime:
             raise SandboxError("Android emulator did not become ready through private ADB")
         self._wait_boot()
 
-        self.install_guard(attacker_ip, [], runtime=runtime)
-        self.inventory = inspect_apk(apk_path, self.attacker, run=self._run, cleanup=False)
+        self.install_guard(attacker_ip, [], runtime=runtime, dns_server=dns_server)
+        self.inventory = inspect_apk(apk_path, self.attacker, run=self._run, cleanup=False,
+                                     static_depth=static_depth)
         installed = self.adb(["install", APK_IN_ATTACKER], timeout=120)
         self._run(["docker", "exec", self.attacker, "rm", "-f", APK_IN_ATTACKER])
         if installed.rc != 0:
@@ -120,14 +140,17 @@ class AndroidRuntime:
                           f"ADB_VENDOR_KEYS={self._adb_key_path}", "adb", "-s",
                           f"{self.ip}:5555", *args], timeout=timeout)
 
-    def install_guard(self, attacker_ip, allowed_ports, *, runtime=None, replace=False):
-        self._guard = (attacker_ip, [(ip, list(ports)) for ip, ports in allowed_ports], runtime)
+    def install_guard(self, attacker_ip, allowed_ports, *, runtime=None, dns_server=None,
+                      replace=False):
+        self._guard = (attacker_ip, [(ip, list(ports)) for ip, ports in allowed_ports],
+                       runtime, dns_server)
         command = ["run", "--rm", "--network", f"container:{self.container}"]
         if runtime:
             command += ["--runtime", runtime]
         command += ["--cap-drop=ALL", "--cap-add=NET_ADMIN", "-i", self.guard_image,
                     "nft", "-f", "-"]
         rules = android_guard_ruleset("hc_android", attacker_ip, allowed_ports,
+                                      dns_server=dns_server,
                                       replace=replace).encode("utf-8")
         self._docker(*command, input=rules)
 
@@ -143,13 +166,21 @@ class AndroidRuntime:
 
         internet = tcp(*internet_canary)
         dns = self.adb(["shell", "toybox", "nslookup", public_name], timeout=8)
-        dns_resolved = dns.rc == 0 and public_name.lower() in (dns.out or "").lower()
+        dns_resolved = bool(re.search(r"\bAddress(?:\s+\d+)?:\s*[0-9a-fA-F:]+",
+                                      dns.out or ""))
         out_scope = tcp(out_of_scope_ip, 443)
         assertions = [
             assertion("android_guest_internet_dropped", "the Android guest cannot reach the internet", not internet),
             assertion("android_guest_public_dns_refused", "the Android guest cannot resolve public DNS", not dns_resolved),
             assertion("android_guest_out_of_scope_dropped", "the Android guest cannot reach an out-of-scope host", not out_scope),
         ]
+        if engagement.pinned:
+            host, address = next(iter(engagement.pinned.items()))
+            resolved = self.adb(["shell", "toybox", "nslookup", host], timeout=8)
+            assertions.append(assertion(
+                "android_guest_scoped_dns_pinned",
+                "the Android guest resolves a scoped host only to its pinned address",
+                resolved.rc == 0 and str(address) in (resolved.out or "")))
         allowed = [(str(ip), port) for ip in engagement.pinned.values()
                    for port in scope.ports_for(engagement, ip)]
         if allowed:
@@ -206,13 +237,15 @@ class AndroidRuntime:
         return digest.rc == 0 and bool(fields) and fields[0] == self.inventory["sha256"]
 
     def _recreate(self):
-        apk_path, ip, attacker_ip, runtime = self._launch
+        apk_path, ip, attacker_ip, runtime, dns_server, static_depth = self._launch
         guard = self._guard
         self._run(["docker", "rm", "-f", self.container])
         self.ip = None
-        self.start(apk_path, ip, attacker_ip, runtime=runtime)
+        self.start(apk_path, ip, attacker_ip, runtime=runtime, dns_server=dns_server,
+                   static_depth=static_depth)
         if guard:
-            self.install_guard(guard[0], guard[1], runtime=guard[2], replace=True)
+            self.install_guard(guard[0], guard[1], runtime=guard[2],
+                               dns_server=guard[3], replace=True)
 
     def reset_app(self):
         if not self.inventory:

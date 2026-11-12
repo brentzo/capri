@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Android APK inventory and controlled deep-link adapter tests (HC-MOB-01)."""
 import os
+import struct
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -10,8 +11,10 @@ from unittest.mock import patch
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from harness.mobile.apk import MobileError, inventory_manifest, inspect_apk  # noqa: E402
+from harness.mobile.code_analysis import parse_semgrep  # noqa: E402
 from harness.mobile.probe import CALLBACK_POLL_S, CALLBACK_WAIT_S, DeepLinkProbe  # noqa: E402
 from harness.mobile.recon import mobile_recon  # noqa: E402
+from harness.mobile.resolver import answer as dns_answer  # noqa: E402
 from harness.mobile.sandbox import (ANDROID_EMULATOR_IMAGE,
                                     android_guard_ruleset)  # noqa: E402
 from harness.substrate import contract, scope  # noqa: E402
@@ -244,7 +247,8 @@ def test_mobile_canary_variants_keep_the_same_deep_link_with_different_policy_fl
 def test_mobile_only_engagement_is_valid_and_scope_uses_a_virtual_target():
     eng, errors = contract.parse(MOBILE_CONTRACT)
     assert not errors, errors
-    assert eng.android_app == {"apk": "tests/fixtures/mobile/canary.apk"}
+    assert eng.android_app == {"apk": "tests/fixtures/mobile/canary.apk",
+                               "static_depth": "manifest"}
     assert scope.scope_validate(eng, "mobile-app", 0, kind="mobile") == ("allow", None)
     assert scope.scope_validate(eng, "10.90.0.4", 8080, kind="mobile")[0] == "deny"
 
@@ -287,11 +291,72 @@ def test_an_adapter_cannot_widen_scope_for_the_mobile_tool_or_any_other():
     assert allowed.get("disposition") != "deny" and len(calls) == 1, allowed
 
 
+def test_mobile_scope_denial_is_audited_through_dispatch():
+    from harness.dispatch import ProbeContext
+    eng, errors = contract.parse(MOBILE_CONTRACT)
+    assert not errors, errors
+    calls = []
+
+    def adapter(request):
+        calls.append(request)
+        return {"status": "ok"}
+
+    with tempfile.TemporaryDirectory() as root:
+        conn = db.connect()
+        dispatcher = Dispatcher(conn, blobstore.BlobStore(root), eng,
+                                {"mobile": adapter},
+                                ratelimit.RateLimiter(1000, now=lambda: 0.0))
+        ctx = ProbeContext(role="operator", pair_asset="mobile-app",
+                           technique_id="KB-MOBILE-LINK-DEEPLINK-001",
+                           technique_version="1.0.0", blast_tier=1)
+        reply = dispatcher.dispatch({"tool": "mobile", "target": "10.90.0.4",
+                                     "port": 8080, "args": {}}, ctx)
+        rows = conn.execute("SELECT decision, reason FROM audit_log WHERE category='dispatch_denial'").fetchall()
+    assert reply == {"disposition": "deny", "reason": "out_of_scope"}
+    assert not calls
+    assert len(rows) == 1 and rows[0]["decision"] == "out_of_scope"
+    assert rows[0]["reason"] == "mobile_target_not_authorized"
+
+
 def test_mobile_contract_rejects_unsupported_or_empty_apk_declarations():
     for decl in ("android_app: {apk: ''}", "android_app: {apk: a.apk, shell: true}"):
         text = MOBILE_CONTRACT.replace("android_app: { apk: tests/fixtures/mobile/canary.apk }", decl)
         _, errors = contract.parse(text)
         assert any("engagement.android_app" in error for error in errors), errors
+
+
+def test_code_depth_is_opt_in_and_rejects_unknown_values():
+    text = MOBILE_CONTRACT.replace("apk: tests/fixtures/mobile/canary.apk",
+                                   "apk: tests/fixtures/mobile/canary.apk, static_depth: code")
+    eng, errors = contract.parse(text)
+    assert not errors, errors
+    assert eng.android_app["static_depth"] == "code"
+    invalid = text.replace("static_depth: code", "static_depth: decompile-everything")
+    _, errors = contract.parse(invalid)
+    assert any("static_depth" in error for error in errors)
+
+
+def test_code_advisories_discard_match_text_that_may_contain_secrets():
+    result = parse_semgrep('{"results":[{"check_id":"mobile.hardcoded-secret",'
+                           '"path":"/tmp/out/App.java","start":{"line":12},'
+                           '"extra":{"lines":"TOKEN = super-secret-value",'
+                           '"metadata":{"title":"Possible hard-coded credential",'
+                           '"confidence":"low"}}}]}')[0]
+    assert result["rule_id"] == "code-hardcoded-secret"
+    assert result["locations"] == ["/tmp/out/App.java:12"]
+    assert "super-secret-value" not in repr(result)
+
+
+def test_webview_card_is_not_run_without_code_analysis_and_not_applicable_without_a_bridge():
+    inventory = inventory_manifest(NO_SURFACE)
+    assessment = mobile_recon(db.connect(), "webview-manifest-only",
+                              {**inventory, "sha256": "c" * 64})[1]
+    webview = "KB-MOBILE-IPC-WEBVIEW-001"
+    assert {item["card"] for item in assessment["not_run"]} == {webview}
+    completed = mobile_recon(db.connect(), "webview-no-bridge",
+                             {**inventory, "sha256": "d" * 64, "static_depth": "code",
+                              "code_status": "complete", "code_advisories": []})[1]
+    assert {item["card"] for item in completed["not_applicable"]} >= {webview}
 
 
 def test_mobile_recon_has_one_app_asset_and_one_asset_per_manifest_link():
@@ -308,14 +373,42 @@ def test_mobile_recon_has_one_app_asset_and_one_asset_per_manifest_link():
 
 def test_android_guard_drops_unscoped_egress_and_only_allows_attacker_adb_ingress():
     rules = android_guard_ruleset("hc_android", "10.90.0.2",
-                                  [("10.90.0.8", [443, 8443]), ("10.90.0.3", [8080])])
+                                  [("10.90.0.8", [443, 8443]), ("10.90.0.3", [8080])],
+                                  dns_server="10.90.0.2")
     assert "policy drop" in rules
     assert "ip daddr 10.90.0.8 tcp dport { 443, 8443 } accept" in rules
     assert "ip daddr 10.90.0.3 tcp dport { 8080 } accept" in rules
     assert "ip saddr 10.90.0.2 tcp dport 5555 accept" in rules
+    assert "ip daddr 10.90.0.2 udp dport 53 accept" in rules
     assert "ip saddr 10.90.0.4" not in rules
     replacement = android_guard_ruleset("hc_android", "10.90.0.2", [], replace=True)
     assert replacement.startswith("delete table inet hc_android\n")
+
+
+def test_in_range_resolver_answers_only_pinned_a_records():
+    labels = b"".join(bytes([len(label)]) + label.encode("ascii")
+                     for label in "api.example.test".split(".")) + b"\0"
+    query = struct.pack("!HHHHHH", 17, 0x0100, 1, 0, 0, 0) + labels + struct.pack("!HH", 1, 1)
+    scoped = dns_answer(query, {"api.example.test": "10.90.0.8"})
+    assert struct.unpack_from("!HHHHHH", scoped)[3] == 1
+    assert scoped.endswith(bytes([10, 90, 0, 8]))
+    unknown_query = query.replace(b"api", b"www")
+    denied = dns_answer(unknown_query, {"api.example.test": "10.90.0.8"})
+    assert struct.unpack_from("!H", denied, 2)[0] & 0xF == 3
+
+
+def test_provisioning_starts_resolver_with_only_the_pinned_map_and_mobile_source():
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        return RunResult(0, "", "")
+
+    runtime = DockerSandbox(run=run).mobile
+    runtime.attacker = "attacker"
+    runtime.install_resolver({"api.example.test": "10.90.0.8"}, "10.90.0.4")
+    assert calls[0][:2] == ["docker", "cp"]
+    assert calls[1][-2:] == ['{"api.example.test": "10.90.0.8"}', "10.90.0.4"]
 
 
 def test_android_provision_fails_closed_before_docker_on_unsupported_host():
@@ -670,6 +763,40 @@ def test_inspect_apk_copies_hashes_and_removes_the_temporary_container_copy():
     assert commands[-1][-3:] == ["rm", "-f", "/tmp/hc-mobile.apk"]
 
 
+def test_code_depth_decompiles_inside_attacker_and_returns_only_redacted_findings():
+    calls = []
+    semgrep = ('{"results":[{"check_id":"mobile.hardcoded-secret",'
+               '"path":"/tmp/hc-mobile-decompiled/Main.java","start":{"line":7},'
+               '"extra":{"lines":"token = leaked-secret-value",'
+               '"metadata":{"title":"Possible hard-coded credential",'
+               '"confidence":"low"}}}]}')
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        if "apkanalyzer" in argv:
+            return RunResult(0, MANIFEST, "")
+        if "keytool" in argv:
+            return RunResult(0, "SHA256: 11:22", "")
+        if "semgrep" in argv:
+            return RunResult(0, semgrep, "")
+        return RunResult(0, "", "")
+
+    fd, path = tempfile.mkstemp(suffix=".apk")
+    try:
+        with os.fdopen(fd, "wb") as apk:
+            apk.write(b"APK")
+        result = inspect_apk(path, "attacker", run=run, cleanup=False,
+                             static_depth="code")
+    finally:
+        os.unlink(path)
+    assert result["code_status"] == "complete"
+    assert result["code_advisories"][0]["rule_id"] == "code-hardcoded-secret"
+    assert "leaked-secret-value" not in repr(result)
+    assert any("jadx" in argv for argv in calls)
+    assert any("semgrep" in argv for argv in calls)
+    assert calls[-1][-3:] == ["rm", "-rf", "/tmp/hc-mobile-decompiled"]
+
+
 def test_deep_link_probe_uses_fixed_intent_and_only_accepts_nonce_from_expected_source():
     invocations = []
     result_ref = {}
@@ -816,16 +943,41 @@ def test_android_guard_and_public_adb_key_precede_apk_inspection_and_install():
             patch("harness.mobile.sandbox.inspect_apk",
                   side_effect=lambda *args, **kwargs: calls.append(("APK_INSPECT", {})) or
                   {**inventory_manifest(MANIFEST), "sha256": "c" * 64}):
-        sandbox.mobile.start("canary.apk", "10.90.0.4", "10.90.0.2")
+        sandbox.mobile.start("canary.apk", "10.90.0.4", "10.90.0.2",
+                             dns_server="10.90.0.2")
 
     assert read_key.call_args.args[1].endswith(".pub")
     emulator_run = next(argv for argv, _ in calls
                         if isinstance(argv, list) and "ADBKEY_PUB=public-adb-key" in argv)
     assert "ADBKEY=public-adb-key" not in emulator_run
+    assert emulator_run[emulator_run.index("--dns") + 1] == "10.90.0.2"
     guard_index = next(i for i, (argv, _) in enumerate(calls)
                        if isinstance(argv, list) and "nft" in argv)
     inspect_index = next(i for i, (argv, _) in enumerate(calls) if argv == "APK_INSPECT")
     assert guard_index < inspect_index
+
+
+def test_android_guard_proof_requires_scoped_dns_to_resolve_to_its_pinned_ip():
+    eng, errors = contract.parse(MOBILE_CONTRACT)
+    assert not errors, errors
+    eng.pinned = {"api.example.test": "10.90.0.8"}
+
+    class ResolverProbe:
+        def __call__(self, argv, **kwargs):
+            if "nslookup" in argv:
+                host = argv[-1]
+                if host == "api.example.test":
+                    return RunResult(0, f"Name: {host}\nAddress: 10.90.0.8", "")
+                return RunResult(1, "", "")
+            return RunResult(1, "", "")
+
+    runtime = DockerSandbox(run=ResolverProbe()).mobile
+    runtime.ip, runtime._adb_key_path = "10.90.0.4", "/tmp/adb-key"
+    proof = runtime.guard_proof(eng, internet_canary=("198.51.100.1", 443),
+                                public_name="example.org", out_of_scope_ip="10.90.0.1")
+    assertion = next(item for item in proof["assertions"]
+                     if item["name"] == "android_guest_scoped_dns_pinned")
+    assert assertion["ok"] is True
 
 
 def test_baseline_restore_fails_when_pm_clear_reports_failure():
@@ -839,6 +991,25 @@ def test_baseline_restore_fails_when_pm_clear_reports_failure():
         assert "clean baseline" in str(exc)
     else:
         raise AssertionError("failed Android reset was treated as successful")
+
+
+def test_android_kill_switch_revives_the_emulator_and_resets_app_data():
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        if argv[:3] == ["docker", "inspect", "-f"]:
+            return RunResult(0, "paused", "")
+        return RunResult(0, "Success", "")
+
+    sandbox = DockerSandbox(run=run)
+    sandbox.mobile.ip = "10.90.0.4"
+    sandbox.mobile._adb_key_path = "/tmp/adb-key"
+    sandbox.mobile.inventory = {"package": "com.example.canary"}
+    assert sandbox.mobile.reset_after_kill() is True
+    assert ["docker", "unpause", sandbox.mobile.container] in calls
+    assert any(command[-4:] == ["shell", "pm", "clear", "com.example.canary"]
+               for command in calls)
 
 
 def main():

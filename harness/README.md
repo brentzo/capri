@@ -817,3 +817,7 @@ The vulnerable and patched canary app sources are under
 with SDK Platform `android-30`, Build-Tools `30.0.3`, and JDK 17.
 The APKs are generated locally and are not checked in.
 The other mobile technique cards remain unrunnable in the current slice.
+Mobile APKs can opt into code-level static assessment with `static_depth: code`; pinned JADX and Semgrep run only in the attacker container, and the report contains redacted advisory metadata rather than matched source.
+The Android guest uses a non-recursive in-range resolver that answers only contract-pinned names and refuses every other name.
+Grade recorded mobile runs with `python tools/eval_mobile.py <records.json>`.
+The CI suite tests grading and the fake-device engagement path; each active card also needs a Linux/KVM run against its vulnerable, patched, and distractor fixtures with zero scope events before release.

@@ -88,4 +88,17 @@ RUN set -eux; \
 # (installed above); the harness copies nothing at runtime, so it is baked in here.
 COPY crawl.py /opt/hc/crawl.py
 
+# Optional manifest-plus-code Android assessment runs only when static_depth is "code".
+# JADX and Semgrep stay in the attacker container and never send decompiled source outward.
+ARG JADX_VERSION=1.5.6
+ARG JADX_SHA256=545ea2be9c242511bc145755cf4bda2485ade42966e096f8b4d3da2a230e8974
+ARG SEMGREP_VERSION=1.180.0
+RUN set -eux; \
+    wget -qO /tmp/jadx.zip "https://github.com/skylot/jadx/releases/download/v${JADX_VERSION}/jadx-${JADX_VERSION}.zip"; \
+    echo "${JADX_SHA256}  /tmp/jadx.zip" | sha256sum -c -; \
+    mkdir -p /opt/jadx; unzip -q /tmp/jadx.zip -d /opt/jadx; \
+    ln -s /opt/jadx/bin/jadx /usr/local/bin/jadx; rm /tmp/jadx.zip; \
+    pip install --no-cache-dir "semgrep==${SEMGREP_VERSION}"
+COPY mobile-rules.yaml /opt/hc/mobile-rules.yaml
+
 CMD ["sleep", "infinity"]

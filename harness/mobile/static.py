@@ -13,11 +13,13 @@ CARD_EXPORTED = "KB-MOBILE-COMP-EXPORTED-001"
 CARD_PROVIDER = "KB-MOBILE-COMP-PROVIDER-SQLI-001"
 CARD_BACKUP = "KB-MOBILE-STORAGE-BACKUP-001"
 CARD_CLEARTEXT = "KB-MOBILE-NET-CLEARTEXT-001"
+CARD_WEBVIEW = "KB-MOBILE-IPC-WEBVIEW-001"
 
 # Surfaces this assessment never examines; listed so a quiet report is not read as clean.
 NOT_ASSESSED = (
     "screens and business workflows behind the declared entry points",
-    "code-level issues such as cryptography, embedded secrets and bundled libraries",
+    "code-level issues such as cryptography, embedded secrets and WebView bridges",
+    "bundled library versions and vulnerability reachability",
     "authentication and session behavior",
     "runtime behavior beyond the techniques recorded in coverage",
 )
@@ -133,6 +135,8 @@ def assess(inventory):
             [link["component"] for link in inventory["deep_links"]],
         )
 
+    findings.extend(inventory.get("code_advisories", []))
+
     applicable = {
         CARD_DEEPLINK: bool(inventory["deep_links"]),
         CARD_EXPORTED: bool(exported_components(inventory)),
@@ -145,17 +149,34 @@ def assess(inventory):
         CARD_PROVIDER: "no component is exported",
         CARD_BACKUP: "the manifest disallows backup",
     }
+    code_status = inventory.get("code_status", "not_run")
+    has_webview_bridge = any(CARD_WEBVIEW in item.get("related_cards", [])
+                             for item in inventory.get("code_advisories", []))
+    not_applicable = [
+        {"card": card, "reason": reasons[card]}
+        for card, ok in applicable.items()
+        if not ok
+    ]
+    not_run = []
+    if inventory.get("static_depth", "manifest") != "code":
+        not_run.append({"card": CARD_WEBVIEW, "reason": "static_depth is manifest"})
+    elif code_status != "complete":
+        not_run.append({"card": CARD_WEBVIEW,
+                        "reason": inventory.get("code_reason") or "code analysis was incomplete"})
+    elif not has_webview_bridge:
+        not_applicable.append({"card": CARD_WEBVIEW,
+                               "reason": "code-level analysis found no JavaScript bridge"})
+    not_assessed = list(NOT_ASSESSED)
+    if code_status == "complete":
+        not_assessed.remove("code-level issues such as cryptography, embedded secrets and WebView bridges")
     return {
         "advisory_findings": findings,
         "coverage": {
             "manifest": "complete",
-            "code": "not_run",
-            "code_reason": "static_depth is manifest",
+            "code": code_status,
+            "code_reason": inventory.get("code_reason", "static_depth is manifest"),
         },
-        "not_applicable": [
-            {"card": card, "reason": reasons[card]}
-            for card, ok in applicable.items()
-            if not ok
-        ],
-        "not_assessed": list(NOT_ASSESSED),
+        "not_applicable": not_applicable,
+        "not_run": not_run,
+        "not_assessed": not_assessed,
     }

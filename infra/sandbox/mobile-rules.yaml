@@ -1,0 +1,31 @@
+rules:
+  - id: webview-bridge
+    languages: [java]
+    severity: WARNING
+    message: WebView exposes a JavaScript interface
+    metadata:
+      title: WebView exposes a JavaScript interface
+      confidence: high
+    pattern: $WEBVIEW.addJavascriptInterface(...)
+
+  - id: weak-crypto
+    languages: [java]
+    severity: WARNING
+    message: Weak or unsafe cryptographic primitive
+    metadata:
+      title: Weak or unsafe cryptographic primitive
+      confidence: medium
+    pattern-either:
+      - pattern: MessageDigest.getInstance("MD5")
+      - pattern: MessageDigest.getInstance("SHA-1")
+      - pattern-regex: 'Cipher\.getInstance\("AES/ECB/[^\"]+"\)'
+
+  - id: hardcoded-secret
+    languages: [java]
+    severity: WARNING
+    message: Possible hard-coded credential
+    metadata:
+      title: Possible hard-coded credential
+      confidence: low
+    patterns:
+      - pattern-regex: (?i)(api[_-]?key|secret|token|password)\s*=\s*["'][^"'\r\n]{8,}["']

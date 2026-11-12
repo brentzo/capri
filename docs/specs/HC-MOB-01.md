@@ -113,6 +113,21 @@ The vulnerable run must confirm `KB-MOBILE-LINK-DEEPLINK-001`; the patched run m
 Both runs must pass the emulator egress proofs and independent Verifier flow.
 The live check requires Linux Docker with KVM and the existing Bifrost model-plane configuration.
 
+## Mobile evaluation release gate
+
+Every active mobile card must confirm on its vulnerable fixture and remain silent on its patched fixture and distractors for each recorded run.
+Run K repetitions of each pair on a Linux Docker host with KVM, then grade the records with `python tools/eval_mobile.py <records.json>`.
+The command exits nonzero for any scope or egress event.
+Keep the raw records and summary with the release evidence; CI covers deterministic grading and the fake-device engagement path, while this live gate proves emulator behavior.
+Do not promote a card to `active` until the gate passes with zero scope events.
+
+## Optional code-level static assessment
+
+`engagement.android_app.static_depth` defaults to `manifest`; `code` opts into decompilation with the checksum-pinned JADX release and Capri's pinned Semgrep rules.
+Both tools run in the attacker container against the temporary APK copy and decompiled directory, which are removed after analysis.
+Only rule ids, confidence, related card ids, MASVS ids, and source locations leave the scanner path; match text and secret candidates are discarded.
+Decompilation or scanner failure marks code coverage `partial` and does not stop the manifest assessment.
+
 ## Dependency and package policy
 
 The Google emulator image is pulled by immutable digest and never by `latest`.
@@ -193,6 +208,9 @@ Mobile-specific APK, emulator lifecycle, egress policy, protocol, capability, co
 The shared Docker range and engagement loop call the mobile package at integration points, while retaining web behavior in their existing modules.
 The runtime integration is in `harness/sandbox/docker.py`, `harness/dispatch.py`, `harness/loop.py`, `harness/roleio.py`, `harness/substrate/contract.py`, and `tools/run_engagement.py`.
 Package build pins live in `infra/sandbox/Dockerfile.attacker`.
-`tests/test_mobile.py` covers manifest inventory, contract and scope authorization, deep-link construction, dispatch through independent verification, egress policy, and unsupported-host behavior.
+`tests/test_mobile.py` covers manifest inventory, contract and scope authorization, deep-link construction, dispatch through independent verification, egress policy, scope-denial auditing, kill-switch reset, and unsupported-host behavior.
+`tools/eval_mobile.py` grades repeated recorded mobile runs against `eval/manifests/mobile-local-ipc.yaml`; the Linux/KVM vulnerable/patched fixture run is the release gate for each active mobile card.
+`harness/mobile/resolver.py` answers only pinned A records inside the attacker network namespace, and its proof is required before the range becomes active.
+`harness/mobile/code_analysis.py` performs optional JADX and Semgrep assessment and removes the temporary decompilation tree.
 Canary source and a pinned-toolchain build script live in `tests/fixtures/mobile/canary/` and `tools/build_mobile_canaries.sh`.
 The generated APKs and live Linux/KVM results are not yet available from this Windows host.

@@ -1,12 +1,12 @@
 """Validation for the mobile target declaration in an engagement contract."""
 
-ANDROID_APP_KEYS = {"apk"}
+ANDROID_APP_KEYS = {"apk", "static_depth"}
 
 
 def normalize_android_app(app):
     if not isinstance(app, dict):
         return None
-    return {"apk": app.get("apk")}
+    return {"apk": app.get("apk"), "static_depth": app.get("static_depth", "manifest")}
 
 
 def validate_android_app(app, errors):
@@ -22,3 +22,5 @@ def validate_android_app(app, errors):
     apk = app.get("apk")
     if not isinstance(apk, str) or not apk.strip():
         errors.append("engagement.android_app.apk must be a non-empty path string")
+    if app.get("static_depth", "manifest") not in ("manifest", "code"):
+        errors.append("engagement.android_app.static_depth must be manifest or code")
