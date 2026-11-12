@@ -73,6 +73,9 @@ The `apkanalyzer manifest print` command provides decoded manifest XML, and Pyth
 ADB uses Google's Android SDK Platform-Tools `37.0.1`, checksum-pinned to `d230f13842f60f782a8645f9c813f8f845bf36089ea7289f28c48f17979313f1`.
 Docker Engine is the only host-side runtime dependency; the existing pinned nftables guard image continues to install network policy.
 
+The canary source targets Android API 30 and builds with Android SDK Platform `android-30`, Build-Tools `30.0.3`, and JDK 17.
+It adds no runtime dependency to the harness or attacker image.
+
 ## Inventory and probe algorithms
 
 APK validation rejects a non-file, a ZIP without `AndroidManifest.xml`, an analyzer error, malformed XML, or a manifest without a valid package name.
@@ -95,6 +98,20 @@ The app's callback is accepted only when the collaborator log contains both the 
 7. For verification, clear app data and re-run the exact fixed reproduction step with a verifier-owned nonce.
 8. Confirm only when the collaborator observes that nonce from the emulator's pinned range address; otherwise retain attempted or inconclusive coverage.
 9. Kill or teardown stops both emulator and other range containers and removes temporary APK copies and run state.
+
+## Canary validation
+
+`tests/fixtures/mobile/canary/` contains one minimal app with vulnerable and patched manifest configurations.
+The vulnerable variant fetches an arbitrary HTTP or HTTPS URL from the deep-link `url` parameter; the patched variant accepts only HTTPS to `api.capri.test`.
+Both variants expose the same `capri://open/fetch` link, so the same deterministic probe should confirm only the vulnerable variant.
+
+Install SDK Platform `android-30` and Build-Tools `30.0.3` with `sdkmanager`, then run `bash tools/build_mobile_canaries.sh` with JDK 17 on a Linux host.
+For example, `sdkmanager "platforms;android-30" "build-tools;30.0.3"` installs the pinned SDK packages after the operator accepts their Android SDK licenses.
+The script writes signed APKs to the ignored `build/mobile-canary/` directory; generated APKs are not committed.
+Set `HC_ENGAGEMENT_CONTRACT` to an APK-only contract for each generated APK and run `python3 tools/run_engagement.py` separately for vulnerable and patched variants.
+The vulnerable run must confirm `KB-MOBILE-LINK-DEEPLINK-001`; the patched run must produce no confirmed finding while recording the deep-link check as attempted.
+Both runs must pass the emulator egress proofs and independent Verifier flow.
+The live check requires Linux Docker with KVM and the existing Bifrost model-plane configuration.
 
 ## Dependency and package policy
 
@@ -155,8 +172,8 @@ The deterministic harness signal, rather than either model's narrative, decides 
 ## Test decisions
 
 Public behavior is tested through the engagement contract, the injected Docker and ADB command runners, decoded APK manifest fixtures, and the normal dispatch-to-report flow.
-The normal test suite does not require KVM; it verifies fail-closed behavior when the device or control path is unavailable.
-A separate Linux/KVM live run exercises APK installation, manifest inventory, private ADB, the range-local callback, and independent reproduction.
+The normal test suite does not require KVM; it verifies fail-closed behavior when the device or control path is unavailable and validates the canary manifests.
+A Linux/KVM live run with both generated APKs is the release gate for canary validation.
 
 The callback must be absent from a controlled deep link and present only for the vulnerable fixture route.
 Missing KVM, emulator boot failure, ADB failure, malformed APK, and absent deep links must produce explicit errors or coverage statuses rather than a clean result.
@@ -175,4 +192,5 @@ Missing KVM, emulator boot failure, ADB failure, malformed APK, and absent deep 
 Implemented in `harness/mobile.py`, `harness/sandbox/docker.py`, `harness/dispatch.py`, `harness/recon.py`, and `tools/run_engagement.py`.
 Package build pins live in `infra/sandbox/Dockerfile.attacker`.
 `tests/test_mobile.py` covers manifest inventory, contract and scope authorization, deep-link construction, dispatch through independent verification, egress policy, and unsupported-host behavior.
-No compiled practice APK or Linux/KVM live-run evidence is included in this slice.
+Canary source and a pinned-toolchain build script live in `tests/fixtures/mobile/canary/` and `tools/build_mobile_canaries.sh`.
+The generated APKs and live Linux/KVM results are not yet available from this Windows host.

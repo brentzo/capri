@@ -1,0 +1,21 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.capri.mobile.canary">
+    <uses-sdk android:minSdkVersion="23" android:targetSdkVersion="30" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <application
+        android:label="Capri mobile canary"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar"
+        android:usesCleartextTraffic="true">
+        <meta-data
+            android:name="canary.vulnerable"
+            android:value="@VULNERABLE@" />
+        <activity android:name=".MainActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="capri" android:host="open" android:path="/fetch" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

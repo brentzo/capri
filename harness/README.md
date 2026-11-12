@@ -810,5 +810,8 @@ APK analysis uses Android SDK Command-line Tools `15859902`, and device control
 uses Platform-Tools `37.0.1`; exact checksums and the probe flow are recorded in
 `docs/specs/HC-MOB-01.md`.
 Active runtime assessment requires Linux Docker with KVM.
-The current slice does not include a bundled practice APK or make the other
-mobile technique cards runnable.
+The vulnerable and patched canary app sources are under
+`tests/fixtures/mobile/canary/`; `tools/build_mobile_canaries.sh` builds them
+with SDK Platform `android-30`, Build-Tools `30.0.3`, and JDK 17.
+The APKs are generated locally and are not checked in.
+The other mobile technique cards remain unrunnable in the current slice.

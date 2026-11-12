@@ -73,6 +73,24 @@ def test_manifest_inventory_skips_link_data_that_could_escape_the_fixed_intent()
     assert inventory_manifest(bad)["deep_links"] == []
 
 
+def test_mobile_canary_variants_keep_the_same_deep_link_with_different_policy_flags():
+    path = os.path.join(ROOT, "tests", "fixtures", "mobile", "canary",
+                        "AndroidManifest.xml.in")
+    with open(path, encoding="utf-8") as source:
+        template = source.read()
+    variants = []
+    for vulnerable in ("true", "false"):
+        manifest = template.replace("@VULNERABLE@", vulnerable)
+        inventory = inventory_manifest(manifest)
+        variants.append((inventory, vulnerable))
+    assert variants[0][0]["package"] == variants[1][0]["package"]
+    assert variants[0][0]["deep_links"] == variants[1][0]["deep_links"]
+    assert variants[0][1] == "true" and variants[1][1] == "false"
+    assert variants[0][0]["deep_links"] == [{
+        "id": "link-0001", "component": "com.capri.mobile.canary.MainActivity",
+        "filter_index": 0, "scheme": "capri", "host": "open", "path": "/fetch"}]
+
+
 def test_mobile_only_engagement_is_valid_and_scope_uses_a_virtual_target():
     eng, errors = contract.parse(MOBILE_CONTRACT)
     assert not errors, errors
