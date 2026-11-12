@@ -20,10 +20,8 @@ the live path uses the default subprocess runner and works on Linux and Docker D
 """
 import ipaddress
 import io
-import os
 import posixpath
 import socket
-import sys
 import tarfile
 import time
 
@@ -33,7 +31,7 @@ from harness.sandbox.base import (
     default_run,
     guard_proof_result,
 )
-from harness.mobile import ANDROID_EMULATOR_IMAGE, APK_IN_ATTACKER, MobileError, inspect_apk
+from harness.mobile.sandbox import AndroidRuntime
 from harness.store.db import now
 from harness.substrate import scope
 
@@ -105,23 +103,6 @@ def guard_ruleset(table, pinned_ports):
     return "\n".join(lines)
 
 
-def android_guard_ruleset(table, attacker_ip, allowed_ports, *, replace=False):
-    """Fence emulator egress to scoped APIs/collaborator and ADB ingress to the attacker."""
-    lines = ([f"delete table inet {table}"] if replace else []) + [f"table inet {table} {{",
-             "\tchain out {",
-             "\t\ttype filter hook output priority 0; policy drop;",
-             '\t\toifname "lo" accept',
-             "\t\tct state established,related accept"]
-    for ip, ports in allowed_ports:
-        ports = sorted({int(port) for port in ports})
-        if ports:
-            lines.append(f"\t\tip daddr {ip} tcp dport {{ {', '.join(map(str, ports))} }} accept")
-    lines += ["\t}", "\tchain input {", "\t\ttype filter hook input priority 0; policy drop;",
-              '\t\tiifname "lo" accept', "\t\tct state established,related accept",
-              f"\t\tip saddr {attacker_ip} tcp dport 5555 accept", "\t}", "}", ""]
-    return "\n".join(lines)
-
-
 class DockerSandbox(Sandbox):
     """A range built from Docker containers plus an nft scope-guard helper.
 
@@ -166,10 +147,10 @@ class DockerSandbox(Sandbox):
         self._clock = clock
         self._forensics = []        # forensics images a kill left behind, cleared on teardown
         self.attacker = f"{network}-attacker"
-        self.android = f"{network}-android"
-        self.android_ip = None
-        self.mobile_inventory = None
-        self._adb_key_path = None
+        self.mobile = AndroidRuntime(run=self._run, docker=self._docker,
+                                     exec_attacker=self._exec_attacker,
+                                     read_file=self._read_file, network=network,
+                                     attacker=self.attacker, guard_image=guard_image)
         self.guard_table = "hc_guard"
         self._runtime = None        # a hardened OCI runtime (gVisor runsc) when the host has one
         self.hardened = False
@@ -207,66 +188,6 @@ class DockerSandbox(Sandbox):
     def _exec_attacker(self, *args, input=None):
         return self._run(["docker", "exec", self.attacker, *args], input=input)
 
-    def _adb(self, args, *, timeout=30):
-        if not self.android_ip or not self._adb_key_path:
-            raise SandboxError("Android emulator control is unavailable")
-        return self._run(["docker", "exec", self.attacker, "env",
-                          f"ADB_VENDOR_KEYS={self._adb_key_path}", "adb", "-s",
-                          f"{self.android_ip}:5555", *args], timeout=timeout)
-
-    def _start_android(self, apk_path, ip, attacker_ip):
-        """Start the pinned emulator, create a run-local ADB identity, install and inventory APK."""
-        self._adb_key_path = f"/tmp/hc-adbkey-{self.network}"
-        keygen = self._exec_attacker("adb", "keygen", self._adb_key_path)
-        if keygen.rc != 0:
-            raise SandboxError("could not create a run-local ADB key")
-        adb_key = self._read_file(self.attacker, self._adb_key_path + ".pub")
-        if not adb_key:
-            raise SandboxError("run-local ADB public key was not created")
-
-        self._docker("run", "-d", "--name", self.android, "--network", self.network,
-                     "--ip", ip, "--device", "/dev/kvm", "-e", f"ADBKEY_PUB={adb_key}",
-                     "--tmpfs", "/data:rw,nosuid,size=1g", ANDROID_EMULATOR_IMAGE)
-
-        self.android_ip = ip
-        connected = self._run(["docker", "exec", self.attacker, "env",
-                               f"ADB_VENDOR_KEYS={self._adb_key_path}", "adb",
-                               "connect", f"{ip}:5555"], timeout=30)
-        if connected.rc != 0:
-            raise SandboxError("could not connect to the private Android ADB endpoint")
-        ready = self._adb(["wait-for-device"], timeout=120)
-        if ready.rc != 0:
-            raise SandboxError("Android emulator did not become ready through private ADB")
-        deadline = time.monotonic() + 120
-        while True:
-            boot = self._adb(["shell", "getprop", "sys.boot_completed"], timeout=10)
-            if boot.rc == 0 and boot.out.strip() == "1":
-                break
-            if time.monotonic() >= deadline:
-                raise SandboxError("Android emulator boot timed out")
-            time.sleep(1)
-
-        self._install_android_guard(attacker_ip, [])
-        self.mobile_inventory = inspect_apk(apk_path, self.attacker, run=self._run, cleanup=False)
-        installed = self._adb(["install", APK_IN_ATTACKER], timeout=120)
-        self._run(["docker", "exec", self.attacker, "rm", "-f", APK_IN_ATTACKER])
-        if installed.rc != 0:
-            raise SandboxError("Android APK installation failed")
-        package = self.mobile_inventory["package"]
-        present = self._adb(["shell", "pm", "path", package], timeout=15)
-        if present.rc != 0 or "package:" not in (present.out or ""):
-            raise SandboxError("installed Android package could not be verified")
-
-    def _install_android_guard(self, attacker_ip, allowed_ports, *, replace=False):
-        command = ["run", "--rm", "--network", f"container:{self.android}"]
-        if self._runtime:
-            command += ["--runtime", self._runtime]
-        command += ["--cap-drop=ALL", "--cap-add=NET_ADMIN", "-i", self.guard_image,
-                    "nft", "-f", "-"]
-        rules = android_guard_ruleset("hc_android", attacker_ip, allowed_ports,
-                                      replace=replace).encode("utf-8")
-        self._docker(*command, input=rules)
-
     # --- §10 interface --------------------------------------------------
     def provision(self, engagement):
         """Build the range for `engagement` and install the scope guard. Returns a
@@ -274,14 +195,7 @@ class DockerSandbox(Sandbox):
         if not engagement.in_scope_hosts and not engagement.android_app:
             raise SandboxError("cannot provision: the contract declares no in_scope_hosts")
         if engagement.android_app:
-            if sys.platform != "linux" or not os.path.exists("/dev/kvm"):
-                raise SandboxError("Android mobile testing requires a Linux Docker host with /dev/kvm")
-            if not os.path.isfile(engagement.android_app["apk"]):
-                raise SandboxError("engagement.android_app.apk must name an existing APK file")
-            image = self._run(["docker", "image", "inspect", ANDROID_EMULATOR_IMAGE])
-            if image.rc != 0:
-                raise SandboxError(f"required Android emulator image {ANDROID_EMULATOR_IMAGE} is missing; "
-                                   "pull the pinned image before starting the engagement")
+            self.mobile.validate(engagement.android_app["apk"])
         image = self._run(["docker", "image", "inspect", self.attacker_image])
         if image.rc != 0:
             raise SandboxError(
@@ -319,8 +233,9 @@ class DockerSandbox(Sandbox):
             self.collab_addr = f"{collab_ip}:{self.collab_port}"
 
         if engagement.android_app:
-            self.android_ip = str(next(hosts))
-            self._start_android(engagement.android_app["apk"], self.android_ip, attacker_ip)
+            mobile_ip = str(next(hosts))
+            self.mobile.start(engagement.android_app["apk"], mobile_ip, attacker_ip,
+                              runtime=self._runtime)
 
         # Backing services come up before the targets so the app can reach them the moment it
         # starts. They take in-range IPs but are never added to the guard's pinned allow list,
@@ -351,9 +266,9 @@ class DockerSandbox(Sandbox):
                 self._guard_port = self._app_port if self._app_image else int(ports[0])
 
         if engagement.android_app:
-            pinned_ports.append((self.android_ip, [5555]))
+            pinned_ports.append((self.mobile.ip, [5555]))
             if self._in_scope_ip is None:
-                self._in_scope_ip, self._guard_port = self.android_ip, 5555
+                self._in_scope_ip, self._guard_port = self.mobile.ip, 5555
 
         errs = engagement.pin({h: ip for h, ip in pinned.items()})
         if errs:
@@ -367,10 +282,12 @@ class DockerSandbox(Sandbox):
         ruleset = guard_ruleset(self.guard_table, pinned_ports).encode("utf-8")
         self._docker(*guard_command, input=ruleset)
         if engagement.android_app:
-            android_allowed = list(pinned_ports[:-1])
+            mobile_allowed = list(pinned_ports[:-1])
             if self.collab_addr:
-                android_allowed.append((self.collab_addr.rsplit(":", 1)[0], [self.collab_port]))
-            self._install_android_guard(attacker_ip, android_allowed, replace=True)
+                mobile_allowed.append((self.collab_addr.rsplit(":", 1)[0], [self.collab_port]))
+            self.mobile.install_guard(attacker_ip, mobile_allowed, runtime=self._runtime,
+                                      replace=True)
+            self.mobile.save_baseline()
         # With the guard installed, wait for the app to answer its health path over the real
         # in-range path before the range is used, so recon and the proofs never race its startup.
         if self._app_image:
@@ -389,38 +306,13 @@ class DockerSandbox(Sandbox):
             public_dns_resolves=self._dns(self.public_name),
             out_of_scope_reachable=self._tcp(self._out_of_scope_ip, self._guard_port),
             in_scope_reachable=self._tcp(self._in_scope_ip, self._guard_port))
-        if self.android_ip:
-            guest = self._android_guard_proof()
+        if self.mobile.active:
+            guest = self.mobile.guard_proof(
+                self._eng, internet_canary=self.internet_canary,
+                public_name=self.public_name, out_of_scope_ip=self._out_of_scope_ip)
             result["assertions"].extend(guest["assertions"])
             result["pass"] = result["pass"] and guest["pass"]
         return result
-
-    def _android_guard_proof(self):
-        """Prove guest-originated egress, not only the container's own network namespace."""
-        def tcp(ip, port):
-            result = self._adb(["shell", "toybox", "nc", "-z", "-w", "1", ip, str(port)],
-                               timeout=5)
-            return result.rc == 0
-
-        def assertion(name, description, ok):
-            return {"name": name, "describes": description, "ok": ok}
-
-        internet = tcp(*self.internet_canary)
-        dns = self._adb(["shell", "toybox", "nslookup", self.public_name], timeout=8)
-        dns_resolved = dns.rc == 0 and self.public_name.lower() in (dns.out or "").lower()
-        out_scope = tcp(self._out_of_scope_ip, 443)
-        assertions = [
-            assertion("android_guest_internet_dropped", "the Android guest cannot reach the internet", not internet),
-            assertion("android_guest_public_dns_refused", "the Android guest cannot resolve public DNS", not dns_resolved),
-            assertion("android_guest_out_of_scope_dropped", "the Android guest cannot reach an out-of-scope host", not out_scope),
-        ]
-        allowed = [(str(ip), port) for ip in self._eng.pinned.values()
-                   for port in scope.ports_for(self._eng, ip)]
-        if allowed:
-            ip, port = allowed[0]
-            assertions.append(assertion("android_guest_scoped_api_allowed",
-                                        "the Android guest can reach a scoped API", tcp(ip, port)))
-        return {"pass": all(item["ok"] for item in assertions), "assertions": assertions}
 
     def proofs_pass(self):
         """Aggregate G1-G5 (§8): the guard proof (G1/G2, §8.1), the snapshot round-trip
@@ -488,17 +380,16 @@ class DockerSandbox(Sandbox):
         # re-wait above is the datastore's equivalent).
         if self._app_image:
             self._wait_app_targets_ready()
-        if self.android_ip:
-            self._reset_mobile_app()
+        if self.mobile.active:
+            if snapshot_id == GOLDEN:
+                self.mobile.restore_baseline()
+            else:
+                self.mobile.reset_app()
         return True
 
-    def _reset_mobile_app(self):
-        if not self.mobile_inventory:
-            return False
-        result = self._adb(["shell", "pm", "clear", self.mobile_inventory["package"]], timeout=30)
-        if result.rc != 0 or "success" not in (result.out or "").lower():
-            raise SandboxError("could not restore the Android app to its clean baseline")
-        return True
+    def baseline_report(self):
+        """Identity of the device baseline the last golden restore came from, for the audit log."""
+        return dict(self.mobile.last_baseline or {})
 
     def escape_attempt(self):
         """Prove G4 (§8.3): from the attacker container, try to reach the operator
@@ -522,8 +413,8 @@ class DockerSandbox(Sandbox):
         """Prove G3 (§8.2): write a marker to a target, snapshot, overwrite the marker,
         restore, and assert the original marker is back."""
         if not self._targets:
-            if self.android_ip and self.mobile_inventory:
-                return {"pass": self._reset_mobile_app(), "kind": "android_app_data_reset"}
+            if self.mobile.active and self.mobile.inventory:
+                return {"pass": self.mobile.reset_app(), "kind": "android_app_data_reset"}
             return {"pass": False, "reason": "range not provisioned"}
         host = next(iter(self._targets))
         name = self._targets[host][0]
@@ -546,7 +437,7 @@ class DockerSandbox(Sandbox):
             return {"ok": True, "frozen_ms": 0, "forensics": [], "restored_from_golden": []}
         # Freeze the whole range at once: the attacker, every target, and every backing service, so
         # a mutating datastore stops with the app rather than running on under a frozen attacker.
-        containers = [self.attacker, *([self.android] if self.android_ip else []),
+        containers = [self.attacker, *([self.mobile.container] if self.mobile.active else []),
                       *[name for name, _ in self._targets.values()],
                       *[name for name, _ in self._services.values()]]
         t0 = time.monotonic()
@@ -585,12 +476,8 @@ class DockerSandbox(Sandbox):
         paused = self._run(["docker", "inspect", "-f", "{{.State.Status}}",
                             self.attacker]).out.strip() == "paused"
         self._run(["docker", "unpause", self.attacker])        # revive; range stays usable
-        if self.android_ip:
-            android_paused = self._run(["docker", "inspect", "-f", "{{.State.Status}}",
-                                        self.android]).out.strip() == "paused"
-            self._run(["docker", "unpause", self.android])
-            paused = paused and android_paused
-            self._reset_mobile_app()
+        if self.mobile.active:
+            paused = self.mobile.reset_after_kill() and paused
         # The kill recreated the app from golden, a fresh process still booting; with the attacker
         # live again, wait for its health path so the range handed to recon is actually ready and
         # the drill keeps its promise to leave the range usable (restore() does the same for G3).
@@ -603,7 +490,7 @@ class DockerSandbox(Sandbox):
         """Destroy the range entirely: remove the attacker and every target, drop the
         network, and delete the snapshot and forensics images. Best-effort and
         idempotent, so it doubles as pre-provision cleanup."""
-        names = [self.attacker, self.android, self.collaborator,
+        names = [self.attacker, self.mobile.container, self.collaborator,
                  *[f"{self.network}-tgt-{i}" for i in range(max(len(self._targets), 8))],
                  *[name for name, _ in self._services.values()]]
         for name in names:
@@ -622,7 +509,7 @@ class DockerSandbox(Sandbox):
         self._targets, self._target_ports, self._snapshots, self._forensics = {}, {}, {}, []
         self._services, self._service_spec, self._service_golden = {}, {}, {}
         self._app_image, self._target_image, self._app_port = None, {}, None
-        self.android_ip, self.mobile_inventory, self._adb_key_path = None, None, None
+        self.mobile.clear()
         return True
 
     # --- helpers --------------------------------------------------------

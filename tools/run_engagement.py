@@ -37,7 +37,8 @@ from harness.loop import Loop                                  # noqa: E402
 from harness.modelplane import ModelPlane, VirtualKey          # noqa: E402
 from harness.planner import DeterministicPlanner               # noqa: E402
 from harness.recon import phase_recon                          # noqa: E402
-from harness.recon import project_mobile_inventory             # noqa: E402
+from harness.mobile.recon import mobile_recon                   # noqa: E402
+from harness.mobile.protocol import MOBILE_TOOL                  # noqa: E402
 from harness.roles import ModelOperator, ModelVerifier         # noqa: E402
 from harness.sandbox.adapters import (                         # noqa: E402
     BflaAdapter, CacheAdapter, ClickjackAdapter, CmdiAdapter, CorsAdapter, CspAdapter,
@@ -47,9 +48,9 @@ from harness.sandbox.adapters import (                         # noqa: E402
 from harness.sandbox.crawler import CrawlerAdapter             # noqa: E402
 from harness.sandbox import rangelock                         # noqa: E402
 from harness.sandbox.docker import DockerSandbox               # noqa: E402
-from harness.mobile import ANDROID_EMULATOR_IMAGE, DeepLinkProbe  # noqa: E402
+from harness.mobile.probe import DeepLinkProbe                 # noqa: E402
 from harness.sandbox.probe import DockerProbe                  # noqa: E402
-from harness.store import audit, blobstore, datadir, db, engagements  # noqa: E402
+from harness.store import blobstore, datadir, db, engagements  # noqa: E402
 from harness.substrate import contract                         # noqa: E402
 
 CONTRACT = """
@@ -257,21 +258,17 @@ def main(progress=None):
         else:
             crawler = CrawlerAdapter(sb.attacker, eng.pinned)  # black-box endpoint discovery
             target_model = phase_recon(sb.attacker, eng, crawler=crawler)   # live recon, not hand-built
-        if sb.mobile_inventory:
-            target_model.update(project_mobile_inventory(sb.mobile_inventory))
-            emit(f"mobile recon: {sb.mobile_inventory['package']} "
-                 f"sha256={sb.mobile_inventory['sha256']} "
-                 f"links={len(sb.mobile_inventory['deep_links'])}")
         emit(f"recon: {target_model}")
         with contextlib.nullcontext(datadir.blob_root()) as root:  # persist, not a temp dir
             conn = db.connect(datadir.db_path())
-            if sb.mobile_inventory:
-                audit.record(conn, eng.id, "harness", "mobile_apk_inventory", decision="ok",
-                             detail={"package": sb.mobile_inventory["package"],
-                                     "sha256": sb.mobile_inventory["sha256"],
-                                     "emulator_image": ANDROID_EMULATOR_IMAGE,
-                                     "component_count": len(sb.mobile_inventory["components"]),
-                                     "deep_link_count": len(sb.mobile_inventory["deep_links"])})
+            mobile_static = None
+            if sb.mobile.inventory:
+                mobile_model, mobile_static = mobile_recon(conn, eng.id, sb.mobile.inventory)
+                target_model.update(mobile_model)
+                emit(f"mobile recon: {sb.mobile.inventory['package']} "
+                     f"sha256={sb.mobile.inventory['sha256']} "
+                     f"links={len(sb.mobile.inventory['deep_links'])} "
+                     f"advisories={len(mobile_static['advisory_findings'])}")
             operator, verifier, plane_label = build_roles(conn, eng)
             emit(f"model plane: {plane_label}")
             # The caller-supplied session (if any) rides on every HTTP adapter, so a probe
@@ -301,18 +298,19 @@ def main(progress=None):
                         "cspexec": CspAdapter(sb.attacker, eng.pinned, session_headers=sess),
                         "domclobber": DomClobberAdapter(sb.attacker, eng.pinned, session_headers=sess),
                         "protopollute": ProtoPolluteAdapter(sb.attacker, eng.pinned, session_headers=sess)}
-            if sb.mobile_inventory:
-                adapters["mobile"] = DeepLinkProbe(
-                    sb.mobile_inventory["package"], sb.mobile_inventory["deep_links"],
-                    adb=sb._adb,
+            if sb.mobile.inventory:
+                adapters[MOBILE_TOOL] = DeepLinkProbe(
+                    sb.mobile.inventory["package"], sb.mobile.inventory["deep_links"],
+                    adb=sb.mobile.adb,
                     collaborator=lambda: sb._run(["docker", "exec", sb.collaborator,
                                                   "cat", "/tmp/hits.log"]).out,
-                    collab_addr=sb.collab_addr, expected_source=sb.android_ip)
+                    collab_addr=sb.collab_addr, expected_source=sb.mobile.ip)
             disp = Dispatcher(conn, blobstore.BlobStore(root), eng, adapters,
                               ratelimit.RateLimiter(1000, now=lambda: 0.0))
             res = Loop(conn, eng, kb_index=KB, dispatcher=disp, sandbox=sb,
                        planner=DeterministicPlanner(KB), operator=operator,
-                       verifier=verifier, kb_version="live").run(target_model)
+                       verifier=verifier, kb_version="live",
+                       mobile_static=mobile_static).run(target_model)
             engagements.save(conn, res.report, valid=res.valid)    # persist the run for the dashboard
         emit(f"\nmode: {res.mode}   report valid: {res.valid}")
         emit(f"coverage: {res.report['coverage_summary']}")

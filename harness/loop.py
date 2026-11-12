@@ -30,6 +30,7 @@ from harness import report as reportmod
 from harness import roleio
 from harness.blackboard import CONFIRMED, PROVISIONAL, Blackboard
 from harness.dispatch import ProbeContext
+from harness.sandbox.base import SandboxError
 from harness.store import audit, evidence, findings, ledger, reasoning
 
 GOLDEN = "golden"
@@ -147,7 +148,7 @@ class Loop:
     def __init__(self, conn, eng, *, kb_index, dispatcher, sandbox,
                  planner, operator, verifier, reporter=None,
                  signal_evaluator=deterministic_signal, budget=16, max_denied=4,
-                 max_invalid=3, kb_version=None):
+                 max_invalid=3, kb_version=None, mobile_static=None):
         self.conn = conn
         self.eng = eng
         self.kb_index = kb_index
@@ -162,6 +163,7 @@ class Loop:
         self.max_denied = max_denied
         self.max_invalid = max_invalid
         self.kb_version = kb_version
+        self.mobile_static = mobile_static      # advisory findings, reported beside findings
         self.passive_only = False
         self.target_model = {}
         self.board = None       # the live blackboard, set only for an objective run (§6)
@@ -198,6 +200,8 @@ class Loop:
         report = self.reporter.render(self.conn, self.eng, mode=mode,
                                       kb_version=self.kb_version,
                                       objective=self.objective_outcome)
+        if self.mobile_static is not None:
+            report["mobile_static_assessment"] = self.mobile_static
         status, errs = reportmod.validate_report(report, kbmod.known_pairs(self.kb_index))
         return RunResult(report, mode, status == "ok", errs, objective=self.objective_outcome)
 
@@ -529,11 +533,11 @@ class Loop:
         own target and port: the override applies only when the request is aimed at the asset's
         own address."""
         facts = self.target_model.get(asset) or {}
-        if facts.get("asset.type") == "mobile_app" and request.get("tool") == "mobile":
-            request["target"] = "mobile-app"
-            request["port"] = 0
-            request["args"] = {"link_id": facts.get("asset.mobile_link_id")}
-            return request
+        adapters = getattr(self.dispatcher, "adapters", {})
+        adapter = adapters.get(request.get("tool"))
+        bind_asset = getattr(adapter, "bind_asset", None)
+        if bind_asset:
+            bind_asset(facts, request)
         ports = facts.get("open_ports")
         if ports and request.get("target") == facts.get("addr"):
             request["port"] = ports[0]
@@ -640,7 +644,18 @@ class Loop:
                 reason="passive-only: sandbox containment was not proven")
             return
 
-        self.sandbox.restore(GOLDEN)                             # §4.2 golden, then fresh
+        try:
+            self.sandbox.restore(GOLDEN)                         # §4.2 golden, then fresh
+        except SandboxError as exc:
+            findings.transition(
+                self.conn, fid, "needs_validation", by="harness",
+                reason=f"verification baseline could not be restored: {exc}")
+            self._mark(pair, "inconclusive")
+            return
+        baseline = getattr(self.sandbox, "baseline_report", None)
+        if baseline and baseline():
+            audit.record(self.conn, self.eng.id, "harness", "verification_baseline",
+                         decision="ok", correlation_id=fid, detail=baseline())
         fresh = self.sandbox.snapshot()
         session = self.verifier.begin()
 

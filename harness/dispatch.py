@@ -12,6 +12,7 @@ out-of-scope traffic on the wire.
 """
 from harness.store import audit, evidence
 from harness.substrate.blast import blast_gate
+from harness.mobile.protocol import MOBILE_TOOL
 from harness.substrate.scope import scope_validate
 
 # The adapter allowlist a deployment registers; an unknown tool is denied (§5.3).
@@ -85,9 +86,8 @@ class Dispatcher:
 
         # guard 2: scope (HC-SUB-01 §5.3) - out_of_scope wins, unpinned host denied
         adapter = self.adapters[req["tool"]]
-        verdict, reason = scope_validate(
-            self.eng, req["target"], req["port"],
-            allow_mobile=getattr(adapter, "local_mobile_target", False))
+        kind = "mobile" if req["tool"] == MOBILE_TOOL else "network"
+        verdict, reason = scope_validate(self.eng, req["target"], req["port"], kind=kind)
         if verdict != "allow":
             self._audit(ctx, "dispatch_denial", "out_of_scope", reason=reason, req=req)
             return deny("out_of_scope")

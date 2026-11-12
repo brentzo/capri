@@ -15,6 +15,7 @@ harness degrades gracefully rather than proposing a tool the dispatcher would de
 probe arguments are the one place a target's shape (its endpoints and parameters) is
 configured; a later slice derives them from recon instead of naming them here.
 """
+from harness.mobile.capabilities import CAPABILITIES as MOBILE_CAPABILITIES
 
 # card id -> (concrete dispatcher tool, probe arguments). A card is listed only when the
 # adapter proves the technique the card actually describes; the timing-oracle SQLi variant
@@ -49,7 +50,7 @@ CAPABILITIES = {
     "KB-CLIENT-DOM-CLOBBER-001": ("domclobber", {"path": "/clobber", "param": "html"}),
     "KB-CLIENT-PROTO-POLLUTE-001": ("protopollute", {"path": "/profile",
                                                      "pollute_key": "__proto__.hcxpoll"}),
-    "KB-MOBILE-LINK-DEEPLINK-001": ("mobile", {"link_id": "{asset.mobile_link_id}"}),
+    **MOBILE_CAPABILITIES,
 }
 
 

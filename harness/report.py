@@ -107,6 +107,11 @@ def validate_report(report, known_pairs):
     if report.get("mode") == "passive-only" and vulns:
         errs.append("passive-only report must not contain confirmed vulnerabilities")
 
+    # 9: mobile advisory findings are static observations and never carry a verdict
+    for a in (report.get("mobile_static_assessment") or {}).get("advisory_findings", []):
+        if "verdict" in a or "verified_by" in a:
+            errs.append(f"{a.get('rule_id')}: advisory finding carries a runtime verdict")
+
     # 8: the objective outcome is internally consistent (HC-OBJ-01 §9.2)
     _validate_objective_outcome(report.get("objective_outcome"), report.get("mode"), vulns, errs)
 

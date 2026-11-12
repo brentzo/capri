@@ -798,8 +798,8 @@ The first runnable mobile capability accepts an authorized APK in
 `engagement.android_app.apk`, inventories the decoded manifest with the pinned
 Android SDK tools, and adds one coverage item per supported `VIEW` plus
 `BROWSABLE` deep-link filter.
-Mobile-specific APK and deep-link behavior lives in `harness/mobile/`; the range,
-dispatch, and recon layers stay shared with web engagements.
+Mobile-specific APK, emulator, protocol, capability, contract, and recon behavior
+lives in `harness/mobile/`; the range and engagement loop remain shared with web.
 The manifest-derived probe invokes a fixed Android intent with a harness-created
 callback URL; only a matching nonce observed from the emulator at the in-range
 collaborator can produce a finding.

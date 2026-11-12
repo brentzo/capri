@@ -9,6 +9,7 @@ import re
 from datetime import datetime
 
 from harness import predicates, yamlmini
+from harness.mobile.contract import normalize_android_app, validate_android_app
 
 BLAST_TIERS = (0, 1, 2, 3)
 
@@ -27,7 +28,6 @@ _BUILD_KEYS = {"context", "dockerfile"}
 _READY_KEYS = {"path", "timeout_s"}
 _SERVICE_KEYS = {"name", "engine", "version", "init_sql", "user", "password", "db"}
 _DNS_ALIAS = re.compile(r"^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$")  # a safe, lowercase network alias
-_ANDROID_APP_KEYS = {"apk"}
 
 
 def _normalize_target(t):
@@ -58,12 +58,6 @@ def _normalize_target(t):
                 "user": s.get("user") or "app", "password": s.get("password") or "app",
                 "db": s.get("db") or "app"})
     return out
-
-
-def _normalize_android_app(app):
-    if not isinstance(app, dict):
-        return None
-    return {"apk": app.get("apk")}
 
 
 def _session_headers(session):
@@ -134,7 +128,7 @@ class Engagement:
         # runs the bundled stdlib listener as before; present, the sandbox builds the app and
         # its backing services (e.g. a Postgres sidecar) inside the egress-denied range.
         self.target = _normalize_target(e.get("target"))
-        self.android_app = _normalize_android_app(e.get("android_app"))
+        self.android_app = normalize_android_app(e.get("android_app"))
         self.pinned = {}   # host -> ipaddress, set at provisioning (§4.3)
 
     def pin(self, host_to_ip):
@@ -246,7 +240,7 @@ def validate(raw, management_cidrs=None):
     if mb is not None and (not isinstance(mb, int) or isinstance(mb, bool) or mb <= 0):
         errs.append("engagement.model_budget must be a positive integer when present")
     _validate_target(eng.get("target"), errs)
-    _validate_android_app(eng.get("android_app"), errs)
+    validate_android_app(eng.get("android_app"), errs)
 
     scope = raw.get("scope")
     if not isinstance(scope, dict):
@@ -389,21 +383,6 @@ def _validate_target(t, errs):
 
     if not (has_image or has_build or has_services):
         errs.append("engagement.target must declare an image, a build, or at least one service")
-
-
-def _validate_android_app(app, errs):
-    """Validate the operator-supplied APK declaration; the file is checked before provisioning."""
-    if app is None:
-        return
-    if not isinstance(app, dict):
-        errs.append("engagement.android_app must be a mapping when present")
-        return
-    unknown = sorted(set(app) - _ANDROID_APP_KEYS)
-    if unknown:
-        errs.append(f"engagement.android_app has unsupported key(s): {', '.join(unknown)}")
-    apk = app.get("apk")
-    if not isinstance(apk, str) or not apk.strip():
-        errs.append("engagement.android_app.apk must be a non-empty path string")
 
 
 def _validate_objective(obj, hosts, in_nets, out_nets, lateral, errs):
